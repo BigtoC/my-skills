@@ -29,13 +29,13 @@ Optional supporting material goes in sibling folders such as:
 Install all skills in this repo:
 
 ```sh
-npx skills add BigtoC/my-skills
+npx skills add https://github.com/BigtoC/my-skills
 ```
 
 Install a single skill:
 
 ```sh
-npx skills add BigtoC/my-skills/rust-best-practices
+npx skills add https://github.com/BigtoC/my-skills --skill rust-best-practices
 ```
 
 ### Manual
