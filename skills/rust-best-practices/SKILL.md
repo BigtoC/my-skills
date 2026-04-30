@@ -1,19 +1,56 @@
 ---
 name: rust-best-practices
-description: Rust coding conventions and review guidance for writing, reviewing, refactoring, and optimizing Rust code. Use for Rust modules, crates, public API design, error handling, performance work, documentation, testing, and safe modular refactors.
+description: Rust coding conventions and review guidance. Auto-invoke whenever working with .rs files or Rust code: implementing features, reviewing changes, refactoring modules, designing public APIs, improving tests, or optimizing performance.
 license: MIT
 compatibility: Portable Agent Skills format for agents that support SKILL.md. The skill itself has no script, package, or network requirements.
 metadata:
   author: bigtochan
   tags: rust,coding,review,refactoring,performance,api-design
-  source: scorpio-analyst/.github/instructions/rust.instructions.md
+  triggers: "*.rs Cargo.toml build.rs"
 ---
 
 # Rust Best Practices
 
+**Auto-invoke this skill whenever a task touches a `.rs` file or any Rust
+code. This applies to all agent implementations.**
+
 Use this skill when a task involves Rust code: implementing features, reviewing
 changes, refactoring modules, designing public APIs, improving tests, or
 optimizing performance.
+
+## Auto-Trigger Setup
+
+### All agents (description-based)
+
+Agents that load skill descriptions at startup will auto-invoke this skill
+whenever `.rs` files or Rust keywords appear in the task context. No extra
+configuration is needed if your agent follows the Agent Skills specification.
+
+### Claude Code (hook-based enforcement)
+
+For guaranteed invocation regardless of context, add this hook to
+`~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // \"\"' | { read -r f; if printf '%s' \"$f\" | grep -qE '\\.rs$'; then printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"Rust (.rs) file detected. Invoke the rust-best-practices skill now if you have not already done so this session.\"}}'; fi; } 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Merge into any existing `hooks.PreToolUse` array rather than replacing it.
 
 Keep solutions idiomatic, safe, and maintainable. Favor strong typing, explicit
 error handling, public API stability, and borrowing-first designs.
