@@ -22,19 +22,47 @@ Optional supporting material goes in sibling folders such as:
 | --- | --- | --- |
 | `rust-best-practices` | `skills/rust-best-practices/SKILL.md` | Portable Rust coding, review, refactoring, API design, testing, and performance guidance. |
 
+## Installation
+
+### Via skills.sh
+
+Install all skills in this repo:
+
+```sh
+npx skills add BigtoC/my-skills
+```
+
+Install a single skill:
+
+```sh
+npx skills add BigtoC/my-skills/rust-best-practices
+```
+
+### Manual
+
+Copy or vendor the skill directory into your agent's preferred skills path:
+
+```sh
+cp -r skills/rust-best-practices ~/.claude/skills/
+```
+
 ## Usage
 
-Agent Skills-compatible tools can load this repository directly or consume
-individual skill directories.
+Once installed, agents that load skill descriptions at startup will
+auto-invoke `rust-best-practices` whenever you work on `.rs` files or Rust
+code — no extra prompt needed.
 
-Example prompt for an agent that supports named skills:
+You can also invoke it explicitly:
 
 ```text
 Use the /rust-best-practices skill to review this Rust module and refactor it safely.
 ```
 
-If a specific tool expects a different on-disk location, copy or vendor the
-`skills/rust-best-practices` directory into that tool's preferred skills path.
+### Claude Code hook (optional)
+
+For guaranteed auto-invocation in Claude Code regardless of context, see the
+[Claude Code Auto-Trigger Setup](skills/rust-best-practices/SKILL.md#claude-code-hook-based-enforcement)
+section in the skill's `SKILL.md`.
 
 ## Specification
 
