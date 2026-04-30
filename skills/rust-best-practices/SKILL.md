@@ -1,10 +1,11 @@
 ---
 name: rust-best-practices
-description: "Rust coding conventions and review guidance. Auto-invoke whenever working with .rs files or Rust code: implementing features, reviewing changes, refactoring modules, designing public APIs, improving tests, or optimizing performance."
-license: "MIT"
-compatibility: "Portable Agent Skills format for agents that support SKILL.md. The skill itself has no script, package, or network requirements."
+description: Rust coding conventions and review guidance. Auto-invoke whenever working with .rs files or Rust code -- implementing features, reviewing changes, refactoring modules, designing public APIs, improving tests, or optimizing performance.
+license: MIT
+compatibility: Portable Agent Skills format for agents that support SKILL.md. The skill itself has no script, package, or network requirements.
 metadata:
-  author: "bigtochan"
+  author: BigtoC
+  version: "0.1.0"
   tags: "rust,coding,review,refactoring,performance,api-design"
   triggers: "*.rs Cargo.toml build.rs"
 ---
