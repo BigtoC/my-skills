@@ -21,6 +21,7 @@ Optional supporting material goes in sibling folders such as:
 | Skill | Path | Purpose |
 | --- | --- | --- |
 | `rust-best-practices` | `skills/rust-best-practices/SKILL.md` | Portable Rust coding, review, refactoring, API design, testing, and performance guidance. |
+| `ai-industry-weekly` | `skills/ai-industry-weekly/SKILL.md` | Weekly re-rating routine for the AI compute supply-chain quality table: fetch fundamentals, re-rate every ticker, diff against a rolling baseline, and publish the result. |
 
 ## Installation
 
@@ -45,6 +46,27 @@ Copy or vendor the skill directory into your agent's preferred skills path:
 ```sh
 cp -r skills/rust-best-practices ~/.claude/skills/
 ```
+
+## Runtime state
+
+Most skills here are pure documentation. `ai-industry-weekly` is not — it keeps
+runtime state:
+
+- **Rolling baseline.** `skills/ai-industry-weekly/assets/baseline.md` is
+  overwritten by the skill on every run, so each week is compared against the
+  previous week rather than a frozen seed table. Seeing it modified in
+  `git status` after a run is expected. Commit it to advance the baseline, or
+  `git checkout <commit> -- skills/ai-industry-weekly/assets/baseline.md` to
+  roll back.
+- **Slack channel via environment variable.** The optional Slack push reads the
+  channel id from `AI_INDUSTRY_SLACK_CHANNEL_ID`; nothing is stored in the repo:
+
+  ```sh
+  export AI_INDUSTRY_SLACK_CHANNEL_ID=C0XXXXXXXXX
+  ```
+
+  Leave it unset and the skill still runs and prints its full report — it just
+  skips the Slack push.
 
 ## Usage
 
