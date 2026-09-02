@@ -162,6 +162,15 @@ def err(msg: str = "") -> None:
     print(msg, file=sys.stderr)
 
 
+def render_row(cells: list[str]) -> str:
+    """把单元格渲染成紧凑表格行：`| a | b | c |`。
+
+    baseline.md 的格式由本函数**唯一决定**，不受传入新表的排版影响，
+    这样每周的 git diff 行数等于真实变动的行数（见 cmd_write 里的说明）。
+    """
+    return "| " + " | ".join(c.strip() for c in cells) + " |"
+
+
 def rel_path(path: Path) -> str:
     """技能自身的路径一律相对技能根目录展示。
 
@@ -815,12 +824,14 @@ def cmd_write(args: argparse.Namespace) -> int:
     else:
         preamble = DEFAULT_PREAMBLE.splitlines()
 
-    table_lines = [table.raw_lines[0]]  # 表头
-    if table.separator_positions:
-        table_lines.append(table.raw_lines[table.separator_positions[0]])
-    else:  # validate 已保证走不到这里，兜底以防万一
-        table_lines.append("| " + " | ".join([":---"] * len(universe["columns"])) + " |")
-    table_lines.extend(table.data_line_texts)
+    # 写入前一律归一化成紧凑格式，不沿用 agent 当周给的排版。
+    # 为什么：write 若原样写入，格式就随每周 agent 心情漂移。一旦某周产出
+    # 对齐填充的表，下一周换成紧凑表就会让 46 行全部重排 —— 1 行真实数据变动
+    # 产生 96 行 git diff，而本设计的回滚与审计完全依赖「git diff 看得出改了什么」。
+    # 紧凑格式让 diff 行数 == 真实变动行数。
+    table_lines = [render_row(table.header)]
+    table_lines.append("| " + " | ".join([":---"] * len(table.header)) + " |")
+    table_lines.extend(render_row(cells) for _, cells in table.rows)
 
     content = build_document(preamble, table_lines, date, len(table.rows))
     atomic_write(BASELINE_PATH, content)
