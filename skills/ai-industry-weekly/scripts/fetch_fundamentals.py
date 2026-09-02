@@ -13,6 +13,8 @@ AI 算力产业链 · 基本面批量取数（yfinance）
 依赖:
     pip install -q yfinance requests
     （遇 PEP668 报错时加 --break-system-packages）
+    注意：yfinance 是在 main() 里延迟导入的（不在顶部 import 块），
+    目的是让缺库时 --help 仍可用、并给出友好安装提示。
 
 硬约束（踩坑换来的，勿"优化"）:
   1. 必须用 requests.Session 而不是 yfinance 默认的 curl_cffi 引擎。
@@ -37,6 +39,10 @@ import unicodedata
 from pathlib import Path
 
 import requests
+
+# yfinance 故意**不**在这里导入，而是延迟到 main() 里（见文件末尾附近的
+# `import yfinance as yf`，再作为参数传进 fetch_info()）。这样缺库时
+# `--help` 仍可用，且报的是带安装指引的友好错误而不是 ImportError traceback。
 
 # ---------------------------------------------------------------- 路径定位
 # 脚本随技能分发，一律以 __file__ 相对定位，从任意 cwd 都能跑。
