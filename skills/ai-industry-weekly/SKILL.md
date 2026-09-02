@@ -102,6 +102,8 @@ python3 "$SKILL_DIR/scripts/fetch_fundamentals.py" --json /tmp/fundamentals.json
 
 数据缺失记 `N/A`，**不估算、不编造**。抓空就重跑一次；仍空则记 N/A。
 
+**留意脚本输出末尾的「⚠ 利润率完整性」一节**：yfinance `.info` 的 `operatingMargins` 会单字段损坏（`om>gm` 算术不可能等），脚本已自动检出并给出年报/TTM 重算值；命中行怎么取舍见 `references/rating-rules.md` 顶部编者注（命中标的每周不同，勿当固定名单）。
+
 ## 第二步 · 重算评级
 
 **读 `references/rating-rules.md` 全文**，按其中的：
