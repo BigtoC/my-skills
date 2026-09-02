@@ -2,11 +2,14 @@
 
 > 本文件自 `AI产业表周更.md` 第一步**逐字迁移**，未改写。
 >
-> **编者注**：标的清单现由 `assets/universe.json` 提供（`tickers` 顺序即产业表行序），并由
-> `scripts/fetch_fundamentals.py` 读取；下文正文内联的 `T = [...]` 列表仅作历史参考，
-> **不是**真相源，增减标的请改 `assets/universe.json`。
+> **编者注**：原文第一步内联的那段 Python（含硬编码的 `T = [...]` 清单）已**整段抽出**为
+> `scripts/fetch_fundamentals.py`，取数逻辑逐字沿用（UA / `requests.Session` / 3 次重试 /
+> 成功判定 / 23 个字段映射 `F` / price 三级回退 / `fromHi%` 公式），本文只留口径说明。
+> 标的清单与行序改由 `assets/universe.json` 的 `tickers` 提供、由脚本读取——它是唯一真相源，
+> 增减标的只改该文件。内联的 T 列表连同代码一并删除：它虽与 `universe.json` 同为 46 个代码，
+> **行序早已不一致**（T 的第 3 个是 INTC，清单的第 3 行是 ASML），留着只会让人抓错顺序。
 >
-> **编者注**：下文的 `pip install -q yfinance pandas` 是原文写法。本技能实际依赖为
+> **编者注**：原文写的是 `pip install -q yfinance pandas`。本技能实际依赖为
 > **`yfinance` + `requests`**（`requests.Session` 是绕过代理下 curl_cffi TLS 失败的硬约束）；
 > `pandas` 两个脚本都未 import，可不装。脚本不会自动安装 yfinance，缺失时会退出并打印安装提示。
 >
@@ -14,32 +17,25 @@
 > 由 SKILL.md 第零步定出。两个脚本内部用 `__file__` 相对定位 `assets/`，找数据文件与 cwd 无关；
 > 但**调用命令本身**必须给出绝对路径，故一律写成 `python3 "$SKILL_DIR/scripts/xxx.py" ...`。
 
-用 Bash 执行（环境可联网）：先 pip install -q yfinance pandas（如遇 PEP668 报错，加 --break-system-packages），再运行以下脚本拉取 46 标的最新基本面。
-注意：本执行环境出站走代理，yfinance 默认的 curl_cffi 引擎会 TLS 握手失败、导致 `.info` 全部为 null；故改用 requests.Session（实测可正常取数）并加 3 次重试。
+用 Bash 执行（环境可联网）：先 `pip install -q yfinance requests`（如遇 PEP668 报错，加 `--break-system-packages`），再跑取数脚本拉取 `universe.json` 全清单的最新基本面。
 
-```python
-import yfinance as yf, requests
-s = requests.Session()
-s.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-T = ["NVDA","TSM","INTC","GFS","MU","SNDK","TTMI","MRAAY","ADI","TXN","AMD","ARM","AVGO","MRVL","GOOGL","AMZN","COHR","LITE","GLW","NOK","AXTI","ALAB","AAOI","TSLA","ANET","VRT","BE","DELL","RKLB","DRAM","LYTE","NCLD","SMH","SOXX","0700.HK","1810.HK","SPCX","000660.KS","005930.KS","CSCO","MSFT","ASML","BABA","META","NET","0941.HK"]
-F = {"longName":"name","marketCap":"mktcap","trailingPE":"PE","forwardPE":"fwdPE","priceToSalesTrailing12Months":"PS","priceToBook":"PB","enterpriseToEbitda":"EVE","trailingPegRatio":"PEG","grossMargins":"gm","operatingMargins":"om","profitMargins":"nm","returnOnEquity":"ROE","returnOnAssets":"ROA","revenueGrowth":"revG","earningsGrowth":"epsG","freeCashflow":"FCF","totalCash":"cash","totalDebt":"debt","fiftyTwoWeekHigh":"hi","52WeekChange":"chg52","SandP52WeekChange":"spx","targetMeanPrice":"tgt","recommendationKey":"rec"}
-for t in T:
-    i = {}
-    for _ in range(3):
-        try:
-            i = yf.Ticker(t, session=s).info
-            if i and (i.get("currentPrice") or i.get("regularMarketPrice") or len(i) > 20): break
-        except Exception:
-            i = {}
-    p = i.get("currentPrice") or i.get("regularMarketPrice") or i.get("previousClose")
-    fh = i.get("fiftyTwoWeekHigh")
-    frm = round((p/fh-1)*100,1) if (p and fh) else None
-    row = {"price": p, "fromHi%": frm}
-    row.update({v: i.get(k) for k, v in F.items()})
-    print(t, row)
+```bash
+# $SKILL_DIR = 本技能根目录（references/ 的上一层），见 SKILL.md 第零步；用绝对路径调用，任意 cwd 均可
+python3 "$SKILL_DIR/scripts/fetch_fundamentals.py" --json /tmp/fundamentals.json
+python3 "$SKILL_DIR/scripts/fetch_fundamentals.py" --tickers NVDA,TSM   # 只重跑抓空的那几只
 ```
 
-数据缺失记 N/A，不估算。若偶尔抓空，重跑一次或 pip install -U yfinance。
+注意：本执行环境出站走代理，yfinance 默认的 curl_cffi 引擎会 TLS 握手失败、导致 `.info` 全部为 null；故改用 requests.Session（实测可正常取数）并加 3 次重试。**这两点已固化在脚本里**，勿在脚本外另写 yfinance 调用。
+
+脚本内已固化、不得改动的取数口径（对应 `fetch_fundamentals.py` 顶部 docstring 的「硬约束」）：
+- **清单与行序**：读 `assets/universe.json` 的 `tickers`（按 `order` 排序）；标的数不硬编码，脚本会打印「清单共 N 个」。
+- **引擎**：`requests.Session` + 原表那串 Chrome UA（换 UA 曾致 Yahoo 限流返回空 info）；3 次重试，成功判定沿用 `i and (currentPrice or regularMarketPrice or len(i) > 20)`。
+- **字段映射 `F`**：原表 23 个字段逐字沿用（`longName→name`、`marketCap→mktcap`、`trailingPE→PE`、`priceToSalesTrailing12Months→PS`、…、`recommendationKey→rec`），不增不减不改名。
+- **`price` 三级回退**：`currentPrice → regularMarketPrice → previousClose`。
+- **`fromHi%`** `= round((price / fiftyTwoWeekHigh - 1) * 100, 1)`，缺任一端记 N/A。
+- **港股**（`universe.json` 里标了 `hk_quote: true` 的行）的 price / hi / fromHi% 由 `hk_quote.py` 覆盖，见下节。
+
+数据缺失记 N/A，不估算。若偶尔抓空，重跑一次（用 `--tickers` 只补那几只）或 pip install -U yfinance。
 
 **港股三只（0700.HK / 1810.HK / 0941.HK）的价格与 52 周高/低不取 yfinance，改用专用脚本（原始未复权、实时）**：
 ```bash
