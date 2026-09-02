@@ -1,0 +1,194 @@
+{
+  "_readme": [
+    "Neocloud 信用层债券登记表 —— neocloud_credit_monitor.py 的输入。",
+    "两块内容：terms(静态条款，很少变) + quote(报价，每次 WebSearch 取到新价就更新 price 与 as_of)。",
+    "tier 决定该债进哪一层判定：'corp' = 发行人公司层无担保债(L1)；'spv_ig_tenant' = 项目层/投资级租户 SPV(L2)；'convert' = 转债(仅参考，不参与判定)。",
+    "报价没有免费 API。流程：日报的 WebSearch 步骤拿到价格 → 填进 quote.price + quote.as_of + quote.source → 脚本自己算 YTM 与利差。",
+    "quote.as_of 超过 --max-quote-age(默认5天) 的债券判为 ⚪ 数据过期，不参与触发判定（不臆测、不沿用旧价当新价）。",
+    "maturity_precision='month' 表示只知到月份、日期取当月15日，YTM 误差约 ±3bp，可接受；拿到精确日期就改成 'day'。",
+    "新增债券时必须填 currency；EUR 债不与美债曲线比，只对 EUR HY 指数做相对比较。"
+  ],
+  "bonds": [
+    {
+      "key": "CRWV-9.625-2032",
+      "issuer": "CoreWeave",
+      "label": "CRWV 9.625% Jul-32",
+      "tier": "corp",
+      "currency": "USD",
+      "coupon": 9.625,
+      "maturity": "2032-07-15",
+      "maturity_precision": "month",
+      "size_usd_mm": 1250,
+      "rating": "B",
+      "rating_cohort": "single_b",
+      "note": "公司层无担保高收益债",
+      "quote": {
+        "price": 98.65,
+        "as_of": "2026-07-30",
+        "source": "ICE/FactSet 挂牌报价（成交稀薄，与 TRACE 实际成交可能差数十 bp）"
+      }
+    },
+    {
+      "key": "CRWV-9.75-2031",
+      "issuer": "CoreWeave",
+      "label": "CRWV 9.75% Oct-31",
+      "tier": "corp",
+      "currency": "USD",
+      "coupon": 9.75,
+      "maturity": "2031-10-15",
+      "maturity_precision": "month",
+      "size_usd_mm": 2750,
+      "rating": "B",
+      "rating_cohort": "single_b",
+      "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
+      "is_l1_benchmark": true,
+      "quote": {
+        "price": 99.72,
+        "as_of": "2026-07-30",
+        "source": "ICE/FactSet 挂牌报价"
+      }
+    },
+    {
+      "key": "CRWV-9.00-2031",
+      "issuer": "CoreWeave",
+      "label": "CRWV 9.00% Feb-31",
+      "tier": "corp",
+      "currency": "USD",
+      "coupon": 9.0,
+      "maturity": "2031-02-15",
+      "maturity_precision": "month",
+      "size_usd_mm": 1750,
+      "rating": "B",
+      "rating_cohort": "single_b",
+      "note": "公司层无担保高收益债",
+      "quote": {
+        "price": 98.94,
+        "as_of": "2026-07-30",
+        "source": "ICE/FactSet 挂牌报价"
+      }
+    },
+    {
+      "key": "CRWV-8.50-2032-EUR",
+      "issuer": "CoreWeave",
+      "label": "CRWV 8.50% Jul-32 (EUR)",
+      "tier": "corp",
+      "currency": "EUR",
+      "coupon": 8.5,
+      "maturity": "2032-07-15",
+      "maturity_precision": "month",
+      "size_usd_mm": null,
+      "size_eur_mm": 2000,
+      "rating": "B",
+      "rating_cohort": "single_b",
+      "note": "欧元计价，不与美债曲线比；只对 EUR HY 指数(BAMLHE00EHYIOAS)做相对比较",
+      "quote": {
+        "price": 98.67,
+        "as_of": "2026-07-30",
+        "source": "ICE/FactSet 挂牌报价"
+      }
+    },
+    {
+      "key": "BLACKPEARL-6.125-2031",
+      "issuer": "Black Pearl (Cipher Mining SPV)",
+      "label": "Black Pearl 6.125% Feb-31",
+      "tier": "spv_ig_tenant",
+      "currency": "USD",
+      "coupon": 6.125,
+      "maturity": "2031-02-15",
+      "maturity_precision": "month",
+      "size_usd_mm": null,
+      "rating": null,
+      "rating_cohort": "bb",
+      "note": "项目层 SPV，背后是 AWS 10-15 年租约 → L2 真正的主题指标。这条走阔才是论点崩坏",
+      "is_l2_benchmark": true,
+      "quote": {
+        "price": 101.28,
+        "as_of": "2026-07-30",
+        "source": "ICE/FactSet 挂牌报价"
+      }
+    },
+    {
+      "key": "IREN-1.00-2033-CB",
+      "issuer": "IREN",
+      "label": "IREN 1.0% Dec-33 (CB)",
+      "tier": "convert",
+      "currency": "USD",
+      "coupon": 1.0,
+      "maturity": "2033-12-15",
+      "maturity_precision": "month",
+      "size_usd_mm": 3000,
+      "rating": null,
+      "rating_cohort": null,
+      "note": "转债：利差被期权价值污染，不可直读为纯信用利差 → 仅参考，不参与任何判定",
+      "quote": {
+        "price": 70.1,
+        "as_of": "2026-07-30",
+        "source": "ICE/FactSet 挂牌报价"
+      }
+    },
+    {
+      "key": "IREN-0.00-2031-CB",
+      "issuer": "IREN",
+      "label": "IREN 0% Jul-31 (CB)",
+      "tier": "convert",
+      "currency": "USD",
+      "coupon": 0.0,
+      "maturity": "2031-07-15",
+      "maturity_precision": "month",
+      "size_usd_mm": 1000,
+      "rating": null,
+      "rating_cohort": null,
+      "note": "零息转债，同上仅参考",
+      "quote": {
+        "price": 73.25,
+        "as_of": "2026-07-30",
+        "source": "ICE/FactSet 挂牌报价"
+      }
+    }
+  ],
+  "primary_market": {
+    "_readme": [
+      "一级市场是 L1 里信息含量最高的一项：发行人被迫让价 = 实时重定价，比二级指数 OAS 敏感得多。",
+      "每次 WebSearch 到 neocloud 新发债/杠杆贷款条款就追加一条；status: 'priced'|'repricing'|'pulled'|'postponed'。",
+      "spread_bp 用基准利率(SOFR/UST)之上的点数；oid 是发行折价(面值100)。脚本按 SOFR 折算全包成本。"
+    ],
+    "deals": [
+      {
+        "date": "2026-07-29",
+        "issuer": "CoreWeave",
+        "instrument": "Term Loan B (杠杆贷款)",
+        "size_usd_mm": 2600,
+        "base_rate": "SOFR",
+        "initial_spread_bp": 425,
+        "final_spread_bp": 550,
+        "initial_oid": 99.0,
+        "final_oid": 96.5,
+        "status": "repricing",
+        "purpose": "为 Anthropic 等客户扩充算力",
+        "source": "一级市场条款上调报导（定价讨论升至基准+5.5pt，OID 降至96-97）"
+      },
+      {
+        "date": "2026-06-中",
+        "issuer": "Applied Digital (子公司)",
+        "instrument": "高收益债",
+        "size_usd_mm": 1590,
+        "base_rate": "FIXED",
+        "initial_spread_bp": null,
+        "final_spread_bp": null,
+        "final_yield_pct": 7.0,
+        "oversubscription_x": 5.0,
+        "status": "priced",
+        "purpose": "CoreWeave 北达科他数据中心",
+        "source": "对照点：6月为信用修复叙事顶点（半年前投资人索要10%）"
+      }
+    ]
+  },
+  "manual_flags": {
+    "_readme": "WebSearch 判读得到的定性开关，脚本读取后并入判定。没有可靠新证据就保持 null(=未观察到)，不要猜。",
+    "primary_deal_pulled_or_postponed": null,
+    "hyperscaler_capex_guide_cut": null,
+    "cds_5y_bp": null,
+    "cds_5y_as_of": null,
+    "cds_source": "无实时 CDS 数据源；已知历史：2025-12 峰值 881bp、2026-06 降至 452bp。有 Bloomberg/Markit 时填这里，L1 判定会自动改用 CDS 基准"
+  }
+}
