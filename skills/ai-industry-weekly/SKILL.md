@@ -23,16 +23,16 @@ metadata:
 
 ## 文件地图
 
-| 路径 | 作用 |
-| --- | --- |
-| `assets/universe.json` | 权威标的清单与行序（唯一真相源） |
-| `assets/baseline.md` | 滚动基准表，**每次运行后被自动覆写** |
-| `references/data-sources.md` | 第一步取数口径与数据源细则 |
-| `references/rating-rules.md` | 第二步评级规则与逐标的特例（全文） |
-| `references/output-format.md` | 输出格式、Slack 推送、交付自检清单 |
-| `scripts/fetch_fundamentals.py` | 批量取基本面 |
-| `scripts/hk_quote.py` | 港股原始未复权实时行情 |
-| `scripts/baseline.py` | 基准表 show / meta / validate / diff / write |
+| 路径                            | 作用                                         |
+|---------------------------------|----------------------------------------------|
+| `assets/universe.json`          | 权威标的清单与行序（唯一真相源）             |
+| `assets/baseline.md`            | 滚动基准表，**每次运行后被自动覆写**         |
+| `references/data-sources.md`    | 第一步取数口径与数据源细则                   |
+| `references/rating-rules.md`    | 第二步评级规则与逐标的特例（全文）           |
+| `references/output-format.md`   | 输出格式、Slack 推送、交付自检清单           |
+| `scripts/fetch_fundamentals.py` | 批量取基本面                                 |
+| `scripts/hk_quote.py`           | 港股原始未复权实时行情                       |
+| `scripts/baseline.py`           | 基准表 show / meta / validate / diff / write |
 
 脚本**内部**用 `__file__` 相对定位 `assets/`，所以脚本自己找得到数据文件，与 cwd 无关。但**调用脚本的那条命令**仍要给对路径：本技能被触发时 cwd 通常是用户自己的项目，`python3 scripts/baseline.py ...` 这种相对写法会直接 `can't open file`。因此下文所有命令一律用第零步定下的 `$SKILL_DIR` 绝对路径调用。
 
