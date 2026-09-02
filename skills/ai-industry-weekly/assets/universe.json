@@ -1,0 +1,317 @@
+{
+  "_comment": "46 标的的权威清单与行序。baseline.py 用它校验产业表；fetch_fundamentals.py 用它取数。增减标的只改本文件。",
+  "columns": [
+    "代码",
+    "主题",
+    "8层",
+    "瓶颈",
+    "评级",
+    "论点",
+    "估值性格"
+  ],
+  "ratings": [
+    "🟢",
+    "🔵",
+    "🟡",
+    "🔴"
+  ],
+  "tickers": [
+    {
+      "order": 1,
+      "ticker": "NVDA",
+      "theme": "基建",
+      "layer": "L1"
+    },
+    {
+      "order": 2,
+      "ticker": "TSM",
+      "theme": "基建",
+      "layer": "L5",
+      "ratio_distorted": true
+    },
+    {
+      "order": 3,
+      "ticker": "ASML",
+      "theme": "基建",
+      "layer": "L5"
+    },
+    {
+      "order": 4,
+      "ticker": "AVGO",
+      "theme": "推理",
+      "layer": "L4+L1+L3"
+    },
+    {
+      "order": 5,
+      "ticker": "GOOGL",
+      "theme": "推理",
+      "layer": "L1"
+    },
+    {
+      "order": 6,
+      "ticker": "AMZN",
+      "theme": "推理",
+      "layer": "L1"
+    },
+    {
+      "order": 7,
+      "ticker": "MSFT",
+      "theme": "推理",
+      "layer": "L1"
+    },
+    {
+      "order": 8,
+      "ticker": "META",
+      "theme": "推理",
+      "layer": "L1"
+    },
+    {
+      "order": 9,
+      "ticker": "0700.HK",
+      "theme": "推理",
+      "layer": "L1",
+      "hk_quote": true,
+      "currency": "HKD",
+      "ratio_distorted": true
+    },
+    {
+      "order": 10,
+      "ticker": "BABA",
+      "theme": "推理",
+      "layer": "L1",
+      "ratio_distorted": true
+    },
+    {
+      "order": 11,
+      "ticker": "AMD",
+      "theme": "推理",
+      "layer": "L1"
+    },
+    {
+      "order": 12,
+      "ticker": "MU",
+      "theme": "基建",
+      "layer": "L2"
+    },
+    {
+      "order": 13,
+      "ticker": "000660.KS",
+      "theme": "基建",
+      "layer": "L2",
+      "currency": "KRW",
+      "ratio_distorted": true
+    },
+    {
+      "order": 14,
+      "ticker": "005930.KS",
+      "theme": "基建",
+      "layer": "L2+L5",
+      "currency": "KRW",
+      "ratio_distorted": true
+    },
+    {
+      "order": 15,
+      "ticker": "SNDK",
+      "theme": "基建",
+      "layer": "L2"
+    },
+    {
+      "order": 16,
+      "ticker": "ARM",
+      "theme": "推理",
+      "layer": "L7"
+    },
+    {
+      "order": 17,
+      "ticker": "MRVL",
+      "theme": "推理",
+      "layer": "L4+L3"
+    },
+    {
+      "order": 18,
+      "ticker": "COHR",
+      "theme": "CPO",
+      "layer": "L3"
+    },
+    {
+      "order": 19,
+      "ticker": "LITE",
+      "theme": "CPO",
+      "layer": "L3"
+    },
+    {
+      "order": 20,
+      "ticker": "GLW",
+      "theme": "CPO",
+      "layer": "L3"
+    },
+    {
+      "order": 21,
+      "ticker": "ALAB",
+      "theme": "CPO",
+      "layer": "L4"
+    },
+    {
+      "order": 22,
+      "ticker": "ADI",
+      "theme": "基建",
+      "layer": "L5"
+    },
+    {
+      "order": 23,
+      "ticker": "TXN",
+      "theme": "基建",
+      "layer": "L5"
+    },
+    {
+      "order": 24,
+      "ticker": "TTMI",
+      "theme": "基建",
+      "layer": "L5"
+    },
+    {
+      "order": 25,
+      "ticker": "INTC",
+      "theme": "基建",
+      "layer": "L5"
+    },
+    {
+      "order": 26,
+      "ticker": "GFS",
+      "theme": "基建",
+      "layer": "L5"
+    },
+    {
+      "order": 27,
+      "ticker": "NOK",
+      "theme": "CPO",
+      "layer": "L4+L6"
+    },
+    {
+      "order": 28,
+      "ticker": "AAOI",
+      "theme": "CPO",
+      "layer": "L3"
+    },
+    {
+      "order": 29,
+      "ticker": "AXTI",
+      "theme": "CPO",
+      "layer": "L3"
+    },
+    {
+      "order": 30,
+      "ticker": "MRAAY",
+      "theme": "基建",
+      "layer": "L5",
+      "ratio_distorted": true
+    },
+    {
+      "order": 31,
+      "ticker": "TSLA",
+      "theme": "物理AI",
+      "layer": "L1"
+    },
+    {
+      "order": 32,
+      "ticker": "1810.HK",
+      "theme": "物理AI",
+      "layer": "L1",
+      "hk_quote": true,
+      "currency": "HKD",
+      "ratio_distorted": true
+    },
+    {
+      "order": 33,
+      "ticker": "ANET",
+      "theme": "推理",
+      "layer": "L4"
+    },
+    {
+      "order": 34,
+      "ticker": "CSCO",
+      "theme": "推理",
+      "layer": "L4"
+    },
+    {
+      "order": 35,
+      "ticker": "NET",
+      "theme": "推理",
+      "layer": "L4+L7"
+    },
+    {
+      "order": 36,
+      "ticker": "VRT",
+      "theme": "基建",
+      "layer": "L6"
+    },
+    {
+      "order": 37,
+      "ticker": "BE",
+      "theme": "基建",
+      "layer": "L6"
+    },
+    {
+      "order": 38,
+      "ticker": "DELL",
+      "theme": "基建",
+      "layer": "L6"
+    },
+    {
+      "order": 39,
+      "ticker": "0941.HK",
+      "theme": "基建",
+      "layer": "L6",
+      "hk_quote": true,
+      "currency": "HKD",
+      "ratio_distorted": true
+    },
+    {
+      "order": 40,
+      "ticker": "RKLB",
+      "theme": "太空",
+      "layer": "L8"
+    },
+    {
+      "order": 41,
+      "ticker": "SPCX",
+      "theme": "太空",
+      "layer": "L8"
+    },
+    {
+      "order": 42,
+      "ticker": "DRAM",
+      "theme": "ETF",
+      "layer": "ETF",
+      "etf": true
+    },
+    {
+      "order": 43,
+      "ticker": "LYTE",
+      "theme": "ETF",
+      "layer": "ETF",
+      "etf": true
+    },
+    {
+      "order": 44,
+      "ticker": "NCLD",
+      "theme": "ETF",
+      "layer": "ETF",
+      "etf": true
+    },
+    {
+      "order": 45,
+      "ticker": "SMH",
+      "theme": "ETF",
+      "layer": "ETF",
+      "etf": true
+    },
+    {
+      "order": 46,
+      "ticker": "SOXX",
+      "theme": "ETF",
+      "layer": "ETF",
+      "etf": true
+    }
+  ]
+}
