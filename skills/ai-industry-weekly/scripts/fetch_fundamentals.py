@@ -56,6 +56,19 @@ UNIVERSE_PATH = SKILL_DIR / "assets" / "universe.json"
 HK_QUOTE_SCRIPT = HERE / "hk_quote.py"
 
 
+def tilde_path(path) -> str:
+    """把家目录折叠成 ~，用于回显**用户自传**的路径（如 --json 落盘位置）。
+
+    这类路径不属于技能自身、rel_path 会把它退化成裸文件名，找不回文件；
+    但它同样含本机用户名，而本脚本输出会被贴进报告并推 Slack，所以要折叠。
+    """
+    p = Path(path)
+    try:
+        return "~/" + str(p.resolve().relative_to(Path.home()))
+    except (ValueError, OSError):
+        return str(p)
+
+
 def rel_path(path: Path) -> str:
     """技能自身的路径一律相对技能根目录展示。
 
@@ -873,7 +886,8 @@ def main():
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, ensure_ascii=False, indent=2)
-        print(f"JSON 已写入 {out}", file=sys.stderr)
+        # 用户自传的路径同样含用户名，而本脚本输出会被贴进报告并推 Slack。
+        print(f"JSON 已写入 {tilde_path(out)}", file=sys.stderr)
 
     if not args.quiet:
         print_rows(records, uni_meta, warnings, failed, partial)
