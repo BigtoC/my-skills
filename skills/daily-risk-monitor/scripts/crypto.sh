@@ -30,15 +30,35 @@
 # │   绝不用推断值填补（行为准则第 1 条）。                                  │
 # │ · BTC Dominance 的 CoinGecko 与 CoinPaprika **口径不同**（分母不同，     │
 # │   实测同日 59.1% vs 56.9%）→ 换源当日必须注明，不可跨日直接比较。        │
+# │ · 信号 16 的「7d 跌幅 >3%」这条腿曾经**结构性永久不可判定**（固定印     │
+# │   「需 CoinGecko Pro」），害得加密信号触发计数系统性偏低。              │
+# │   关键认识：缺的是「全市场市值**历史序列**」，不是「**当日** dominance」│
+# │   ——当日值每天都免费取得到。换第三方源只会引入第三套分母口径，所以      │
+# │   正解是**自己按天累积同源历史**（assets/dominance_history.jsonl），     │
+# │   7 天后这条腿就能自己回答，且分母口径天然一致。见 dom_history_append。 │
 # └──────────────────────────────────────────────────────────────────────────┘
 #
 # 依赖：bash、curl、jq、awk。
 # 退出码：0 正常｜1 参数错误｜2 依赖缺失｜3 数据暂缺（全部来源失败或本无免费源）
+#
+# ⚠️ 本脚本是五支 shell 脚本里**唯一**会读写技能目录内档案的一支
+#    （assets/dominance_history.jsonl）。因此它由 $0 反推技能根目录，
+#    **与 cwd 无关**；历史档写不进去只告警、取数照常输出并 exit 0。
 
 set -euo pipefail
 
 PROG="$(basename "$0")"
 TIMEOUT=25
+
+# ── 技能目录锚定（只有信号 16 的本地历史档需要）──────────────────────────
+# 由 $0 反推，不看 cwd：SKILL.md 一律用绝对路径调用，但排查时常从别的 cwd 跑。
+# 印在输出里的一律是 $DOM_HISTORY_REL（相对路径）——绝对路径含家目录形状，
+# 而本技能的输出会进报告并推 Slack（行为准则第 4 条）。
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)" || SCRIPT_DIR=""
+SKILL_ROOT="$(dirname "${SCRIPT_DIR:-.}")"
+DOM_HISTORY_REL="assets/dominance_history.jsonl"
+DOM_HISTORY="${SKILL_ROOT}/${DOM_HISTORY_REL}"
+DOM_HISTORY_MAX=90      # 保留上限，超出丢最旧的；约 3 个月，档案不会无限增长
 
 BINANCE="https://fapi.binance.com/fapi/v1"
 HYPERLIQUID="https://api.hyperliquid.xyz/info"
@@ -51,6 +71,12 @@ FUND_HOT_8H=0.05        # 三者同时 >0.05%/8h 且持续 ≥24h = 多头杠杆
 FUND_EXTREME_8H=0.10    # 任一 >0.1%/8h = 急迫反转风险
 DOM_DROP_24H=2.0        # BTC Dominance 24h 跌幅 >2%
 DOM_DROP_7D=3.0         # BTC Dominance 7d 跌幅 >3%
+# 7d 基准的可用年龄窗口（天）。下限 6 是为了不拿三四天前的读数冒充 7 日变动；
+# **上限 10 同样是硬约束**：漏跑几天后最接近的一笔可能是 31 天前，
+# 拿它算出来的数字是「31 日变动」，贴上「7d 变动」的标签就是编数字。
+# 窗口外一律 ⚪️ 断层，绝不将就。
+DOM_7D_MIN_AGE=6
+DOM_7D_MAX_AGE=10
 STABLE_DAY_OUT_USD=1000000000   # 单日净流出 >$1B 必须标注
 
 SYMBOLS="BTC ETH SOL"
@@ -72,14 +98,22 @@ ${PROG} —— 加密永续与市场（信号 14–17）
 选项:
   --json        以 JSON 输出
   --symbols A,B 只查指定币种（默认 BTC,ETH,SOL；仅对 funding 有效）
+  --history     只印本地累积的 dominance 历史（仅对 dominance 有效，不连网）
   -h, --help    显示本说明
 
 例子:
   ${PROG} funding
   ${PROG} funding --symbols BTC,ETH
   ${PROG} dominance
+  ${PROG} dominance --history          # 排查 7d 腿：看已累积几天、来源是否一致
   ${PROG} stablecoins --json
   ${PROG} all --json
+
+信号 16 的 7d 腿:
+  「7d 跌幅 >3%」不再是永久不可判定。dominance 每次成功取数会往
+  ${DOM_HISTORY_REL} 追加一笔（同日重跑覆盖，最多留 ${DOM_HISTORY_MAX} 笔），
+  累积满 7 天后本脚本自己算 7d 变动。**7 日前那笔的 source 必须与今日相同**，
+  否则一律拒绝比较（分母口径不同）。历史不足 7 天一律 ⚪️，绝不当成未触发。
 
 退出码:
   all 只要有任一区块取到数就回 0，并在结尾列出「本次数据暂缺项」；
@@ -106,10 +140,12 @@ fi
 # ── 参数 ──
 JSON=0
 CMD=""
+HISTORY_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --json) JSON=1; shift ;;
+    --history) HISTORY_ONLY=1; shift ;;
     --symbols)
       [ $# -ge 2 ] || die "--symbols 需要一个以逗号分隔的清单，例如 BTC,ETH。" 1
       echo "$2" | grep -qE '^[A-Za-z0-9]+(,[A-Za-z0-9]+)*$' || die "--symbols 格式错误，收到「$2」。" 1
@@ -121,7 +157,12 @@ while [ $# -gt 0 ]; do
     *)  die "未知子命令「$1」。可用：funding / liquidations / dominance / stablecoins / all。" 1 ;;
   esac
 done
+# --history 单独给也算数：它只对 dominance 有意义，直接补上子命令，
+# 不要为了「子命令必给」的规矩逼使用者多打一个字。
+[ "$HISTORY_ONLY" -eq 0 ] || [ -n "$CMD" ] || CMD="dominance"
 [ -n "$CMD" ] || { usage; exit 1; }
+[ "$HISTORY_ONLY" -eq 0 ] || [ "$CMD" = "dominance" ] \
+  || die "--history 只对 dominance 子命令有效（收到「${CMD}」）。" 1
 
 WORK="$(mktemp -d 2>/dev/null)" || die "无法建立临时目录。" 2
 trap 'rm -rf "$WORK"' EXIT INT TERM
@@ -354,7 +395,176 @@ liquidations_json() {
 }
 
 # ═══════════════════════════ 信号 16 · BTC Dominance ═══════════════════════
+#
+# ── 本地 dominance 历史：7d 腿为什么自己累积，而不是换源 ─────────────────
+# 免费层拿不到的是「全市场市值**历史序列**」（/global/market_cap_chart 实测
+# HTTP 401，需 Pro）；「**当日** dominance」每天都免费取得到。两者是两回事。
+# 若改用第三方历史源，就会引入**第三套分母口径**——档头已写明 CoinGecko 与
+# CoinPaprika 实测同日 59.1% vs 56.9%，差约 2pt，而 7d 阈值只有 3%：跨源相减
+# 出来的「跌幅」多半是分母差，不是真实资金流动。所以正解是按天累积同源历史，
+# 7 天后这条腿自己回答，分母口径天然一致（行为准则第 2 条）。
+#
+# 硬规矩：7 日前那笔的 source 必须与今日相同，否则**拒绝比较**并印 ⚪️；
+#         历史不足 7 天也印 ⚪️，**绝不因为其余条件都正常就推断这条腿安全**。
 DOM_STATUS="pending"
+DOM_SEVEN_JSON='{"status":"insufficient","history_days":0,"history_since":null}'
+
+dom_history_read() {
+  # 印出档里所有**合法**纪录（一行一笔 JSON）到 stdout。
+  # 逐行校验而不是让 jq 一口气吃整个档：一行坏掉就整档解析失败的话，
+  # 会把已经累积好的历史整批当成不存在——那比少一行严重得多。
+  [ -f "$DOM_HISTORY" ] || return 0
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    printf '%s\n' "$line" | jq -ce '
+      select(type=="object"
+             and (.date? | type) == "string"
+             and (.dominance_pct? | type) == "number"
+             and (.source? | type) == "string")' 2>/dev/null || continue
+  done < "$DOM_HISTORY"
+  return 0
+}
+
+dom_history_append() {   # $1=date $2=dominance_pct $3=source_key $4=fetched_at
+  # 一天一笔：同日重跑**覆盖**当日那笔（不追加第二笔），再按日期排序、
+  # 只留最新 ${DOM_HISTORY_MAX} 笔。写入走「同目录 mktemp → mv」原子替换，
+  # 中途失败不会留下半截档把既有历史毁掉。
+  # 写失败一律**只告警不中断**：取数照常输出、照常 exit 0（行为准则第 5 条）。
+  local dir tmp new fail
+  fail="⚠️ 本地 dominance 历史写入失败（${DOM_HISTORY_REL}）：%s。本次取数照常输出，但 7d 腿的基准点未累积。"
+  dir="$(dirname "$DOM_HISTORY")"
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    warn "$(printf "$fail" "无法建立所在目录")"; return 1
+  fi
+  new="$(jq -nc --arg d "$1" --argjson p "$2" --arg s "$3" --arg t "$4" \
+           '{date:$d, dominance_pct:$p, source:$s, fetched_at:$t}' 2>/dev/null)" || new=""
+  if [ -z "$new" ]; then
+    warn "$(printf "$fail" "无法组出纪录（dominance=${2}）")"; return 1
+  fi
+  tmp="$(mktemp "${dir}/.dominance_history.XXXXXX" 2>/dev/null)" || tmp=""
+  if [ -z "$tmp" ]; then
+    warn "$(printf "$fail" "所在目录不可写")"; return 1
+  fi
+  if { dom_history_read | jq -c --arg d "$1" 'select(.date != $d)'; printf '%s\n' "$new"; } \
+       | jq -sc --argjson cap "$DOM_HISTORY_MAX" \
+           'sort_by(.date) | (if length > $cap then .[length-$cap:] else . end) | .[]' \
+       > "$tmp" 2>/dev/null \
+     && mv -f "$tmp" "$DOM_HISTORY" 2>/dev/null; then
+    # mktemp 给的是 0600；这个档会被 commit 进仓库，跟其它状态档保持一致。
+    chmod 644 "$DOM_HISTORY" 2>/dev/null || true
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  warn "$(printf "$fail" "档案不可写")"
+  return 1
+}
+
+dom_seven_day() {   # $1=today $2=dominance_now $3=source_key → JSON 到 stdout
+  # 基准取「年龄落在 [6,10] 天、且最接近 7 天」的那一笔。
+  # 下限 6：不拿三四天前的读数冒充 7 日变动。
+  # 上限 10：漏跑几天后最接近的一笔可能是 31 天前 —— 那是「31 日变动」，
+  #          贴上「7d 变动」的标签就是编数字。窗口外一律 ⚪️ 断层。
+  # 排序键 |age-7| 优先、其次取较新的一笔，纯粹为了结果可重现。
+  dom_history_read | jq -sc \
+      --arg today "$1" --argjson now "$2" --arg src "$3" --argjson t7 "$DOM_DROP_7D" \
+      --argjson amin "$DOM_7D_MIN_AGE" --argjson amax "$DOM_7D_MAX_AGE" '
+    def epochday: (strptime("%Y-%m-%d") | mktime) / 86400 | floor;
+    . as $all
+    | ($all | map(.date) | unique) as $days
+    | ($today | epochday) as $t0
+    | [ $all[] | select(.date != $today) | . + {age: ($t0 - (.date | epochday))} ] as $prev
+    | ( $prev | map(select(.age >= $amin and .age <= $amax)) ) as $inwin
+    # 同源优先：先在窗口内找与今日同源的，找不到才退回任意源（那时必然报 source_mismatch）。
+    # 若只按年龄挑，窗口内「7天前·异源」会盖掉「8天前·同源」，
+    # 明明有可用的同源基准却被判成不可比 —— 白白丢掉一次本可成立的判定。
+    | ( ( $inwin | map(select(.source == $src)) | sort_by(((.age - 7) | length), .age) | first )
+        // ( $inwin | sort_by(((.age - 7) | length), .age) | first ) ) as $base
+    | ( $prev | map(select(.age >= $amin)) | sort_by(.age) | first ) as $nearest
+    | { history_days: ($days | length),
+        history_since: ($days | first),
+        history_until: ($days | last),
+        today_source: $src,
+        base_age_window_days: [$amin, $amax] }
+      + ( if $base != null and $base.source != $src then
+            {status:"source_mismatch",
+             reason:"历史记录来自不同数据源，分母口径不同不可比较",
+             base_date:$base.date, base_age_days:$base.age,
+             base_source:$base.source, base_dominance_pct:$base.dominance_pct}
+          elif $base != null then
+            (($now - $base.dominance_pct)) as $dpt
+            | (($dpt / $base.dominance_pct) * 100) as $drel
+            | {status:"ok",
+               base_date:$base.date, base_age_days:$base.age,
+               base_source:$base.source, base_dominance_pct:$base.dominance_pct,
+               delta_pt:$dpt, delta_rel_pct:$drel,
+               triggered:($drel < (0 - $t7))}
+          elif $nearest != null then
+            {status:"gap",
+             reason:"本地历史有断层：最接近的一笔落在 \($amin)–\($amax) 天的可用窗口之外",
+             nearest_date:$nearest.date, nearest_age_days:$nearest.age,
+             nearest_source:$nearest.source}
+          else
+            {status:"insufficient",
+             reason:"本地同源历史不足 7 天，7d 变动无法判定（不得视为未触发）"}
+          end )' 2>/dev/null
+}
+
+dom_record_and_seven() {
+  # 取数成功后：先落一笔历史，再据历史算 7d。日期一律 UTC，与纪录里的一致。
+  local today ts dom src
+  today="$(date -u +%Y-%m-%d)"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  dom="$(jq -r '.dominance_pct // empty' "$WORK/dom.json")"
+  src="$(jq -r '.source_key // empty' "$WORK/dom.json")"
+  if [ -z "$dom" ] || [ -z "$src" ]; then
+    warn "⚠️ 本次 dominance 读数缺 dominance_pct / source_key，跳过历史累积。"
+    return 0
+  fi
+  dom_history_append "$today" "$dom" "$src" "$ts" || true
+  local sev
+  sev="$(dom_seven_day "$today" "$dom" "$src")" || sev=""
+  [ -n "$sev" ] || sev='{"status":"insufficient","history_days":0,"history_since":null,"reason":"历史档读取失败"}'
+  DOM_SEVEN_JSON="$sev"
+  return 0
+}
+
+render_dom_history() {
+  if [ "$JSON" -eq 1 ]; then
+    dom_history_read | jq -s --arg f "$DOM_HISTORY_REL" --argjson cap "$DOM_HISTORY_MAX" \
+      '{signal:16, name:"BTC Dominance 本地历史", file:$f, retention_max:$cap,
+        count:length, records:sort_by(.date)}'
+    return 0
+  fi
+  echo "【信号 16】BTC Dominance 本地历史　档案：${DOM_HISTORY_REL}（保留上限 ${DOM_HISTORY_MAX} 笔，日期为 UTC）"
+  if [ ! -f "$DOM_HISTORY" ]; then
+    echo "  ⚪️ 尚无本地历史——「dominance」第一次成功取数后才会建立（这不是安装缺档）。"
+    echo "  在那之前 7d 腿一律 ⚪️「历史不足」，**不得当成未触发**。"
+    return 0
+  fi
+  # 表头用字面量对齐：printf 的 %-12s 数的是**位元组**，中文字一个 3 位元组、
+  # 显示宽度却是 2 —— 拿 %-12s 排中文表头，栏位一定歪。
+  echo "  日期(UTC)     dominance%  来源           取数时间(UTC)"
+  dom_history_read | jq -sr 'sort_by(.date)[] | [.date, (.dominance_pct|tostring), .source, (.fetched_at // "—")] | @tsv' \
+    | awk -F'\t' '{ printf "  %-12s %11.2f  %-14s %s\n", $1, $2, $3, $4 }'
+  dom_history_read | jq -sr \
+      --arg today "$(date -u +%Y-%m-%d)" \
+      --argjson amin "$DOM_7D_MIN_AGE" --argjson amax "$DOM_7D_MAX_AGE" '
+      def epochday: (strptime("%Y-%m-%d") | mktime) / 86400 | floor;
+      ($today | epochday) as $t0
+      | (map(.date) | unique) as $d
+      | [ .[] | select(.date != $today) | ($t0 - (.date|epochday)) | select(. >= $amin and . <= $amax) ] as $win
+      | "  合计 \($d|length) 天（\($d|first // "—") … \($d|last // "—")）；来源分布："
+        + ((group_by(.source) | map("\(.[0].source)×\(length)") | join("、")) // "—"),
+      (if ($win|length) > 0 then
+         "  7d 腿：以今日（\($today)）为准已具备判定条件（仍须该笔与今日同源，否则拒绝比较）。"
+       elif ($d|length) >= 7 then
+         "  7d 腿：⚪️ 以今日（\($today)）为准，\($amin)–\($amax) 天窗口内没有基准（历史断层）；不得当成未触发。"
+       else
+         "  7d 腿：⚪️ 历史不足（已累积 \($d|length) 天，7d 判定需 ≥7 天）；不得当成未触发。" end)' \
+    2>/dev/null || true
+}
+
 run_dominance() {
   local code
   code="$(http_get "${COINGECKO}/global" "$WORK/cg_global.json")"
@@ -376,6 +586,7 @@ run_dominance() {
         | ($b[0].market_cap_change_percentage_24h)         as $bchg
         | (($bmc / (1 + $bchg/100)) / ($tot / (1 + $tchg/100)) * 100) as $dom_prev
         | {source:"CoinGecko /global + /coins/markets",
+           source_key:"coingecko",
            dominance_pct:$dom_now, dominance_24h_ago_pct:$dom_prev,
            delta_pt:($dom_now - $dom_prev),
            delta_rel_pct:(($dom_now - $dom_prev)/$dom_prev*100),
@@ -384,7 +595,8 @@ run_dominance() {
       DOM_STATUS="ok"; return 0
     fi
     jq -n --argjson g "$(cat "$WORK/cg_global.json")" '
-      {source:"CoinGecko /global", dominance_pct:$g.data.market_cap_percentage.btc,
+      {source:"CoinGecko /global", source_key:"coingecko",
+       dominance_pct:$g.data.market_cap_percentage.btc,
        dominance_24h_ago_pct:null, delta_pt:null, delta_rel_pct:null,
        total_mcap_usd:$g.data.total_market_cap.usd, btc_mcap_usd:null,
        total_mcap_change_24h_pct:$g.data.market_cap_change_percentage_24h_usd,
@@ -398,6 +610,7 @@ run_dominance() {
      && [ "$(jq -r '.bitcoin_dominance_percentage // "null"' "$WORK/cp_global.json")" != "null" ]; then
     jq -n --argjson p "$(cat "$WORK/cp_global.json")" '
       {source:"CoinPaprika /global（⚠️ 与 CoinGecko 口径不同，分母不同，实测同日可差 2pt 以上——不可与前日 CoinGecko 读数比较）",
+       source_key:"coinpaprika",
        dominance_pct:($p.bitcoin_dominance_percentage),
        dominance_24h_ago_pct:null, delta_pt:null, delta_rel_pct:null,
        total_mcap_usd:($p.market_cap_usd), btc_mcap_usd:null,
@@ -424,10 +637,51 @@ render_dominance_text() {
     printf '  24h 前（回推）     %s%%\n' "$(num "$prev" 2)"
     printf '  24h 变动           %s pt（相对 %s%%）　正=上升／负=下降\n' "$(snum "$dpt" 2)" "$(snum "$drel" 2)"
   fi
-  echo "  7d 变动            ⚪️ 数据暂缺"
-  echo "     原因：全市场市值历史序列需 CoinGecko Pro（/global/market_cap_chart 实测回 HTTP 401）；"
-  echo "           免费层无同口径 7 日序列。请改 web_fetch coingecko / tradingview 的 BTC.D 图表，"
-  echo "           并在报告中写出上次已知读数与滞后周数。"
+  # 7d 变动：由 assets/dominance_history.jsonl 里**同源**的历史自答。
+  local st7 hd hs bdate bage bsrc bdom d7pt d7rel
+  st7="$(printf '%s' "$DOM_SEVEN_JSON"  | jq -r '.status')"
+  hd="$(printf '%s' "$DOM_SEVEN_JSON"   | jq -r '.history_days')"
+  hs="$(printf '%s' "$DOM_SEVEN_JSON"   | jq -r '.history_since // "—"')"
+  case "$st7" in
+    ok)
+      bdate="$(printf '%s' "$DOM_SEVEN_JSON" | jq -r '.base_date')"
+      bage="$(printf  '%s' "$DOM_SEVEN_JSON" | jq -r '.base_age_days')"
+      bsrc="$(printf  '%s' "$DOM_SEVEN_JSON" | jq -r '.base_source')"
+      bdom="$(printf  '%s' "$DOM_SEVEN_JSON" | jq -r '.base_dominance_pct')"
+      d7pt="$(printf  '%s' "$DOM_SEVEN_JSON" | jq -r '.delta_pt')"
+      d7rel="$(printf '%s' "$DOM_SEVEN_JSON" | jq -r '.delta_rel_pct')"
+      printf '  7d 前（%s，%s 天前）  %s%%　来源 %s（与今日同源）\n' \
+             "$bdate" "$bage" "$(num "$bdom" 2)" "$bsrc"
+      printf '  7d 变动            %s pt（相对 %s%%）　正=上升／负=下降\n' \
+             "$(snum "$d7pt" 2)" "$(snum "$d7rel" 2)"
+      printf '     基准：本地历史 %s（自 %s 起累积，已 %s 天）\n' "$DOM_HISTORY_REL" "$hs" "$hd"
+      ;;
+    source_mismatch)
+      bdate="$(printf '%s' "$DOM_SEVEN_JSON" | jq -r '.base_date')"
+      bsrc="$(printf  '%s' "$DOM_SEVEN_JSON" | jq -r '.base_source')"
+      echo "  7d 变动            ⚪️ 无法判定 → 本项不得填数字"
+      printf '     原因：历史记录来自不同数据源（今日 %s vs 7日前 %s @ %s），分母口径不同不可比较。\n' \
+             "$(jq -r '.source_key' "$WORK/dom.json")" "$bsrc" "$bdate"
+      echo "           口径红线：不同源的 dominance 分母不同（CoinGecko 与 CoinPaprika 实测同日可差 2pt 以上，"
+      printf '           而 7d 阈值只有 %s%%），跨源相减出来的「跌幅」多半是分母差，不是真实资金流动。\n' "$DOM_DROP_7D"
+      printf '           等 %s 累积满 7 天同源读数后，本项自动恢复。\n' "$DOM_HISTORY_REL"
+      ;;
+    gap)
+      bdate="$(printf '%s' "$DOM_SEVEN_JSON" | jq -r '.nearest_date')"
+      bage="$(printf  '%s' "$DOM_SEVEN_JSON" | jq -r '.nearest_age_days')"
+      echo "  7d 变动            ⚪️ 无法判定 → 本项不得填数字"
+      printf '     原因：本地历史有断层——最接近的一笔是 %s（%s 天前），落在 %s–%s 天的可用窗口之外。\n' \
+             "$bdate" "$bage" "$DOM_7D_MIN_AGE" "$DOM_7D_MAX_AGE"
+      printf '           拿 %s 天前的读数算出来的是「%s 日变动」，贴上「7d 变动」的标签就是编数字。\n' "$bage" "$bage"
+      printf '           连跑几天补上 %s 就会自动恢复。\n' "$DOM_HISTORY_REL"
+      ;;
+    *)
+      printf '  7d 变动            ⚪️ 历史不足（已累积 %s 天，7d 判定需 ≥7 天）\n' "$hd"
+      printf '     本地历史自 %s 起累积（%s）；每天跑一次 dominance 就会自己补齐。\n' "$hs" "$DOM_HISTORY_REL"
+      echo "     注：缺的只是「历史序列」，当日 dominance 本身取得到——所以这里不换源"
+      echo "         （换源会引入第三套分母口径），而是等同源历史累积够。"
+      ;;
+  esac
   echo
   echo "阈值判定（信号 16：24h 跌幅 >2% 或 7d 跌幅 >3% = 山寨狂热期）："
   if [ "$drel" = "null" ]; then
@@ -443,16 +697,41 @@ render_dominance_text() {
     echo "     ⚠️ 口径提示：上面按**相对百分比**判定。若报告采用**百分点**口径，"
     printf '        请改用 Δpt = %s pt 自行判定——两种口径结论可能不同，别混用。\n' "$(snum "$dpt" 2)"
   fi
-  printf '  7d 跌幅 >%s%% .... ⚪️ 无法判定（无免费同口径 7 日序列）\n' "$DOM_DROP_7D"
+  case "$st7" in
+    ok)
+      # 与 24h 同一套规则：阈值按**相对百分比**判定，Δpt 另印一份供百分点口径使用。
+      if awk -v d="$d7rel" -v t="$DOM_DROP_7D" 'BEGIN{ exit (d < -t) ? 0 : 1 }'; then
+        printf '  7d 跌幅 >%s%% .... ✅ 触发（7d 变动 相对 %s%%，基准日 %s）\n' \
+               "$DOM_DROP_7D" "$(snum "$d7rel" 2)" "$bdate"
+      else
+        printf '  7d 跌幅 >%s%% .... ❌ 未触发（7d 变动 相对 %s%%，正=上升／负=下降）\n' \
+               "$DOM_DROP_7D" "$(snum "$d7rel" 2)"
+      fi
+      echo "     ⚠️ 口径提示：上面按**相对百分比**判定。若报告采用**百分点**口径，"
+      printf '        请改用 Δpt = %s pt 自行判定——两种口径结论可能不同，别混用。\n' "$(snum "$d7pt" 2)"
+      ;;
+    source_mismatch)
+      printf '  7d 跌幅 >%s%% .... ⚪️ 无法判定（7 日前那笔与今日不同源，分母口径不可比较）\n' "$DOM_DROP_7D"
+      ;;
+    gap)
+      printf '  7d 跌幅 >%s%% .... ⚪️ 无法判定（本地历史断层，%s–%s 天窗口内没有基准）\n' \
+             "$DOM_DROP_7D" "$DOM_7D_MIN_AGE" "$DOM_7D_MAX_AGE"
+      echo "     **不得因为其余条件都正常就把这条腿写成「未触发」**——那会让加密信号触发计数偏低。"
+      ;;
+    *)
+      printf '  7d 跌幅 >%s%% .... ⚪️ 无法判定（本地历史仅 %s 天，未满 7 天）\n' "$DOM_DROP_7D" "$hd"
+      echo "     **不得因为其余条件都正常就把这条腿写成「未触发」**——那会让加密信号触发计数偏低。"
+      ;;
+  esac
 }
 
 dominance_json() {
-  jq --argjson t24 "$DOM_DROP_24H" --argjson t7 "$DOM_DROP_7D" --arg st "$DOM_STATUS" '
+  jq --argjson t24 "$DOM_DROP_24H" --argjson t7 "$DOM_DROP_7D" --arg st "$DOM_STATUS" \
+     --argjson sev "$DOM_SEVEN_JSON" --arg hf "$DOM_HISTORY_REL" --argjson hcap "$DOM_HISTORY_MAX" '
     . + {signal:16, name:"BTC Dominance", status:$st,
          thresholds:{drop_24h_rel_pct:$t24, drop_7d_rel_pct:$t7},
-         seven_day:{status:"missing",
-                    reason:"CoinGecko /global/market_cap_chart 需 Pro（实测 HTTP 401），免费层无同口径 7 日全市场市值序列"},
-         caliber_note:"24h 判定用相对百分比口径；delta_pt 为百分点口径，两者不可混用"}' "$WORK/dom.json"
+         seven_day:($sev + {history_file:$hf, history_retention_max:$hcap}),
+         caliber_note:"24h 与 7d 判定都用相对百分比口径；delta_pt 为百分点口径，两者不可混用。7d 基准取自本地同源历史，源不同一律拒绝比较"}' "$WORK/dom.json"
 }
 
 # ═══════════════════════ 信号 17 · 稳定币总供应（USDT+USDC）══════════════════
@@ -578,7 +857,10 @@ do_liquidations() {
 do_dominance() {
   if run_dominance; then
     OKCOUNT=$((OKCOUNT+1))
+    dom_record_and_seven
     [ "$DOM_STATUS" = "ok" ] || mark_missing "信号16 dominance 24h 变动"
+    [ "$(printf '%s' "$DOM_SEVEN_JSON" | jq -r '.status')" = "ok" ] \
+      || mark_missing "信号16 dominance 7d 变动"
     if [ "$JSON" -eq 1 ]; then dominance_json > "$WORK/out_dom.json"; else render_dominance_text; fi
   else
     mark_missing "信号16 BTC Dominance"
@@ -613,6 +895,12 @@ do_stablecoins() {
 }
 
 STABLE_NOTE=""
+
+# --history：只读本地历史，不连网、不取数（排查 7d 腿用）。
+if [ "$HISTORY_ONLY" -eq 1 ]; then
+  render_dom_history
+  exit 0
+fi
 
 case "$CMD" in
   funding)
