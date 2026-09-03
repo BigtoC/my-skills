@@ -39,31 +39,35 @@ metadata:
 
 ## 文件地图
 
-| 路径                                      | 作用                                                                                                                                   |
-|-------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
-| `references/data-cadence.md`              | 各信号源头更新频率、非更新日口径、FRED/yfinance 通用取数配方                                                                           |
-| `references/signals-a-macro.md`           | 信号 1–6 宏观/信用（Tier 1）                                                                                                           |
-| `references/signals-b-positioning.md`     | 信号 7–13 仓位/情绪/杠杆（Tier 2）                                                                                                     |
-| `references/signals-c-crypto.md`          | 信号 14–18 加密与美股 24/7 永续                                                                                                        |
-| `references/signals-d-antiemotion.md`     | 信号 19–22 抗情绪层（服务目标 1）                                                                                                      |
-| `references/signals-e-cycle-valuation.md` | 信号 23–30 周期趋势与长期估值                                                                                                          |
-| `references/signals-f-monday.md`          | 信号 31–34 周一附加（不计入 30 项、不参与触发计数）                                                                                    |
-| `references/decision-framework.md`        | 告警分级、7 项硬阈值、双轨决策层、停止加仓定义、恢复条件                                                                               |
-| `references/output-format.md`             | 报告 9 个部分的结构、强制归因规则、Slack 推送格式                                                                                      |
-| `references/known-traps.md`               | **行为准则**、实测基线、已知失效/陷阱全表                                                                                              |
-| `scripts/fred.sh`                         | FRED 序列取数（信号 1、4、23、24、32）；`--net-liquidity` 信号 5；`--buffett` 信号 27（**两序列同季对齐**后取末行）                    |
-| `scripts/cnn_fng.sh`                      | CNN Fear & Greed（信号 9）                                                                                                             |
-| `scripts/crypto.sh`                       | 资金费率 / 清算 / BTC Dominance / 稳定币（信号 14–17）；子命令必给，`liquidations` 设计上一定 exit 3                                   |
-| `scripts/stock_perp.sh`                   | Hyperliquid `xyz` 池美股永续（信号 18）                                                                                                |
-| `scripts/cape.sh`                         | multpl.com Shiller CAPE（信号 28）                                                                                                     |
-| `scripts/market.py`                       | yfinance 行情与波动率块（信号 19–22、26、33–34）；信号 26 另出 `above_200dma` / `slope_positive` 两个**当日**布尔给 `snapshot.py` 累积 |
-| `scripts/snapshot.py`                     | 滚动状态档 `assets/last_run.json` 的 show / diff / write（子命令用法见 `--help`）                                                      |
-| `assets/.gitkeep`                         | 占位档，**只为让 git 跟踪 `assets/` 这个目录**（git 不跟踪空目录）。不要删                                                             |
-| `assets/last_run.json`                    | 上次运行的各信号档位 + 两条轨道档位，**每次运行后被覆写**；**随技能分发的版本里没有这个档**（见下）                                    |
+| 路径                                      | 作用                                                                                                                                                                                                                                          |
+|-------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `references/data-cadence.md`              | 各信号源头更新频率、非更新日口径、FRED/yfinance 通用取数配方                                                                                                                                                                                  |
+| `references/signals-a-macro.md`           | 信号 1–6 宏观/信用（Tier 1）                                                                                                                                                                                                                  |
+| `references/signals-b-positioning.md`     | 信号 7–13 仓位/情绪/杠杆（Tier 2）                                                                                                                                                                                                            |
+| `references/signals-c-crypto.md`          | 信号 14–18 加密与美股 24/7 永续                                                                                                                                                                                                               |
+| `references/signals-d-antiemotion.md`     | 信号 19–22 抗情绪层（服务目标 1）                                                                                                                                                                                                             |
+| `references/signals-e-cycle-valuation.md` | 信号 23–30 周期趋势与长期估值                                                                                                                                                                                                                 |
+| `references/signals-f-monday.md`          | 信号 31–34 周一附加（不计入 30 项、不参与触发计数）                                                                                                                                                                                           |
+| `references/decision-framework.md`        | 告警分级、7 项硬阈值、双轨决策层、停止加仓定义、恢复条件                                                                                                                                                                                      |
+| `references/output-format.md`             | 报告 9 个部分的结构、强制归因规则、Slack 推送格式                                                                                                                                                                                             |
+| `references/known-traps.md`               | **行为准则**、实测基线、已知失效/陷阱全表                                                                                                                                                                                                     |
+| `scripts/fred.sh`                         | FRED 序列取数（信号 1、4、23、24、32）；`--net-liquidity` 信号 5；`--buffett` 信号 27（**两序列同季对齐**后取末行）                                                                                                                           |
+| `scripts/cnn_fng.sh`                      | CNN Fear & Greed（信号 9）                                                                                                                                                                                                                    |
+| `scripts/crypto.sh`                       | 资金费率 / 清算 / BTC Dominance / 稳定币（信号 14–17）；子命令必给，`liquidations` 设计上一定 exit 3；**信号 16 的 7d 腿靠自己累积的本地历史**（见下）                                                                                        |
+| `scripts/stock_perp.sh`                   | Hyperliquid `xyz` 池美股永续（信号 18）                                                                                                                                                                                                       |
+| `scripts/cape.sh`                         | multpl.com Shiller CAPE（信号 28）                                                                                                                                                                                                            |
+| `scripts/market.py`                       | yfinance 行情与波动率块（信号 19–22、26、33–34）。信号 20 的 VIX 走 `fred.sh VIXCLS`（与信号 4／硬阈值 1 同源同日）；信号 26 出 `above_200dma_streak`（连续站稳交易日数，纯历史计算、不依赖状态档）+ `above_200dma`/`slope_positive` 当日布尔 |
+| `scripts/snapshot.py`                     | 滚动状态档 `assets/last_run.json` 的 show / diff / write（子命令用法见 `--help`）                                                                                                                                                             |
+| `assets/.gitkeep`                         | 占位档，**只为让 git 跟踪 `assets/` 这个目录**（git 不跟踪空目录）。不要删                                                                                                                                                                    |
+| `assets/last_run.json`                    | 上次运行的各信号档位 + 两条轨道档位，**每次运行后被覆写**；**随技能分发的版本里没有这个档**（见下）                                                                                                                                           |
+| `assets/dominance_history.jsonl`          | BTC Dominance 每日读数（一天一笔），**信号 16 的 7d 腿靠它自答**；每次 `crypto.sh dominance` 成功取数后追加/覆写，**随技能分发的版本里也没有这个档**（见下）                                                                                  |
 
-**与 cwd 无关，但理由分两种**：两支 python 脚本（`market.py` / `snapshot.py`）内部用 `__file__` 锚定技能根目录；五支 shell 脚本**不读写技能目录内的任何文件**（纯网路取数 → stdout），所以它们既不需要、也确实没有做 `$(dirname "$0")` 锚定。唯一吃路径的是 `stock_perp.sh --closes FILE` 与 `market.py --json FILE`，那是调用方明确给的路径。但**调用命令**本身仍要给对路径，故下文一律用 `$SKILL_DIR` 绝对路径调用。
+**与 cwd 无关，但理由分三种**：两支 python 脚本（`market.py` / `snapshot.py`）内部用 `__file__` 锚定技能根目录；`crypto.sh` 用 `$(dirname "$0")` 锚定——它是**唯一会读写技能目录内档案的 shell 脚本**（信号 16 的本地 dominance 历史）；其余四支 shell 脚本**不读写技能目录内的任何文件**（纯网路取数 → stdout），所以它们既不需要、也确实没有做锚定。唯一吃路径的是 `stock_perp.sh --closes FILE` 与 `market.py --json FILE`，那是调用方明确给的路径。但**调用命令**本身仍要给对路径，故下文一律用 `$SKILL_DIR` 绝对路径调用。
 
-**`assets/last_run.json` 不随技能分发**：刚安装完 `assets/` 里只有一个 `.gitkeep`（git 不跟踪空目录，所以必须放个占位档，否则整个目录连同它在文件地图里的位置都不会被分发）。状态档要到第 6 步 `snapshot.py write` **第一次成功执行**后才生成。因此**首次运行时第 0 步读不到它是预期行为**，`snapshot.py show` 会明说「无昨日基准，本次为首次建立」——那不是安装缺档，也不需要去别处找这个文件。
+**`assets/` 里的两个状态档都不随技能分发**：刚安装完 `assets/` 里只有一个 `.gitkeep`（git 不跟踪空目录，所以必须放个占位档，否则整个目录连同它在文件地图里的位置都不会被分发）。
+
+- `assets/last_run.json` 要到第 6 步 `snapshot.py write` **第一次成功执行**后才生成。因此**首次运行时第 0 步读不到它是预期行为**，`snapshot.py show` 会明说「无昨日基准，本次为首次建立」——那不是安装缺档，也不需要去别处找这个文件。
+- `assets/dominance_history.jsonl` 要到 `crypto.sh dominance` **第一次成功取数**后才生成，而且**要连跑 7 天**信号 16 的 7d 腿才会有答案。在那之前 7d 一律 ⚪️「历史不足（已累积 N 天）」——**那是正确输出，不是故障，更不准当成「未触发」**。两个档都是每次运行会变的运行时状态，`git status` 显示它们被修改是预期行为；把它们 commit 进去才是在推进基准。
 
 ## 第 0 步 · 前置检查 + 与昨日对照
 
@@ -124,6 +128,7 @@ python3 "$SKILL_DIR/scripts/market.py"                  # 信号 19–22、26、
 几个必须知道的实际行为（都是设计如此，不是故障）：
 
 - **`crypto.sh liquidations` 一定 exit 3**——信号 15 没有任何免费公开源（Coinglass v4 需 API key）。脚本会**实测并印出每个来源的 HTTP 码**再标 ⚪️，这就是它的正常结局；`crypto.sh all` 因此必然把「信号15 清算」列进「本次数据暂缺项」，而 `all` 本身仍回 0。**接到这个 exit 3 就走 `web_search "coinglass liquidations 24h"`**，并在报告里写全三件事：24h 总清算金额（>\$500M = 杠杆洗盘｜>\$1B = 重大事件）、**多头 vs 空头哪一方被清算更多**、以及「上次已知读数 X @ YYYY-MM-DD，已滞后 N 周」。**搜不到也照样要报滞后周数**，不得写成「未触发」。
+- **信号 16 的「7d 跌幅 >3%」由 `crypto.sh` 自己累积的历史回答，不要去换源。** 每次 `dominance` 成功取数会往 `assets/dominance_history.jsonl` 追加一笔（同日重跑覆盖，最多留 90 笔），累积够天数后脚本自己算 7d 变动，并同时印 **Δpt 与相对百分比**两个口径（阈值按相对百分比判定，与 24h 同一套规则）。三种 ⚪️ 的意思不同，报告要照抄脚本的说法：**历史不足**（`已累积 N 天`，连跑就会补齐）、**历史断层**（6–10 天窗口内没有基准；拿 31 天前的读数算出来的是「31 日变动」，贴「7d」的标签就是编数字）、**来源不同**（7 日前那笔是 CoinPaprika、今日是 CoinGecko 之类——两家分母不同，实测同日可差 2pt 以上而阈值只有 3%，一律拒绝比较）。**这三种都必须写成 ⚪️，绝不能因为「其余条件都正常」就推断这条腿安全**——少一条腿就少一次触发机会，会让加密信号触发计数系统性偏低（2 个 = 🟠 过热、3 个 = 🔴 警告）。排查用 `"$SKILL_DIR/scripts/crypto.sh" dominance --history`（不连网，印已累积几天与来源分布）。历史档写不进去（目录只读等）只会在 stderr 印一行告警，取数照常输出、照常 exit 0。
 - `stock_perp.sh` 不给 `--spx/--ndx/--from-fred` 也会跑完并回 0，但隐含跳空全部标 ⚪️。`--from-fred` 的收盘价**滞后 1 个交易日**，脚本会把观测日与滞后天数印出来，报告须照抄这个滞后。
 - `fred.sh --buffett` / `--net-liquidity` / `cape.sh` 量级自检不过时 **exit 4**：这时**不要引用那个数字**，按「先怀疑单位」处理。
 - 信号 32（10Y TIPS 实质殖利率）只在**周一**取：`"$SKILL_DIR/scripts/fred.sh" DFII10`。
@@ -177,7 +182,12 @@ python3 "$SKILL_DIR/scripts/snapshot.py" diff /tmp/today.json
 
 同一份 `references/decision-framework.md` 的「🎯 决策层」一节：轨道一查表得**战略基准**，轨道二查表得**战术系数**，明写三个数 `战略基准 × 战术系数 = 最终目标仓位`。触发「停止加仓」时照抄该文件里那张「停止加仓 = 下列全部停止」的表（定投、股息再投、新增资金、逢低加仓、再平衡买入端）。处在非满仓状态时，每次都要报告「距离恢复还差什么」；战术层进 🔴 或战略基准 ≤70% 时，复述一遍「这套规则的代价」。
 
-战术层恢复条件里的「**连续 5 个交易日**站稳 200DMA」是**跨日**条件：`market.py` 只回报**当日**的 `above_200dma` / `slope_positive`（`--json` 里信号 26 那块），连续天数靠 `snapshot.py` 逐日累积。**单跑一次 market.py 永远算不出这个 5**——报告里不得凭当日一个 `above_200dma=true` 就宣告恢复；累积不足 5 天就照实写「已连续 N 天，还差 5−N 天」，累积记录缺失（首次运行 / 状态档遗失）就写「无跨日记录，本次无法判定 5 日条件」，**不要估**。
+战术层恢复条件里的「**连续 5 个交易日**站稳 200DMA」**以 `market.py` 的 `above_200dma_streak` 为准**（`--json` 里信号 26 那块）。它是从日线历史直接算的纯历史计算——逐根用**该根当日**的 200DMA 比较，不依赖任何状态档，所以漏跑、状态档遗失、首次运行都照样答得出。
+
+- 数到可得历史尽头才停时，说明文字会写「**至少**连续 N 个交易日」——那是**下界**不是确定值，报告须照此措辞。
+- 历史不足 205 根日线时记 `null` 并写「历史不足，无法判定」，**不填 0、不视同已满足**。
+- `snapshot.py` 也会报一个连续天数，但它数的是**运行日**（每次 `write` 一笔），漏跑或周末会与交易日口径分叉。**两者不一致时以 `market.py` 的交易日口径为准**，`snapshot.py` 那个仅作交叉验证。
+- 恢复要**两个条件同时成立**：连续 5 日站稳 **且** 200DMA 斜率转正。`market.py` 给前者的完整答案与后者的当日值；斜率的跨日确认仍看 `snapshot.py`。不得凭当日一个 `above_200dma=true` 就宣告恢复。
 
 ## 第 5 步 · 输出报告
 
@@ -227,7 +237,7 @@ python3 "$SKILL_DIR/scripts/snapshot.py" write /tmp/today.json --date 2026-09-03
 写入今日各信号档位 + 战略基准 + 战术档位到 `assets/last_run.json`，供下次运行的第 0 步比对。
 
 - **必须在第 5 步报告写完之后、第 7 步 Slack 推送之前执行**——这样即使 Slack 推送失败，档位状态也已经滚动到位，明天照样能做对照。
-- `assets/last_run.json` **每次运行后被覆写是预期行为**；git 仓库形态下 `git status` 显示它被修改不是意外脏文件。
+- `assets/last_run.json` **每次运行后被覆写是预期行为**；git 仓库形态下 `git status` 显示它被修改不是意外脏文件。`assets/dominance_history.jsonl` 同理（在第 2 步 `crypto.sh dominance` 时就已经被追加/覆写了一笔），它承载的是信号 16 的 7d 腿，**别把它 checkout 掉**——丢了就要重新连跑 7 天才能恢复 7d 判定。
 
 ## 第 7 步 · Slack 推送
 
