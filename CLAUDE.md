@@ -163,6 +163,46 @@ Treat these as five and three separate implementations: a fix to path scrubbing
 is the standard-library cloud variant and must not gain an import that ties it
 to the rest of the script directory.
 
+## Fallback chains — the rule
+
+Several data points in this repo have no single reliable source, so they are
+fetched through an ordered chain. Five exist today: HK prices (`hk_quote.py` →
+yfinance, derived indicators only, never the price), VIX (FRED `VIXCLS` →
+yfinance `^VIX`), funding rates (Binance → Hyperliquid → coinglass search), BTC
+dominance (CoinGecko → CoinPaprika), and ETF holdings (Alpha Vantage → yfinance
+→ issuer page). They were each written separately; these constraints are common
+to all of them, and a sixth chain should follow them rather than reinvent one.
+
+1. **The order is fixed and written down.** Not chosen at call time, not
+   "whichever answers first".
+2. **Label which tier produced the value** — in the human output and in
+   `--json`. A number whose source is unknown cannot be checked later.
+3. **Never merge tiers into one table.** Different tiers are different
+   snapshots at different times under different definitions. Two of them side
+   by side in one row is the error every caliber rule here exists to prevent.
+4. **Thresholds do not travel between tiers.** A threshold calibrated on tier
+   one (GuruFocus's `0.17`, CBOE's put/call bands) cannot be compared against a
+   tier-two number. Either recalibrate and record the switch date, or record
+   N/A. Reusing it silently is the single most expensive mistake available here.
+5. **Whatever a degraded tier cannot support, record as N/A with the reason** —
+   never compute it from partial data. yfinance returns only top-N holdings, so
+   a cash/T-bill total derived from it would read 0.00% and look entirely
+   normal while reproducing the exact "36% of T-bills counted as holdings"
+   trap that `rating-rules.md` documents.
+6. **Falling back must be loud.** A silent downgrade records "don't know" as
+   "checked, fine" — the same failure the ⚪️ accounting rules exist to stop.
+7. **A fresh lower tier beats a stale higher one.** This is why
+   `etf_holdings.py` keeps no cache: holdings move (the three Roundhill funds
+   are actively managed), so a stale snapshot of the preferred source is more
+   dangerous than a fresh reading from a weaker one. Do not reintroduce a
+   holdings cache.
+
+One corollary worth stating separately: a tier being *available* does not make
+it *authoritative*. `rating-rules.md` requires ETF holdings to come from the
+issuer's own sheet. Alpha Vantage is convenient, not authoritative — so the
+issuer sheet must still be pulled on its own schedule, otherwise "official wins
+on conflict" can never fire, because nothing is ever there to conflict with.
+
 ## ai-industry-weekly architecture
 
 A weekly re-rating of an AI-compute supply-chain quality table. Three files
@@ -226,6 +266,45 @@ the rolled baseline.
   yfinance's default curl_cffi engine, which fails TLS behind a proxy and
   silently returns all-null `.info`.
 - Missing data is recorded as `N/A` and never estimated.
+- `etf_holdings.py` fetches ETF holdings, weights, expense ratio and inception
+  date for the `etf: true` rows in `universe.json` through a **three-tier
+  fallback: Alpha Vantage `ETF_PROFILE` → yfinance `funds_data.top_holdings` →
+  the issuer's own holdings page**. It **caches nothing** — every run re-fetches.
+  That is deliberate: holdings change (the three Roundhill funds are actively
+  managed and rebalance quarterly), so a stale snapshot is more dangerous than
+  no snapshot, and falling back to a fresher second-choice source beats falling
+  back to an expired first-choice one. Do not reintroduce a holdings cache file.
+  **The tiers do not share a caliber**, and that is the thing to get right when
+  touching this: Alpha Vantage returns the *full* holdings list, yfinance
+  returns *only the top N* (measured 2026-09-03: LYTE 0, NCLD 0, DRAM 5, SMH 10,
+  SOXX 10), the issuer page is authoritative. Under a top-N tier the "top three
+  combined" figure is still meaningful, but "top ten combined" needs N≥10, and
+  "swap total", "non-US holdings total" and "cash/T-bill total" are **not
+  computable at all** — they must be recorded as `N/A`. Computing them from a
+  top-N list reproduces the exact trap `references/rating-rules.md` warns about
+  (a marketing page counting 36% T-bills as holdings), which only the full list
+  exposes. For the same reason numbers from different tiers must never be
+  combined into one table, and every output carries a `source` label that report
+  text has to quote alongside the fetch date. Keys come from `AV_API_KEYS`
+  (comma-separated; the script rotates to the next key when one is rate limited)
+  and never from a file in the repo. **Rate limiting comes back as HTTP 200 with
+  a `{"Information": "...spreading out your free API requests..."}` body** —
+  this is the easiest thing to get wrong here: branching on the status code
+  reads a throttle as real data, so every response body has to be inspected
+  before it is trusted. The free tier also caps at 25 calls a day, worded
+  differently again — and the per-second message *also* contains "per day" and
+  "rate limit", so **classification must test the burst wording first and the
+  daily wording second**; reversed, one per-second throttle is read as an
+  exhausted quota and burns every key at once. **An invalid key and an exhausted
+  key return an identical message** (Alpha Vantage echoes the key back in both),
+  so a "daily quota exhausted" verdict cannot distinguish "used up" from
+  "mistyped" — the wording must say so, and every key failing on its first call
+  means suspect the key, not the quota. Alpha Vantage and yfinance are both
+  convenience sources, **not** the issuer's official holdings sheet — where they
+  disagree the official sheet wins, and any holdings figure quoted in a report
+  must name its source. The whole step is optional: with `AV_API_KEYS` unset the
+  skill starts at the yfinance tier, records what it cannot get as `N/A`, and
+  still prints its full report.
 
 ## Working on ai-industry-weekly
 
@@ -245,9 +324,17 @@ python3 $S/scripts/fetch_fundamentals.py                      # all tickers
 python3 $S/scripts/fetch_fundamentals.py --tickers NVDA,TSM   # subset, for debugging
 python3 $S/scripts/fetch_fundamentals.py --json out.json --quiet
 python3 $S/scripts/hk_quote.py 0700.HK 1810.HK 0941.HK --json
+
+python3 $S/scripts/etf_holdings.py                            # every `etf: true` row
+python3 $S/scripts/etf_holdings.py --tickers LYTE,NCLD        # subset, for debugging
+python3 $S/scripts/etf_holdings.py --check                    # pre-fetch self-check
+python3 $S/scripts/etf_holdings.py --json out.json --sleep 1
 ```
 
 Requires `python3` with `yfinance` and `requests`, plus outbound network.
+`etf_holdings.py` uses `AV_API_KEYS` for its first tier; without it that tier is
+skipped, the fetch starts at yfinance (top-N only, and nothing at all for LYTE /
+NCLD), and the rest of the skill is unaffected.
 
 ### Verifying changes to these scripts
 
