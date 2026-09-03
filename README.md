@@ -18,11 +18,11 @@ Optional supporting material goes in sibling folders such as:
 
 ## Skills
 
-| Skill                 | Path                                  | Purpose                                                                                                                                                                                                                                                                                |
-|-----------------------|---------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `rust-best-practices` | `skills/rust-best-practices/SKILL.md` | Portable Rust coding, review, refactoring, API design, testing, and performance guidance.                                                                                                                                                                                              |
-| `ai-industry-weekly`  | `skills/ai-industry-weekly/SKILL.md`  | Weekly re-rating routine for the AI compute supply-chain quality table: fetch fundamentals, re-rate every ticker, diff against a rolling baseline, and publish the result.                                                                                                             |
-| `ai-pullback-daily`   | `skills/ai-pullback-daily/SKILL.md`   | Daily AI-compute pullback entry monitor: thesis tripwires, 24/7 perp implied moves, a four-layer neocloud credit read, and per-ticker T1/T2/T3 triggers, bucketed through quality, thesis, and pacing gates into a two-tier report. Reads its quality table from `ai-industry-weekly`. |
+| Skill                 | Path                                  | Purpose                                                                                                                                                                                                                                                                                                      |
+|-----------------------|---------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `rust-best-practices` | `skills/rust-best-practices/SKILL.md` | Portable Rust coding, review, refactoring, API design, testing, and performance guidance.                                                                                                                                                                                                                    |
+| `ai-industry-weekly`  | `skills/ai-industry-weekly/SKILL.md`  | Weekly re-rating routine for the AI compute supply-chain quality table: fetch fundamentals, re-rate every ticker, diff against a rolling baseline, and publish the result.                                                                                                                                   |
+| `ai-pullback-daily`   | `skills/ai-pullback-daily/SKILL.md`   | Daily AI-compute pullback entry monitor: thesis tripwires, 24/7 perp implied moves, a four-layer neocloud credit read, and per-ticker T1/T2/T3 triggers, bucketed through quality, thesis, and pacing gates into a two-tier report. Reads its quality table from `ai-industry-weekly`.                       |
 | `daily-risk-monitor`  | `skills/daily-risk-monitor/SKILL.md`  | Daily cross-market risk sweep: 30 signals across macro/credit, positioning, crypto, an anti-emotion layer, and long-run valuation, resolved into 7 hard sell thresholds and a two-track decision layer (strategic baseline × tactical coefficient = target position). Standalone, no sibling skill required. |
 
 ## Installation
@@ -60,6 +60,21 @@ they keep runtime state that changes on every run:
   `git status` after a run is expected. Commit it to advance the baseline, or
   `git checkout <commit> -- skills/ai-industry-weekly/assets/baseline.md` to
   roll back.
+- **ETF holdings: fetched fresh, never cached.** `scripts/etf_holdings.py`
+  keeps **no state at all** — it re-fetches the `etf: true` rows of
+  `assets/universe.json` on every run and falls back Alpha Vantage → yfinance →
+  the issuer's own holdings page. Holdings change (the three Roundhill funds are
+  actively managed and rebalance quarterly), so a stale snapshot is more
+  dangerous than no snapshot: falling back to a fresher second-choice source
+  beats falling back to an expired first-choice one. The fetch is an optional
+  enhancement: Alpha Vantage needs `AV_API_KEYS` (see below), and with the
+  variable unset the skill starts at the yfinance tier, records what it cannot
+  get as `N/A`, and still prints its full report. The tiers do **not** share a
+  caliber — Alpha Vantage returns full holdings, yfinance returns only the top N
+  — so figures from different tiers must never be combined into one table, and
+  any holdings figure quoted in a report has to name its source and fetch date.
+  Neither tier is the issuer's official holdings sheet: where they disagree the
+  official sheet wins.
 - **Neocloud credit state.** `ai-pullback-daily` keeps runtime state too.
   `skills/ai-pullback-daily/assets/neocloud_credit_history.jsonl` gains one
   record per run (a same-day rerun overwrites its own record), so seeing it
@@ -113,6 +128,17 @@ they keep runtime state that changes on every run:
   ```sh
   export AI_INDUSTRY_SLACK_CHANNEL_ID=C0XXXXXXXXX   # ai-industry-weekly + ai-pullback-daily
   export RISK_MONITOR_SLACK_CHANNEL_ID=C0XXXXXXXXX  # daily-risk-monitor
+  ```
+
+  `ai-industry-weekly` reads one more optional variable, `AV_API_KEYS` — the
+  Alpha Vantage key(s) behind the first tier of its ETF holdings fetch. Several
+  keys separated by commas are allowed; the script rotates to the next one when a
+  key is rate limited. Note that an invalid key and an exhausted key produce the
+  same message from Alpha Vantage, so "quota exhausted" on every key usually means
+  a typo rather than a real quota. Nothing is stored in the repo here either:
+
+  ```sh
+  export AV_API_KEYS=KEY1,KEY2   # optional; without it the fetch starts at yfinance
   ```
 
   The two AI-compute skills share `AI_INDUSTRY_SLACK_CHANNEL_ID`.
