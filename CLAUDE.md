@@ -65,7 +65,36 @@ spell out — `L1_primary_window_days = 30` caps how long a primary-market
 repricing counts toward L1 — so changing one has to be reflected in
 `references/neocloud-credit.md` too.
 
-### How the two skills couple
+**`daily-risk-monitor`** — a daily cross-market risk sweep (macro/credit, positioning,
+crypto, an anti-emotion layer, long-run valuation) feeding 7 hard sell thresholds
+and a two-track decision layer. It is **standalone**: no sibling-skill dependency,
+its own scripts, its own state file. Its `references/*.md` are verbatim migrations
+from a private source document and carry the same edit-only-what-you-must rule.
+
+Three things about it are load-bearing and easy to erode:
+
+- **Fetching is split by transport, deliberately.** All curl fetches live in
+  standalone shell scripts (`fred.sh`, `cnn_fng.sh`, `crypto.sh`, `stock_perp.sh`,
+  `cape.sh`) so they can be run and debugged alone; only yfinance work is Python
+  (`market.py`). This is not stylistic drift — **FRED must use curl** (python
+  `requests` times out in this environment) while **yfinance must use
+  `requests.Session` + UA** (urllib fails SSL verification). The two requirements
+  point opposite ways; "unifying" them breaks one side silently.
+- **`assets/last_run.json` is the day-over-day baseline.** `snapshot.py write`
+  rewrites it each run with every signal's tier plus both track readings, and it
+  lands *before* the Slack push so a failed push cannot lose the tiers. Reading
+  Slack history is only the fallback path when the file is absent — the skill
+  must stay usable with no Slack at all.
+- **Missing data is never quietly safe.** `⚪️ 数据暂缺` counts toward neither the
+  numerator nor the denominator of the 7-threshold tally, and every one of them
+  must carry a staleness figure in weeks. Signals 3 (BofA Bull & Bear) and 12
+  (insider buy/sell) have no stable source yet are thresholds 6 and 7, so a
+  fabricated number there moves the strategic position baseline directly.
+
+It shares no code with `ai-pullback-daily` even though both read Hyperliquid's
+`xyz` pool — each keeps its own fetcher, and they must not be merged.
+
+### How the two AI-compute skills couple
 
 The industry rating table is maintained in exactly one place:
 `skills/ai-industry-weekly/assets/baseline.md`, written only by
@@ -242,10 +271,14 @@ no output contains a local absolute path.
 
 ## Public repo
 
-`BigtoC/my-skills` is public. The Slack channel id comes from the
-`AI_INDUSTRY_SLACK_CHANNEL_ID` environment variable; the skill intentionally
-ships no config file and contains no channel or routine ids. With the variable
-unset the skill still runs and prints its full report, skipping only the push.
+`BigtoC/my-skills` is public. Slack channel ids come from environment variables —
+`AI_INDUSTRY_SLACK_CHANNEL_ID` for the two AI-compute skills,
+`RISK_MONITOR_SLACK_CHANNEL_ID` for `daily-risk-monitor` (a general market-risk
+routine, deliberately not on the `AI_INDUSTRY_` prefix even if both point at the
+same channel). The skills intentionally ship no config file and contain no
+channel or routine ids. With the variable unset a skill still runs and prints its
+full report, skipping only the push. The same rule covers runtime output: no real
+channel id, absolute home path, or username may appear in a report body either.
 
 `git push` uses the SSH host alias `github.com-personal`, while `gh` may be
 authenticated as a different account — check `gh auth status` before assuming

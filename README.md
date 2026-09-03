@@ -23,6 +23,7 @@ Optional supporting material goes in sibling folders such as:
 | `rust-best-practices` | `skills/rust-best-practices/SKILL.md` | Portable Rust coding, review, refactoring, API design, testing, and performance guidance.                                                                                                                                                                                              |
 | `ai-industry-weekly`  | `skills/ai-industry-weekly/SKILL.md`  | Weekly re-rating routine for the AI compute supply-chain quality table: fetch fundamentals, re-rate every ticker, diff against a rolling baseline, and publish the result.                                                                                                             |
 | `ai-pullback-daily`   | `skills/ai-pullback-daily/SKILL.md`   | Daily AI-compute pullback entry monitor: thesis tripwires, 24/7 perp implied moves, a four-layer neocloud credit read, and per-ticker T1/T2/T3 triggers, bucketed through quality, thesis, and pacing gates into a two-tier report. Reads its quality table from `ai-industry-weekly`. |
+| `daily-risk-monitor`  | `skills/daily-risk-monitor/SKILL.md`  | Daily cross-market risk sweep: 30 signals across macro/credit, positioning, crypto, an anti-emotion layer, and long-run valuation, resolved into 7 hard sell thresholds and a two-track decision layer (strategic baseline × tactical coefficient = target position). Standalone, no sibling skill required. |
 
 ## Installation
 
@@ -50,7 +51,7 @@ cp -r skills/rust-best-practices ~/.claude/skills/
 
 ## Runtime state
 
-`rust-best-practices` is pure documentation. The two finance skills are not —
+`rust-best-practices` is pure documentation. The three finance skills are not —
 they keep runtime state that changes on every run:
 
 - **Rolling baseline.** `skills/ai-industry-weekly/assets/baseline.md` is
@@ -69,6 +70,18 @@ they keep runtime state that changes on every run:
   found on the web, and a quote older than five days is treated as stale and
   excluded from the verdict — so a run whose credit layer reads ⚪ usually means
   this file needs a fresh quote, not that the fetch failed.
+- **Yesterday's signal tiers.** `skills/daily-risk-monitor/assets/last_run.json`
+  **does not ship with the skill.** Before the first run `assets/` holds nothing
+  but a `.gitkeep` placeholder; the file is created the first time
+  `scripts/snapshot.py write` succeeds, so a first run reporting "no baseline
+  from yesterday" is expected rather than a broken install. From then on it
+  is rewritten by `scripts/snapshot.py write` at the end of every run — it holds
+  each signal's tier plus the two track readings (strategic baseline, tactical
+  tier), and it is what the next run's step 0 compares today against. Seeing it
+  modified in `git status` after a run is expected. The write lands *before* the
+  Slack push, so a failed push never loses the day's tiers. Reading Slack history
+  is only the fallback for when this file is missing, so deleting it costs a day
+  of tier-to-tier comparison, not the report itself.
 - **Cross-skill dependency.** `ai-pullback-daily` does not carry its own quality
   table. It reads the industry ratings from
   `skills/ai-industry-weekly/assets/baseline.md` and the ticker list from that
@@ -77,14 +90,18 @@ they keep runtime state that changes on every run:
   (or point `AI_INDUSTRY_WEEKLY_DIR` at the weekly skill) — the daily skill's
   preflight check fails loudly if it cannot find them.
 - **Slack channel via environment variable.** The optional Slack push reads the
-  channel id from `AI_INDUSTRY_SLACK_CHANNEL_ID`; nothing is stored in the repo:
+  channel id from an environment variable; nothing is stored in the repo:
 
   ```sh
-  export AI_INDUSTRY_SLACK_CHANNEL_ID=C0XXXXXXXXX
+  export AI_INDUSTRY_SLACK_CHANNEL_ID=C0XXXXXXXXX   # ai-industry-weekly + ai-pullback-daily
+  export RISK_MONITOR_SLACK_CHANNEL_ID=C0XXXXXXXXX  # daily-risk-monitor
   ```
 
-  Both skills read the same variable. Leave it unset and they still run and
-  print their full reports — they just skip the Slack push.
+  The two AI-compute skills share `AI_INDUSTRY_SLACK_CHANNEL_ID`.
+  `daily-risk-monitor` is a general market-risk routine rather than part of that
+  pair, so it reads its own `RISK_MONITOR_SLACK_CHANNEL_ID` — point it at the
+  same channel if you want them together. Leave a variable unset and the skill
+  still runs and prints its full report — it just skips the Slack push.
 
 ## Usage
 
