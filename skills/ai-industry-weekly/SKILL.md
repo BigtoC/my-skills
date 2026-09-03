@@ -2,7 +2,7 @@
 name: ai-industry-weekly
 description: AI 算力产业链「产业质量参考表」周更助手。每周用最新基本面按统一规则重算全部标的（当前 46 档）的产业质量表，与滚动基准表逐行对比，输出评级变动摘要 + 完整产业表 + 应用说明，并推送 Slack。当用户提到 产业表周更、AI 算力产业表、产业质量参考表、重算评级、🟢🔵🟡🔴 四档评级、46 标的、CoWoS/HBM/3nm/数据中心电力 四大瓶颈、基准表对比、周更推送到 Slack 频道 时自动使用。
 license: MIT
-compatibility: Portable Agent Skills format for agents that support SKILL.md. Scripts need python3, `requests` and `yfinance`, plus outbound network; step 1 exits with an install hint if yfinance is missing (it does not self-install). Slack push (step 5) needs a Slack MCP server and is skippable.
+compatibility: Portable Agent Skills format for agents that support SKILL.md. Scripts need python3, `requests` and `yfinance`, plus outbound network; step 1 exits with an install hint if yfinance is missing (it does not self-install). Slack push (step 5) needs a Slack MCP server and is skippable. The optional ETF holdings fetch (step 1.2) falls back Alpha Vantage -> yfinance -> the issuer site and caches nothing; it reads Alpha Vantage key(s) from `AV_API_KEYS`, and unset, that first tier is skipped and the rest of the run is unaffected.
 metadata:
   author: BigtoC
   version: "0.1.0"
@@ -10,6 +10,10 @@ metadata:
 ---
 
 # AI 算力产业链产业表周更
+
+> **回退链规则**：本技能的多源取数遵循仓库通用规则，见 `CLAUDE.md` 的
+> 「Fallback chains — the rule」一节（顺序固定并写下来／标注来源／不跨级合并／
+> 阈值不随源转移／降级源算不出的记 N/A／回退必须响／新鲜的低级源优于陈旧的高级源）。
 
 ## 角色
 
@@ -32,6 +36,7 @@ metadata:
 | `references/output-format.md`   | 输出格式、Slack 推送、交付自检清单           |
 | `scripts/fetch_fundamentals.py` | 批量取基本面                                 |
 | `scripts/hk_quote.py`           | 港股原始未复权实时行情                       |
+| `scripts/etf_holdings.py`       | ETF 持仓/费率取数（AV→yfinance→官网，可选）  |
 | `scripts/baseline.py`           | 基准表 show / meta / validate / diff / write |
 
 脚本**内部**用 `__file__` 相对定位 `assets/`，所以脚本自己找得到数据文件，与 cwd 无关。但**调用脚本的那条命令**仍要给对路径：本技能被触发时 cwd 通常是用户自己的项目，`python3 scripts/baseline.py ...` 这种相对写法会直接 `can't open file`。因此下文所有命令一律用第零步定下的 `$SKILL_DIR` 绝对路径调用。
@@ -90,6 +95,8 @@ export AI_INDUSTRY_SLACK_CHANNEL_ID=C0XXXXXXXXX
 
 ## 第一步 · 取数
 
+### 1.1 基本面批量取数
+
 ```bash
 python3 "$SKILL_DIR/scripts/fetch_fundamentals.py" --json /tmp/fundamentals.json
 ```
@@ -103,6 +110,81 @@ python3 "$SKILL_DIR/scripts/fetch_fundamentals.py" --json /tmp/fundamentals.json
 数据缺失记 `N/A`，**不估算、不编造**。抓空就重跑一次；仍空则记 N/A。
 
 **留意脚本输出末尾的「⚠ 利润率完整性」一节**：yfinance `.info` 的 `operatingMargins` 会单字段损坏（`om>gm` 算术不可能等），脚本已自动检出并给出年报/TTM 重算值；命中行怎么取舍见 `references/rating-rules.md` 顶部编者注（命中标的每周不同，勿当固定名单）。
+
+### 1.2 ETF 持仓取数（可选增强，每周一次）
+
+```bash
+# 先看变量在不在——只看有没有，别把 key 本身打印出来
+[ -n "$AV_API_KEYS" ] && echo "AV_API_KEYS=<set>" || echo "AV_API_KEYS=<unset>"
+
+python3 "$SKILL_DIR/scripts/etf_holdings.py" --json /tmp/etf_holdings.json
+```
+
+取的是 `assets/universe.json` 里 **`etf: true`** 的那几档（清单里有几档就取几档，别在这里硬编码档数或代码）。
+
+**取数走三级回退：Alpha Vantage → yfinance → 发行商官网。不做本地缓存，每次现取。**
+
+| 级别 | 来源                                            | 拿到什么                                                           | 口径                       |
+|------|-------------------------------------------------|--------------------------------------------------------------------|----------------------------|
+| 一   | Alpha Vantage `ETF_PROFILE`                     | 逐笔成分（`description` / `symbol` / `weight`）＋费率＋上市日＋AUM | **全量持仓**               |
+| 二   | yfinance `funds_data.top_holdings`              | 只有前 N 大（`Name` / `Holding Percent`）                          | **top-N，不是全量**        |
+| 三   | 发行商官网持仓页（roundhillinvestments.com 等） | 官方持仓表                                                         | **权威**（正文要的就是它） |
+
+**为什么取消了缓存**：持仓是会变的（三档 Roundhill 都是主动管理、季度调仓），**陈旧快照比没有更危险**——它长得跟新数据一模一样，读者分辨不出。回退到一个新鲜的次选源，好过回退到一个过期的首选源。所以第一级取不到就往下走，而不是去翻上周的存档。
+
+**实测能力（2026-09-03，勿再重新调查）**：yfinance 这一级对新 ETF 几乎无用——**LYTE 0 笔、NCLD 0 笔、DRAM 5 笔、SMH 10 笔、SOXX 10 笔**。也就是说三档 Roundhill 里只有 DRAM 落得到第二级，且只有 5 笔；LYTE / NCLD 一旦 AV 取不到就直接掉到第三级，只能人工翻官网。
+
+一个反直觉的互补性：DRAM 在 AV 那边 `holdings[].symbol` **全是 `n/a`**（韩股成分给不出代码），yfinance 反而给对了（`005930.KQ` = 三星）。两家弱点互补，**但绝不能因此把两边的数字合并**——一个是全量、一个是 top-5，口径不同。
+
+（可选 flag：`--tickers LYTE,NCLD` 只取部分标的、`--check` 做取数前自检、`--sleep N` 调请求间隔。周更走全量，不要加 `--tickers`。）
+
+**API key 从环境变量 `AV_API_KEYS` 读，支持多个 key 用 `,` 分隔，某个 key 撞限流时脚本自动换下一个：**
+
+```bash
+export AV_API_KEYS=KEY1,KEY2,KEY3
+```
+
+脚本报「日配额耗尽」时**无法区分「这个 key 用完了」与「这个 key 打错了」**——Alpha Vantage 对无效 key 与配额耗尽的 key 返回**完全相同**的消息。两种情形都会被当成耗尽、换下一个 key；若所有 key 都在第一次调用就报耗尽，先怀疑 key 拼错，别怀疑配额。
+
+**绝不把真实 key 写进本 repo 的任何文件**（公开仓库），也不要让它出现在运行结果正文、references 或 Slack 消息里——与频道 ID 同一条规矩。AV 的错误消息会**回显 key 原文**，异常文本还可能带出完整 URL（含 `apikey=`），脚本已做遮罩，粘贴脚本输出前仍要扫一眼。
+
+**频率：每周跑一次就够。** ETF 持仓是慢变量（这几档是季度调仓），同一周内反复取毫无意义。免费层每日 25 次、约每秒 1 次，几档 ETF 绰绰有余。
+
+**这是可选增强，不是必需依赖。** 本技能没有它照样跑完整流程。
+
+**`AV_API_KEYS` 未设置时**：跳过第一级，直接从 yfinance 起——对 LYTE / NCLD 那是 0 笔，实际等于只剩第三级（人工翻官网）。**只有全量来源才有的字段**（逐笔全量成分、AUM、下面表里标 N/A 的那几项）记 `N/A`。**费率与上市日不受影响**——那两项 `rating-rules.md` 正文已按发行商官网核实过（三档均 0.65%），权威来源与 AV 无关，不因本步缺席而降级成 `N/A`，**正文 ①②③ 照常完整输出**。处置与第零步 `AI_INDUSTRY_SLACK_CHANNEL_ID` 未设置时完全一致：少一路增强，不少一段交付。限流用尽、字段回 `n/a`、整档抓空——同样记 `N/A`，**绝不估算**。
+
+#### ⚠️ 口径红线一：top-N 来源下，有些派生量根本不可算
+
+这是本小步最容易出错的地方，比 key 和限流都重要。**三级的口径不同，派生量不能一视同仁。** 落到 **yfinance（只有 top-N）** 这一级时：
+
+| 派生量            | top-N 能不能算                                               |
+|-------------------|--------------------------------------------------------------|
+| 前三大合计        | N≥3 时**可算**——top-N 内的前三大就是全量口径下的前三大，同义 |　⚠**但有一个附加条件**：前三大里若混进现金/货币基金行项目，它与正文人工核过的「前三大＝三大**股票**」就不是同一口径。实测 DRAM 走 yfinance top-5 时第 3 名是货币基金 FGXXX 14.66%，算出 51.31%，而正文写的是 ≈73%，**差 22pt 却同名**。脚本会在 stdout 告警并在 `--json` 的 `derived.top3_cash_items` 里点名，引用前必须改口径或剔除。
+| 前十大合计        | 仅 N≥10 可算；DRAM 只有 5 笔 → **记 N/A**                    |
+| swap 部位合计     | **不可算 → 一律 N/A**（需全量持仓，top-N 无法计算）          |
+| 非美股成分合计    | **不可算 → 一律 N/A**（需全量持仓，top-N 无法计算）          |
+| 现金/国库券类合计 | **不可算 → 一律 N/A**（需全量持仓，top-N 无法计算）          |
+
+后三项**绝不能拿 top-N 硬凑一个数出来**。`references/rating-rules.md` 正文那个陷阱——行销页把 **36% 国库券当成持仓**、算出「前十大 ≈ 82.9%」——正是靠**全量**持仓表才识破的。拿 top-N 去算「现金/国库券类合计」会原样复现同一个错误：top-N 里压根看不到那 36%，算出来的分母是错的，而结果看上去完全正常。宁可记 N/A。
+
+#### ⚠️ 口径红线二：三级的数字不可拼进同一张表
+
+AV（全量）、yfinance（top-N）、官网（权威）**口径互不相同**，也不是同一时点的快照（量级一致但逐位对不上是正常的，实测差异见 `references/rating-rules.md` 顶部编者注）。
+
+- 一张持仓表**只能用一个来源**，要嘛整表 AV、要嘛整表官网，**不要各取一半**——同表混列会造出一份两个时点缝合起来、加总也对不上的「持仓表」；
+- 报告里引用任何持仓数字，**必须写明「数据源 + 取数日」**：「Alpha Vantage，取数日 YYYY-MM-DD」／「yfinance top-N，取数日 YYYY-MM-DD」／「官方持仓表，取数日 YYYY-MM-DD」。绝不能写成「官方持仓表」或让读者以为它是；
+- 脚本对每档输出都带 `source` 标注，**照抄它**，不要凭记忆写。
+
+#### ⚠️ 口径红线三：AV 与 yfinance 都不是官方持仓表
+
+`etf_holdings.py` 前两级取回的都是**第三方聚合数据**，不是发行商的官方持仓表：
+
+- **与发行商官方持仓表冲突时，一律以官方为准。** AV 是省掉人工翻网页的**便利来源**，不是**权威来源**；yfinance 更弱，连全量都没有；
+- **不要因为能自动取数就停止取官方表。** 正文 `rating-rules.md` 要求的是「持仓一律以官方持仓表为准」——那是要求**取**官方表。若周更只抓 AV/yfinance，它就成了唯一实际取到的来源，「冲突时以官方为准」将永远触发不了：没有第二个数，就比不出冲突。**官方表仍须每周（或每次调仓后）取一次做校验。**
+- `references/rating-rules.md` 正文那句「持仓一律以官方持仓表为准，抓不到就记 N/A，绝不估算」**依然有效**，本小步没有取消它；正文对 DRAM「取得官方持仓表前，不得据『swap』断言其为杠杆」的约束也**不因拿到 AV 或 yfinance 数据而解除**。
+
+这与本仓库既有的「**不要用口径不同的替代源去比对原口径的阈值**」（见 `daily-risk-monitor` 的口径陷阱一节）是同一条规矩，只是换了个场景：宁可记 N/A，也不要拿一个来源的数字去顶另一个来源的口径。
 
 ## 第二步 · 重算评级
 
