@@ -2,6 +2,14 @@
 
 > 本文件自作者私有的每日 routine 文档 `daily-risk-monitor-v2.md` **逐字迁移**，未改写。
 >
+> **编者注 · 信号 16 的 7d 腿（正文的取数指示已被本技能收紧）**：正文写「搜 BTC dominance 或
+> web_fetch coingecko / tradingview」。实作时发现 CoinGecko 免费层无全市场市值历史序列
+> （`/global/market_cap_chart` 实测 HTTP 401），而**换到别家会引入第三套分母口径**
+> （CoinGecko 与 CoinPaprika 实测同日 59.1% vs 56.9%，差约 2pt，而阈值只有 2%）。
+> 因此 `crypto.sh` 改为**按天累积同源本地历史** `assets/dominance_history.jsonl` 自答这条腿，
+> 并强制校验基准笔与今日**同源**，异源一律拒绝比较记 ⚪️。
+> **不要为了补这条腿去换数据源** —— 缺的是历史序列，不是当日值。
+>
 > **编者注**：那份原文是作者本机的私人笔记，**不随本技能分发，也不在本仓库里**——
 > 按图索骥是找不到的，也不需要找。本文件就是原文该章节的完整内容；
 > 技能运行所需的全部口径都在 `references/` 这十个文件里。
