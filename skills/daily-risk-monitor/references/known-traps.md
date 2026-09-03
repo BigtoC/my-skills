@@ -31,40 +31,40 @@
 
 供下次运行做量级自检用。**这些是当时的值，不是阈值，不要拿来当今天的答案。**
 
-| 项目 | 值 | as of | 来源 |
-|---|---|---|---|
-| HY OAS | 2.71%（271bp） | 2026-08-06 | FRED BAMLH0A0HYM2 |
-| VIX | 15.15 | 2026-08-06 | FRED VIXCLS |
-| VIX3M | 18.69（正价差 +3.54） | 2026-08-06 | FRED VXVCLS |
-| CNN Fear & Greed | 63.7 greed（1週前 45.2，1月前 39.8） | 2026-08-07 | CNN JSON |
-| T10Y2Y / T10Y3M | +0.46 / +0.78 | 2026-08-07 | FRED |
-| Sahm Rule | −0.03（6月 0.07） | 2026-07 | FRED SAHMREALTIME |
-| SPX | 7757.64 | 2026-08-07 | yfinance ^GSPC |
-| SPX 200DMA | 7050.03，偏离 +10.04%，斜率 +1.22% | 2026-08-07 | yfinance |
-| SPX RV20 / 1σ | 14.4% / 0.91% | 2026-08-07 | yfinance |
-| BTC RV20 / 1σ | 20.7% / 1.30% | 2026-08-07 | yfinance |
-| VRP | +0.5 ⚠️ 贴近零轴 | 2026-08-07 | VIX − RV20 |
-| RSP−SPY | +0.08pt | 2026-08-07 | yfinance |
-| BTC | 64,946 | 2026-08-10 | yfinance BTC-USD |
-| BTC 资金费率 | 0.0061%/8h（年化 6.7%） | 2026-08-10 | Binance |
-| xyz:SP500 / XYZ100 | 7759.0 / 29773.0 | 2026-08-10 | Hyperliquid xyz |
-| Buffett Indicator | 218.1%（峰值 2025Q4 228.7%） | 2026-Q1 | FRED 计算 |
-| Shiller CAPE | 42.39（均值 17.40，史高 44.19） | 2026-08-10 | multpl.com |
-| 10Y TIPS 实质殖利率 | 2.43% | 2026-08-06 | FRED DFII10 |
-| DXY | 99.60 | 2026-08-07 | yfinance DX-Y.NYB |
-| Gold/SPX | 0.5595 | 2026-08-07 | GC=F ÷ ^GSPC |
+| 项目                | 值                                   | as of      | 来源              |
+|---------------------|--------------------------------------|------------|-------------------|
+| HY OAS              | 2.71%（271bp）                       | 2026-08-06 | FRED BAMLH0A0HYM2 |
+| VIX                 | 15.15                                | 2026-08-06 | FRED VIXCLS       |
+| VIX3M               | 18.69（正价差 +3.54）                | 2026-08-06 | FRED VXVCLS       |
+| CNN Fear & Greed    | 63.7 greed（1週前 45.2，1月前 39.8） | 2026-08-07 | CNN JSON          |
+| T10Y2Y / T10Y3M     | +0.46 / +0.78                        | 2026-08-07 | FRED              |
+| Sahm Rule           | −0.03（6月 0.07）                    | 2026-07    | FRED SAHMREALTIME |
+| SPX                 | 7757.64                              | 2026-08-07 | yfinance ^GSPC    |
+| SPX 200DMA          | 7050.03，偏离 +10.04%，斜率 +1.22%   | 2026-08-07 | yfinance          |
+| SPX RV20 / 1σ       | 14.4% / 0.91%                        | 2026-08-07 | yfinance          |
+| BTC RV20 / 1σ       | 20.7% / 1.30%                        | 2026-08-07 | yfinance          |
+| VRP                 | +0.5 ⚠️ 贴近零轴                     | 2026-08-07 | VIX − RV20        |
+| RSP−SPY             | +0.08pt                              | 2026-08-07 | yfinance          |
+| BTC                 | 64,946                               | 2026-08-10 | yfinance BTC-USD  |
+| BTC 资金费率        | 0.0061%/8h（年化 6.7%）              | 2026-08-10 | Binance           |
+| xyz:SP500 / XYZ100  | 7759.0 / 29773.0                     | 2026-08-10 | Hyperliquid xyz   |
+| Buffett Indicator   | 218.1%（峰值 2025Q4 228.7%）         | 2026-Q1    | FRED 计算         |
+| Shiller CAPE        | 42.39（均值 17.40，史高 44.19）      | 2026-08-10 | multpl.com        |
+| 10Y TIPS 实质殖利率 | 2.43%                                | 2026-08-06 | FRED DFII10       |
+| DXY                 | 99.60                                | 2026-08-07 | yfinance DX-Y.NYB |
+| Gold/SPX            | 0.5595                               | 2026-08-07 | GC=F ÷ ^GSPC      |
 
 ## 已知失效 / 陷阱清单
 
-| 项目 | 症状 | 解法 |
-|---|---|---|
-| yfinance `^VIX3M`/`^VIX9D`/`^VIX6M` | **全部停更在 2026-07-17**，而 `^VIX` 是当日 | 改用 FRED `VXVCLS` |
-| CNN Fear & Greed 端点 | 裸请求回 **HTTP 418「I'm a teapot. You're a bot.」** | 必须带 `Referer: https://www.cnn.com/` + `Origin` |
-| `cdn.cboe.com` PCRATIO CSV | **HTTP 403** | 改 web_fetch cboe.com 市场统计页 |
-| **GuruFocus 内部人买卖比页（信号 12）** | **HTTP 403，挡爬虫**（2026-08-10 实测） | 无同口径替代源 → 标 ⚪️ + 报滞后周数。openinsider.com（200 OK）与 SEC EDGAR Form 4（200 OK）**只能看方向，不能比 0.17 阈值** |
-| **BofA 牛熊指标（信号 3）** | 无公开 API，只在美银每周五 Flow Show 报告公布 | 靠 ZeroHedge / FT / Reuters 转载，搜 2 轮无果即标 ⚪️ + 报滞后周数 |
-| Buffett Indicator | 两序列末行日期常不同季 | 必须 `merge(on="date")` 后取末行 |
-| WALCL / WTREGEN / RRPONTSYD | 单位不一致（百万 / 百万 / 十亿） | 前两者 ÷1000 |
-| Hyperliquid 主池 `SPX` | 那是 SPX6900 迷因币，不是标普500 | 必须指定 `"dex":"xyz"` |
-| FRED via python `requests` | 会超时 | 必须用 `curl` |
-| yfinance via `urllib` | SSL 验证失败 | 必须用 `requests.Session` + UA |
+| 项目                                    | 症状                                                 | 解法                                                                                                                        |
+|-----------------------------------------|------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
+| yfinance `^VIX3M`/`^VIX9D`/`^VIX6M`     | **全部停更在 2026-07-17**，而 `^VIX` 是当日          | 改用 FRED `VXVCLS`                                                                                                          |
+| CNN Fear & Greed 端点                   | 裸请求回 **HTTP 418「I'm a teapot. You're a bot.」** | 必须带 `Referer: https://www.cnn.com/` + `Origin`                                                                           |
+| `cdn.cboe.com` PCRATIO CSV              | **HTTP 403**                                         | 改 web_fetch cboe.com 市场统计页                                                                                            |
+| **GuruFocus 内部人买卖比页（信号 12）** | **HTTP 403，挡爬虫**（2026-08-10 实测）              | 无同口径替代源 → 标 ⚪️ + 报滞后周数。openinsider.com（200 OK）与 SEC EDGAR Form 4（200 OK）**只能看方向，不能比 0.17 阈值** |
+| **BofA 牛熊指标（信号 3）**             | 无公开 API，只在美银每周五 Flow Show 报告公布        | 靠 ZeroHedge / FT / Reuters 转载，搜 2 轮无果即标 ⚪️ + 报滞后周数                                                           |
+| Buffett Indicator                       | 两序列末行日期常不同季                               | 必须 `merge(on="date")` 后取末行                                                                                            |
+| WALCL / WTREGEN / RRPONTSYD             | 单位不一致（百万 / 百万 / 十亿）                     | 前两者 ÷1000                                                                                                                |
+| Hyperliquid 主池 `SPX`                  | 那是 SPX6900 迷因币，不是标普500                     | 必须指定 `"dex":"xyz"`                                                                                                      |
+| FRED via python `requests`              | 会超时                                               | 必须用 `curl`                                                                                                               |
+| yfinance via `urllib`                   | SSL 验证失败                                         | 必须用 `requests.Session` + UA                                                                                              |
