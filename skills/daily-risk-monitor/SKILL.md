@@ -28,10 +28,10 @@ metadata:
 
 本系统有**两套独立的卖出规则**，时间尺度不同，各管各的，**不互相覆盖**：
 
-| 轨道 | 叫什么 | 由谁驱动 | 变化速度 | 回答什么问题 |
-|---|---|---|---|---|
-| **轨道一** | **战略层 · 目标仓位基准** | 7 项硬阈值触发数 + 长期估值环境（信号 27–30） | 慢（月—年） | 「以我现在所处的周期位置，长期**该**持有多少仓位？」 |
-| **轨道二** | **战术层 · 执行系数** | 200DMA 趋势机制 + Tier 1 触发数（信号 1–6, 20–21, 23–24, 26） | 快（日—周） | 「就眼下的市场状态，这个目标仓位**现在**该不该打折执行？」 |
+| 轨道       | 叫什么                    | 由谁驱动                                                      | 变化速度    | 回答什么问题                                               |
+|------------|---------------------------|---------------------------------------------------------------|-------------|------------------------------------------------------------|
+| **轨道一** | **战略层 · 目标仓位基准** | 7 项硬阈值触发数 + 长期估值环境（信号 27–30）                 | 慢（月—年） | 「以我现在所处的周期位置，长期**该**持有多少仓位？」       |
+| **轨道二** | **战术层 · 执行系数**     | 200DMA 趋势机制 + Tier 1 触发数（信号 1–6, 20–21, 23–24, 26） | 快（日—周） | 「就眼下的市场状态，这个目标仓位**现在**该不该打折执行？」 |
 
 **最终目标仓位 = 战略基准 × 战术系数**
 
@@ -39,27 +39,27 @@ metadata:
 
 ## 文件地图
 
-| 路径 | 作用 |
-|---|---|
-| `references/data-cadence.md` | 各信号源头更新频率、非更新日口径、FRED/yfinance 通用取数配方 |
-| `references/signals-a-macro.md` | 信号 1–6 宏观/信用（Tier 1） |
-| `references/signals-b-positioning.md` | 信号 7–13 仓位/情绪/杠杆（Tier 2） |
-| `references/signals-c-crypto.md` | 信号 14–18 加密与美股 24/7 永续 |
-| `references/signals-d-antiemotion.md` | 信号 19–22 抗情绪层（服务目标 1） |
-| `references/signals-e-cycle-valuation.md` | 信号 23–30 周期趋势与长期估值 |
-| `references/signals-f-monday.md` | 信号 31–34 周一附加（不计入 30 项、不参与触发计数） |
-| `references/decision-framework.md` | 告警分级、7 项硬阈值、双轨决策层、停止加仓定义、恢复条件 |
-| `references/output-format.md` | 报告 9 个部分的结构、强制归因规则、Slack 推送格式 |
-| `references/known-traps.md` | **行为准则**、实测基线、已知失效/陷阱全表 |
-| `scripts/fred.sh` | FRED 序列取数（信号 1、4、23、24、32）；`--net-liquidity` 信号 5；`--buffett` 信号 27（**两序列同季对齐**后取末行） |
-| `scripts/cnn_fng.sh` | CNN Fear & Greed（信号 9） |
-| `scripts/crypto.sh` | 资金费率 / 清算 / BTC Dominance / 稳定币（信号 14–17）；子命令必给，`liquidations` 设计上一定 exit 3 |
-| `scripts/stock_perp.sh` | Hyperliquid `xyz` 池美股永续（信号 18） |
-| `scripts/cape.sh` | multpl.com Shiller CAPE（信号 28） |
-| `scripts/market.py` | yfinance 行情与波动率块（信号 19–22、26、33–34）；信号 26 另出 `above_200dma` / `slope_positive` 两个**当日**布尔给 `snapshot.py` 累积 |
-| `scripts/snapshot.py` | 滚动状态档 `assets/last_run.json` 的 show / diff / write（子命令用法见 `--help`） |
-| `assets/.gitkeep` | 占位档，**只为让 git 跟踪 `assets/` 这个目录**（git 不跟踪空目录）。不要删 |
-| `assets/last_run.json` | 上次运行的各信号档位 + 两条轨道档位，**每次运行后被覆写**；**随技能分发的版本里没有这个档**（见下） |
+| 路径                                      | 作用                                                                                                                                   |
+|-------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| `references/data-cadence.md`              | 各信号源头更新频率、非更新日口径、FRED/yfinance 通用取数配方                                                                           |
+| `references/signals-a-macro.md`           | 信号 1–6 宏观/信用（Tier 1）                                                                                                           |
+| `references/signals-b-positioning.md`     | 信号 7–13 仓位/情绪/杠杆（Tier 2）                                                                                                     |
+| `references/signals-c-crypto.md`          | 信号 14–18 加密与美股 24/7 永续                                                                                                        |
+| `references/signals-d-antiemotion.md`     | 信号 19–22 抗情绪层（服务目标 1）                                                                                                      |
+| `references/signals-e-cycle-valuation.md` | 信号 23–30 周期趋势与长期估值                                                                                                          |
+| `references/signals-f-monday.md`          | 信号 31–34 周一附加（不计入 30 项、不参与触发计数）                                                                                    |
+| `references/decision-framework.md`        | 告警分级、7 项硬阈值、双轨决策层、停止加仓定义、恢复条件                                                                               |
+| `references/output-format.md`             | 报告 9 个部分的结构、强制归因规则、Slack 推送格式                                                                                      |
+| `references/known-traps.md`               | **行为准则**、实测基线、已知失效/陷阱全表                                                                                              |
+| `scripts/fred.sh`                         | FRED 序列取数（信号 1、4、23、24、32）；`--net-liquidity` 信号 5；`--buffett` 信号 27（**两序列同季对齐**后取末行）                    |
+| `scripts/cnn_fng.sh`                      | CNN Fear & Greed（信号 9）                                                                                                             |
+| `scripts/crypto.sh`                       | 资金费率 / 清算 / BTC Dominance / 稳定币（信号 14–17）；子命令必给，`liquidations` 设计上一定 exit 3                                   |
+| `scripts/stock_perp.sh`                   | Hyperliquid `xyz` 池美股永续（信号 18）                                                                                                |
+| `scripts/cape.sh`                         | multpl.com Shiller CAPE（信号 28）                                                                                                     |
+| `scripts/market.py`                       | yfinance 行情与波动率块（信号 19–22、26、33–34）；信号 26 另出 `above_200dma` / `slope_positive` 两个**当日**布尔给 `snapshot.py` 累积 |
+| `scripts/snapshot.py`                     | 滚动状态档 `assets/last_run.json` 的 show / diff / write（子命令用法见 `--help`）                                                      |
+| `assets/.gitkeep`                         | 占位档，**只为让 git 跟踪 `assets/` 这个目录**（git 不跟踪空目录）。不要删                                                             |
+| `assets/last_run.json`                    | 上次运行的各信号档位 + 两条轨道档位，**每次运行后被覆写**；**随技能分发的版本里没有这个档**（见下）                                    |
 
 **与 cwd 无关，但理由分两种**：两支 python 脚本（`market.py` / `snapshot.py`）内部用 `__file__` 锚定技能根目录；五支 shell 脚本**不读写技能目录内的任何文件**（纯网路取数 → stdout），所以它们既不需要、也确实没有做 `$(dirname "$0")` 锚定。唯一吃路径的是 `stock_perp.sh --closes FILE` 与 `market.py --json FILE`，那是调用方明确给的路径。但**调用命令**本身仍要给对路径，故下文一律用 `$SKILL_DIR` 绝对路径调用。
 
@@ -136,15 +136,15 @@ python3 "$SKILL_DIR/scripts/market.py"                  # 信号 19–22、26、
 
 ### 工具与已知坑（完整表见 `references/known-traps.md`，逐条遵守）
 
-| 用途 | 工具 | 注意 |
-|---|---|---|
-| FRED 经济数据 | `scripts/fred.sh`（**curl**） | `fredgraph.csv` 免 API key。**必须用 curl，python `requests` 在本环境会超时**。信号 27 走 `--buffett`（内建同季对齐），别自己各取末行相除 |
-| 股价 / 波动率 / 均线 | `scripts/market.py`（**python yfinance**） | **必须用 `requests.Session` + UA，urllib 会 SSL 验证失败** |
-| 加密永续 / 稳定币 | `scripts/crypto.sh`（curl） | Binance / Hyperliquid 公开 API，免 key；稳定币亦可走 DeFiLlama MCP `get_stablecoins` |
-| 美股 24/7 永续 | `scripts/stock_perp.sh`（curl） | Hyperliquid 主池 `SPX` 是 SPX6900 迷因币 → **必须 `"dex":"xyz"`** |
-| CNN Fear & Greed | `scripts/cnn_fng.sh`（curl） | 裸请求回 **HTTP 418** → 必须带 `Referer: https://www.cnn.com/` + `Origin` |
-| Shiller CAPE | `scripts/cape.sh`（curl + 正则） | multpl.com，解析配方见 `references/signals-e-cycle-valuation.md` 信号 28 |
-| 其余（BofA、内部人、IPO、A/D Line、NAAIM、AAII、Put/Call、LEI） | WebSearch / web_fetch | 上面取不到时才用 |
+| 用途                                                            | 工具                                       | 注意                                                                                                                                      |
+|-----------------------------------------------------------------|--------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| FRED 经济数据                                                   | `scripts/fred.sh`（**curl**）              | `fredgraph.csv` 免 API key。**必须用 curl，python `requests` 在本环境会超时**。信号 27 走 `--buffett`（内建同季对齐），别自己各取末行相除 |
+| 股价 / 波动率 / 均线                                            | `scripts/market.py`（**python yfinance**） | **必须用 `requests.Session` + UA，urllib 会 SSL 验证失败**                                                                                |
+| 加密永续 / 稳定币                                               | `scripts/crypto.sh`（curl）                | Binance / Hyperliquid 公开 API，免 key；稳定币亦可走 DeFiLlama MCP `get_stablecoins`                                                      |
+| 美股 24/7 永续                                                  | `scripts/stock_perp.sh`（curl）            | Hyperliquid 主池 `SPX` 是 SPX6900 迷因币 → **必须 `"dex":"xyz"`**                                                                         |
+| CNN Fear & Greed                                                | `scripts/cnn_fng.sh`（curl）               | 裸请求回 **HTTP 418** → 必须带 `Referer: https://www.cnn.com/` + `Origin`                                                                 |
+| Shiller CAPE                                                    | `scripts/cape.sh`（curl + 正则）           | multpl.com，解析配方见 `references/signals-e-cycle-valuation.md` 信号 28                                                                  |
+| 其余（BofA、内部人、IPO、A/D Line、NAAIM、AAII、Put/Call、LEI） | WebSearch / web_fetch                      | 上面取不到时才用                                                                                                                          |
 
 ⚠️ **最容易搞混的一对相反要求**：**FRED 必须用 curl（`requests` 超时）**，而 **yfinance 必须用 `requests.Session` + UA（urllib SSL 失败）**。两者方向相反，改脚本时不要互相「统一」。
 
@@ -212,14 +212,14 @@ python3 "$SKILL_DIR/scripts/snapshot.py" write /tmp/today.json --date 2026-09-03
 
 **校验很严（宁可拒写也不写坏），照下面的取值范围填**：
 
-| 字段 | 允许值 | 备注 |
-|---|---|---|
-| `signals.1..30.state` | `🟢` `🟡` `🔴` `⚪️` | 必须 1–30 齐全；31–34 混入会被点名拒绝 |
-| `hard_thresholds.1..7.state` | `❌` `⚠️` `✅` `⚪️` | 必须 1–7 齐全 |
-| `tracks.strategic.baseline_pct` | `100` `85` `70` `50` | 只收这四档 |
-| `tracks.tactical.state` | `🟢` `🟡` `🔴` | **不收 `⚪️`**——战术层没有「数据暂缺」档 |
-| `tracks.tactical.above_200dma` | `true` / `false` | 布尔，写成字符串会被拒。取自 `market.py --json` 的信号 26 |
-| `tracks.tactical.dma200_slope_positive` | `true` / `false` | 同上 |
+| 字段                                    | 允许值               | 备注                                                      |
+|-----------------------------------------|----------------------|-----------------------------------------------------------|
+| `signals.1..30.state`                   | `🟢` `🟡` `🔴` `⚪️`  | 必须 1–30 齐全；31–34 混入会被点名拒绝                    |
+| `hard_thresholds.1..7.state`            | `❌` `⚠️` `✅` `⚪️`  | 必须 1–7 齐全                                             |
+| `tracks.strategic.baseline_pct`         | `100` `85` `70` `50` | 只收这四档                                                |
+| `tracks.tactical.state`                 | `🟢` `🟡` `🔴`       | **不收 `⚪️`**——战术层没有「数据暂缺」档                   |
+| `tracks.tactical.above_200dma`          | `true` / `false`     | 布尔，写成字符串会被拒。取自 `market.py --json` 的信号 26 |
+| `tracks.tactical.dma200_slope_positive` | `true` / `false`     | 同上                                                      |
 
 写入的字段走**白名单**：不在上表里的键会被丢弃并在 stderr 点名，不会被静默写进公开仓库。
 `history` 由脚本自己维护（保留 14 个交易日），不要自己传。
