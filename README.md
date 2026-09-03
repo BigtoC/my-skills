@@ -82,6 +82,24 @@ they keep runtime state that changes on every run:
   Slack push, so a failed push never loses the day's tiers. Reading Slack history
   is only the fallback for when this file is missing, so deleting it costs a day
   of tier-to-tier comparison, not the report itself.
+- **BTC dominance history.** `skills/daily-risk-monitor/assets/dominance_history.jsonl`
+  also **does not ship with the skill**. `scripts/crypto.sh dominance` appends one
+  record per day (a same-day rerun overwrites its own record, and the file is
+  capped at 90 records), because signal 16's "7d drop > 3%" leg has no free
+  same-caliber source: what the free tier lacks is the market-cap *history
+  series*, not today's dominance, and swapping in another provider would mix
+  denominators (CoinGecko and CoinPaprika measured 59.1% vs 56.9% on the same
+  day — about 2pt apart, against a 3% threshold). So the script accumulates its
+  own same-source history instead. Until seven days have accumulated the 7d leg
+  reads ⚪ "history too short (N days so far)" — that is correct output, not a
+  failure, and it must never be read as "not triggered". The script also refuses
+  to compare across sources: if the record seven days back came from a different
+  provider than today's, it reports ⚪ rather than subtracting two different
+  denominators. Seeing the file modified in `git status` is normal, and
+  committing it is what preserves the history the 7d leg depends on —
+  `git checkout`-ing it away costs seven days of re-accumulation.
+  `scripts/crypto.sh dominance --history` prints what has accumulated (no
+  network) when you need to check.
 - **Cross-skill dependency.** `ai-pullback-daily` does not carry its own quality
   table. It reads the industry ratings from
   `skills/ai-industry-weekly/assets/baseline.md` and the ticker list from that
