@@ -12,14 +12,19 @@ references/signals-f-monday.md 与 references/data-cadence.md 的「yfinance 通
                      **SPX 与 BTC 分开算**（波动率差 2–3 倍，不能共用标尺）
     信号 20  VRP     = VIX − 20日已实现波动率(RV20)
                      <0 转负 = 恐慌是真的 ｜ >15 = 恐慌过头
+                     **VIX 首选 FRED VIXCLS**（subprocess 调同目录 fred.sh），
+                     与信号 4 期限结构、7 项硬阈值第 1 项「VIX >25 连续 3 日」同源同日；
+                     FRED 取不到才回退 yfinance `^VIX`，且回退必在 warnings 里写明不同源。
     信号 21  跨资产   仅在 SPY 单日跌 >1% 时判定，否则「不适用」
                      🟢 股跌、债金涨 ｜ 🔴 股债金同跌（计为 Tier 1 触发）
     信号 22  广度     RSP 当日% − SPY 当日%；|差| <0.5pt = 广度一致
     信号 26  趋势     价 vs 200DMA 偏离%；200DMA 20日斜率 = MA200(今)/MA200(20日前) − 1
                      🟢 价在上方 **且** 斜率向上 ｜ 🔴 价在下方 **且** 斜率向下 ｜ 🟡 只成立一个
-                     另输出 above_200dma / slope_positive 两个**当日**布尔，供
-                     snapshot.py 累积战术层恢复条件的「连续 5 个交易日站稳 200DMA」。
-                     **跨日连续天数不在本脚本算**——本脚本每次只看得到今天。
+                     另输出 above_200dma / slope_positive 两个**当日**布尔（snapshot.py 仍在用）。
+                     战术层恢复要两个条件：「连续 5 个交易日站稳 200DMA」+「200DMA 斜率转正」。
+                     前者是**纯历史计算**（每根收盘 vs 该根**当日**的 200DMA），本脚本已直接
+                     从日线历史算出 above_200dma_streak / streak_meets_5，不需要状态档累积；
+                     后者的跨日确认仍看 snapshot.py（本脚本只给当日的 slope_positive）。
     信号 33  DXY     yfinance DX-Y.NYB
     信号 34  Gold/SPX yfinance GC=F ÷ ^GSPC
 
@@ -57,13 +62,23 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_NAME = Path(__file__).name
+SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = Path(__file__).resolve().parent.parent
+
+# 信号 20 的 VIX 首选 FRED VIXCLS，与信号 4／硬阈值 1 同源同日（见 calc_20 的档头注释）。
+FRED_SH = SCRIPT_DIR / "fred.sh"
+FRED_TIMEOUT = 60
+# 两个 VIX 源读数差多少就要在 warnings 里标出来（点）。这不是判定阈值，
+# 只是「同一份报告里两个 VIX 不一致」的提示线，调它不影响任何分档。
+VIX_SOURCE_DIFF_TOL = 0.5
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -386,6 +401,62 @@ def magnitude_flag(name: str, value) -> str | None:
     return None
 
 
+# -------------------------------------------------- FRED VIXCLS（信号 20 的 VIX 首选源）
+
+# fred.sh 的退出码语义（见 scripts/fred.sh 档头）
+_FRED_EXIT_MEANING = {
+    1: "参数错误",
+    2: "依赖缺失（curl / awk / sed）",
+    3: "取数失败（数据暂缺）",
+    4: "量级自检不通过",
+}
+
+
+def fred_vixcls() -> tuple[float | None, str | None, str | None]:
+    """经 subprocess 调**同目录**的 fred.sh 取 FRED VIXCLS，回 (值, 数据日期, 失败原因)。
+
+    为什么必须绕 fred.sh 而不在本脚本里直接打 FRED：references/known-traps.md 实测
+    「FRED 必须用 curl、且**不能加自订 UA**」，python requests 打 FRED 在本环境会超时。
+    本脚本只管 yfinance 那一半，FRED 一律走 fred.sh，不另开第二条 FRED 取数路径。
+
+    任何失败（脚本不存在 / 不可执行 / 超时 / 非 0 退出 / JSON 解析不了）都回
+    (None, None, 原因) 而**不抛例外**——信号 20 必须能优雅回退到 yfinance ^VIX。
+    """
+    if not FRED_SH.exists():
+        return None, None, f"{rel_display(FRED_SH)} 不存在"
+    cmd = [str(FRED_SH), "VIXCLS", "--json"]
+    if not os.access(FRED_SH, os.X_OK):
+        # 少了执行位时用 bash 兜一手，而不是直接判死
+        cmd = ["bash", *cmd]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=FRED_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, None, f"{rel_display(FRED_SH)} 超时（>{FRED_TIMEOUT}s）"
+    except FileNotFoundError:
+        return None, None, f"{rel_display(FRED_SH)} 不可执行（bash 也找不到）"
+    except Exception as exc:  # noqa: BLE001 - 回退路径不得抛
+        return None, None, (f"{rel_display(FRED_SH)} 调用失败："
+                            f"{type(exc).__name__}: {scrub(exc)}")
+
+    if proc.returncode != 0:
+        why = _FRED_EXIT_MEANING.get(proc.returncode, f"未知退出码 {proc.returncode}")
+        tail = " ".join(scrub(proc.stderr or "").split())[:200]
+        return None, None, (f"{rel_display(FRED_SH)} 退出码 {proc.returncode}（{why}）"
+                            + (f"：{tail}" if tail else ""))
+
+    try:
+        data = json.loads(proc.stdout)
+        block = next((x for x in (data.get("series") or []) if x.get("id") == "VIXCLS"), None)
+        latest = (block or {}).get("latest") or {}
+        value, date = latest.get("value"), latest.get("date")
+        if value is None or date is None:
+            return None, None, f"{rel_display(FRED_SH)} 回传里没有 VIXCLS 的最新有值观测"
+        return float(value), str(date), None
+    except Exception as exc:  # noqa: BLE001 - 回退路径不得抛
+        return None, None, (f"{rel_display(FRED_SH)} 输出解析失败："
+                            f"{type(exc).__name__}: {scrub(exc)}")
+
+
 # ---------------------------------------------------------------- 各信号计算
 
 
@@ -441,10 +512,77 @@ def calc_19(closes) -> dict:
 
 
 def calc_20(closes) -> dict:
-    vix_s = series_of(closes, "^VIX")
+    """信号 20 VRP。
+
+    VIX **首选 FRED VIXCLS**，与信号 4（VIX 期限结构）和 7 项硬阈值第 1 项
+    「VIX >25 且连续 3 个交易日」同源同日。同一份报告里出现两个 VIX，
+    不只是数字不一致：两者数据日期常常不同（yfinance 当日 vs FRED 滞后一个交易日），
+    VRP = VIX(T) − RV20(T−1) 这种跨日相减会静默发生，而信号 4 是 Tier 1。
+    所以：FRED 取不到才回退 yfinance ^VIX，且回退与两源不一致都必须写进 warnings。
+    """
     spx_s = series_of(closes, "^GSPC")
-    vix = float(vix_s.iloc[-1]) if vix_s is not None else None
-    v = rv20(spx_s)
+    yf_vix_s = series_of(closes, "^VIX")
+    yf_vix = float(yf_vix_s.iloc[-1]) if yf_vix_s is not None else None
+    yf_vix_asof = as_of(yf_vix_s)
+
+    fred_vix, fred_asof, fred_why = fred_vixcls()
+
+    warns: list[str] = []
+    if fred_vix is not None:
+        vix, vix_as_of, vix_source = fred_vix, fred_asof, "FRED VIXCLS"
+    else:
+        vix, vix_as_of = yf_vix, yf_vix_asof
+        vix_source = "yfinance ^VIX" if yf_vix is not None else None
+        warns.append(
+            "⚠️ VIX 源已回退至 yfinance ^VIX，与信号 4／硬阈值 1 的 FRED VIXCLS 不同源，"
+            "两者读数与数据日期可能不一致，报告须注明"
+            + (f"（FRED 取数失败：{fred_why}）" if fred_why else "")
+        )
+
+    # 两个源都取到时必须比对——这正是本 bug 要暴露的东西，修好了也不能藏起来。
+    if fred_vix is not None and yf_vix is not None:
+        diff = fred_vix - yf_vix
+        if abs(diff) > VIX_SOURCE_DIFF_TOL:
+            warns.append(
+                f"⚠️ 两个 VIX 源读数不一致：FRED VIXCLS {fred_vix:.2f}"
+                f"（{fred_asof or 'N/A'}）vs yfinance ^VIX {yf_vix:.2f}"
+                f"（{yf_vix_asof or 'N/A'}），差 {diff:+.2f} 点（提示线 ±{VIX_SOURCE_DIFF_TOL}）；注意两者数据日期不同时这个差多半只是日期错位、并非源本身分歧；本信号采用 FRED，报告须注明"
+            )
+        if fred_asof and yf_vix_asof and fred_asof != yf_vix_asof:
+            warns.append(
+                f"⚠️ 两个 VIX 源数据日期不同：FRED VIXCLS {fred_asof} vs "
+                f"yfinance ^VIX {yf_vix_asof}（FRED 通常滞后一个交易日）；"
+                f"本信号采用 FRED {fred_asof}，与信号 4／硬阈值 1 同日"
+            )
+
+    # VRP 两条腿必须同日。VIX 走 FRED 后通常滞后 1–2 个交易日，而 SPX 是当日，
+    # 直接相减就是跨日 —— 实测偏差 0.2 点以上，而阈值是 VRP<0，零轴附近足以翻转档位。
+    # 所以把 SPX 截断到 VIX 的数据日期再算 RV20：VIX 与信号 4／硬阈值 1 同源同日，
+    # 同时 VRP 自己的两条腿也同日，两个对齐同时成立。
+    spx_leg = spx_s
+    if spx_s is not None and vix_as_of:
+        try:
+            import pandas as _pd
+            truncated = spx_s[spx_s.index <= _pd.Timestamp(vix_as_of)]
+            if len(truncated) >= 21:          # RV20 至少要 21 根才有意义
+                spx_leg = truncated
+            else:
+                warns.append(
+                    f"⚠️ SPX 截断到 VIX 数据日期 {vix_as_of} 后仅剩 {len(truncated)} 根日线，"
+                    f"不足以算 RV20；改用未截断序列，VRP 为跨日相减，不可直接对阈值下硬结论"
+                )
+        except Exception as exc:              # 截断失败不该让整个信号挂掉
+            warns.append(f"⚠️ SPX 日期对齐失败（{type(exc).__name__}），VRP 可能为跨日相减")
+    v = rv20(spx_leg)
+    rv20_as_of = as_of(spx_leg)
+    if (vix is not None and v is not None and vix_as_of and rv20_as_of
+            and vix_as_of != rv20_as_of):
+        # 对齐后仍不同日 = 截断没生效（如 VIX 日在 SPX 序列里没有对应交易日）。
+        warns.append(
+            f"⚠️ VRP 两条腿数据日期仍不同：VIX（{vix_source}）{vix_as_of} vs "
+            f"RV20(^GSPC) {rv20_as_of} —— 这是跨日相减，数值不可直接对阈值下硬结论，"
+            f"报告须注明两条腿各自的日期"
+        )
     vrp = (vix - v) if (vix is not None and v is not None) else None
     if vrp is None:
         state, verdict = "⚪️", "数据暂缺"
@@ -462,9 +600,19 @@ def calc_20(closes) -> dict:
         "id": 20, "name": SIGNAL_SPECS[20][0], "group": SIGNAL_SPECS[20][2],
         "state": state,
         "VIX": vix, "RV20年化%": v, "VRP": vrp, "判定": verdict,
-        "as_of": as_of(vix_s) or as_of(spx_s),
-        "note": "VRP = VIX − 20日已实现波动率。触发：<0 转负 = 恐慌是真的｜>15 = 恐慌过头。",
-        "warnings": [w for w in (magnitude_flag("VIX", vix), magnitude_flag("RV20(%)", v)) if w],
+        "vix_source": vix_source,
+        "vix_as_of": vix_as_of,
+        "rv20_as_of": rv20_as_of,
+        "vix_fred_vixcls": fred_vix,
+        "vix_fred_as_of": fred_asof,
+        "vix_yfinance": yf_vix,
+        "vix_yfinance_as_of": yf_vix_asof,
+        "as_of": vix_as_of or rv20_as_of,
+        "note": "VRP = VIX − 20日已实现波动率。触发：<0 转负 = 恐慌是真的｜>15 = 恐慌过头。"
+                "VIX 首选 FRED VIXCLS，与信号 4 期限结构、硬阈值第 1 项「VIX >25 连续 3 日」"
+                "同源同日；FRED 取不到才回退 yfinance ^VIX，回退必在 warnings 明示。",
+        "warnings": warns + [w for w in (magnitude_flag("VIX", vix),
+                                         magnitude_flag("RV20(%)", v)) if w],
     }
 
 
@@ -546,6 +694,57 @@ def calc_22(closes) -> dict:
     }
 
 
+MA200_WINDOW = 200
+STREAK_NEED = 5
+
+
+def above_200dma_streak(s, window: int = MA200_WINDOW, need: int = STREAK_NEED):
+    """从最新一根往回数，连续有多少根收盘 > **该根当日**的 200DMA。回 (天数, 说明)。
+
+    这是一个**纯历史计算**，不需要任何跨日状态档：yfinance 的 2 年日线里
+    每一根都能算出它自己当日的 MA200。靠 last_run.json 逐日累积的老做法，
+    只要漏跑一天 / 状态档损坏 / 首次运行，就永远答不出这个条件。
+
+    关键：每根必须用**它自己当日**的 MA200 比较。拿今天的 MA200 去比历史收盘是错的
+    ——上升趋势里今天的均线更高，会把当年其实已站上均线的日子误判成没站上（反之亦然）。
+
+    历史不足 window + need 根时回 (None, 原因)：**绝不默认成 0，也绝不视同已满足**。
+    """
+    n = 0 if s is None else len(s)
+    if s is None or n < window + need:
+        return None, (f"历史不足：判定「连续 {need} 个交易日站稳 {window}DMA」"
+                      f"至少需要 {window + need} 根日线，实际 {n} 根 → 无法判定"
+                      f"（不填 0，也不视同已满足；需要更长历史请加 --period）")
+    m = s.rolling(window).mean()
+    streak = 0
+    truncated = False               # 是否数到历史尽头才停（而不是遇到跌破才停）
+    for i in range(len(s) - 1, -1, -1):
+        try:
+            ma = float(m.iloc[i])
+        except (TypeError, ValueError):
+            truncated = True
+            break
+        if math.isnan(ma):          # 前 window−1 根没有 MA200，数到这里就停
+            truncated = True
+            break
+        if float(s.iloc[i]) > ma:
+            streak += 1
+        else:
+            break                   # 真的跌破 → streak 是确定值
+    else:
+        truncated = True            # 一路数到序列开头都没跌破
+    if truncated:
+        # 数到 MA200 暖机边界/序列开头才停 —— streak 是**下界**不是确定值。
+        # 把下界说成事实，与本技能「绝不编数字」同属一类错误。
+        note = (f"至少连续 {streak} 个交易日站稳（需 ≥{need}）"
+                f"——已数到可得历史的尽头，真实天数 ≥{streak}；加 --period 可回溯更久")
+    elif streak >= need:
+        note = f"已连续 {streak} 个交易日站稳（需 ≥{need}）"
+    else:
+        note = f"已连续 {streak} 个交易日站稳，距 {need} 日还差 {need - streak} 个"
+    return streak, note
+
+
 def calc_26(closes) -> dict:
     s = series_of(closes, "^GSPC")
     price = ma200 = dev = slope = None
@@ -559,6 +758,8 @@ def calc_26(closes) -> dict:
                 slope = (float(m.iloc[-1]) / float(m.iloc[-1 - 20]) - 1.0) * 100.0
     above = (dev is not None and dev > 0)
     up = (slope is not None and slope > 0)
+    # 「连续 5 个交易日站稳 200DMA」直接从日线历史算出来，不靠状态档累积（见函数档头）。
+    streak, streak_note = above_200dma_streak(s)
     if dev is None or slope is None:
         state, regime = "⚪️", "数据暂缺（200DMA 或 20日斜率算不出，历史不足）"
     elif above and up:
@@ -573,20 +774,26 @@ def calc_26(closes) -> dict:
         "SPX": price, "MA200": ma200, "偏离%": dev, "MA200_20日斜率%": slope,
         "价在200DMA上方": above if dev is not None else None,
         "斜率向上": up if slope is not None else None,
-        # 同样两个布尔，另给一组 ASCII 键名供 snapshot.py 逐日累积用（战术层恢复条件
-        # 「重新站上 200DMA 且**连续 5 个交易日**站稳，且斜率转正」需要跨日计数）。
-        # 本脚本只回报**当日**这两个事实，跨日的连续天数由 snapshot.py 累积——
-        # market.py 每次只看得到今天，自己数连续天数必然是错的。
+        # 同样两个布尔，另给一组 ASCII 键名（snapshot.py 仍在读，别改名别删）。
         # 取不到（历史不足）时为 null，snapshot.py 必须把 null 当「今天不算站稳」，
         # 不得跳过、也不得视同 true（那会凭空补满 5 天）。
         "above_200dma": above if dev is not None else None,
         "slope_positive": up if slope is not None else None,
+        # 「连续 5 个交易日站稳 200DMA」的**完整答案**，直接从日线历史算出：
+        # 每根收盘 vs 该根**当日**的 200DMA，从最新一根往回数。不需要 last_run.json，
+        # 漏跑一天 / 状态档损坏 / 首次运行都不影响。历史不足时为 null + streak_note 说明，
+        # 绝不填 0、也绝不视同已满足。
+        "above_200dma_streak": streak,
+        "streak_meets_5": (None if streak is None else streak >= STREAK_NEED),
+        "streak_note": streak_note,
         "机制": regime,
         "as_of": as_of(s),
         "note": "双条件设计：只看价格跌破会被反复洗，加「均线斜率也转负」做二次确认。"
                 "斜率是战术层 🔴 组合 A 的第二个条件，不可省。"
-                "JSON 另带 above_200dma / slope_positive 两个当日布尔，供 snapshot.py "
-                "累积战术层恢复条件的「连续 5 个交易日站稳 200DMA」——本脚本不数跨日天数。",
+                "战术层 🔴/🟡 → 🟢 的恢复需要两个条件：「连续 5 个交易日站稳 200DMA」"
+                "+「200DMA 斜率转正」。前者本脚本给出完整答案"
+                "（above_200dma_streak / streak_meets_5，纯历史计算，不依赖状态档）；"
+                "后者本脚本只给当日值 slope_positive，其跨日确认仍看 snapshot.py。",
         "warnings": [w for w in (magnitude_flag("200DMA 偏离(%)", dev),) if w],
     }
 
@@ -675,6 +882,13 @@ def print_report(result: dict) -> None:
         elif sid == 20:
             print(f"- VIX {fmt(d['VIX'], 2)} − RV20 {fmt(d['RV20年化%'], 1)} = "
                   f"VRP {signed(d['VRP'], 2)} → {d['判定']}（as of {d['as_of'] or 'N/A'}）")
+            print(f"- VIX 源：{d['vix_source'] or 'N/A'}"
+                  f"（as of {d['vix_as_of'] or 'N/A'}）｜"
+                  f"RV20(^GSPC) as of {d['rv20_as_of'] or 'N/A'}")
+            print(f"- 两源对照：FRED VIXCLS {fmt(d['vix_fred_vixcls'], 2)}"
+                  f"（{d['vix_fred_as_of'] or 'N/A'}）｜"
+                  f"yfinance ^VIX {fmt(d['vix_yfinance'], 2)}"
+                  f"（{d['vix_yfinance_as_of'] or 'N/A'}）")
         elif sid == 21:
             for leg in d["腿"].values():
                 print(f"- {leg['标的']}：{signed(leg['当日涨跌%'], 2, '%')}"
@@ -691,9 +905,12 @@ def print_report(result: dict) -> None:
                   f" {arrow(d['MA200_20日斜率%'])}")
             print(f"- 机制：{d['机制']}（as of {d['as_of'] or 'N/A'}）")
             print(f"- 恢复条件用的当日布尔：above_200dma={d['above_200dma']}｜"
-                  f"slope_positive={d['slope_positive']}"
-                  f"　→ 战术层恢复要求「连续 5 个交易日站稳 200DMA 且斜率转正」，"
-                  f"连续天数由 snapshot.py 逐日累积，本脚本只给今天这一天。")
+                  f"slope_positive={d['slope_positive']}")
+            print(f"- 连续站稳 200DMA：{d['above_200dma_streak'] if d['above_200dma_streak'] is not None else 'N/A'}"
+                  f" 个交易日｜满足 ≥5：{d['streak_meets_5']}　{d['streak_note']}")
+            print("- 战术层恢复要「连续 5 个交易日站稳 200DMA」+「200DMA 斜率转正」两个条件："
+                  "前者本脚本已从日线历史直接算出完整答案（不依赖状态档）；"
+                  "后者本脚本只给当日值，跨日确认仍看 snapshot.py。")
         elif sid == 33:
             print(f"- DXY {fmt(d['DXY'], 2)}｜当日 {signed(d['当日%'], 2, '%')} {arrow(d['当日%'])}｜"
                   f"5日 {signed(d['5日%'], 2, '%')}｜20日 {signed(d['20日%'], 2, '%')}"
