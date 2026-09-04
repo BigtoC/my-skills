@@ -122,13 +122,18 @@ they keep runtime state that changes on every run:
   `scripts/hk_quote.py` for Hong Kong prices. Install both skills side by side
   (or point `AI_INDUSTRY_WEEKLY_DIR` at the weekly skill) — the daily skill's
   preflight check fails loudly if it cannot find them.
-- **Slack channel via environment variable.** The optional Slack push reads the
-  channel id from an environment variable; nothing is stored in the repo:
+- **Slack channel via one shared environment variable.** The optional Slack push
+  reads the channel id from `NOTIFICATION_SLACK_CHANNEL_ID`; nothing is stored in
+  the repo:
 
   ```sh
-  export AI_INDUSTRY_SLACK_CHANNEL_ID=C0XXXXXXXXX   # ai-industry-weekly + ai-pullback-daily
-  export RISK_MONITOR_SLACK_CHANNEL_ID=C0XXXXXXXXX  # daily-risk-monitor
+  export NOTIFICATION_SLACK_CHANNEL_ID=C0XXXXXXXXX   # every skill that pushes
   ```
+
+  Renamed from `AI_INDUSTRY_SLACK_CHANNEL_ID` / `RISK_MONITOR_SLACK_CHANNEL_ID`.
+  If you exported either of those, switch to the new name — the old ones are no
+  longer read, so the push is skipped (the report still prints in full and says
+  so at the end).
 
   `ai-industry-weekly` reads one more optional variable, `AV_API_KEYS` — the
   Alpha Vantage key(s) behind the first tier of its ETF holdings fetch. Several
@@ -141,11 +146,11 @@ they keep runtime state that changes on every run:
   export AV_API_KEYS=KEY1,KEY2   # optional; without it the fetch starts at yfinance
   ```
 
-  The two AI-compute skills share `AI_INDUSTRY_SLACK_CHANNEL_ID`.
-  `daily-risk-monitor` is a general market-risk routine rather than part of that
-  pair, so it reads its own `RISK_MONITOR_SLACK_CHANNEL_ID` — point it at the
-  same channel if you want them together. Leave a variable unset and the skill
-  still runs and prints its full report — it just skips the Slack push.
+  All three notifying skills — `ai-industry-weekly`, `ai-pullback-daily` and
+  `daily-risk-monitor` — read the same `NOTIFICATION_SLACK_CHANNEL_ID`, so one
+  export points every routine at the channel you want — and, by the same token,
+  sending one routine somewhere else is no longer expressible. Leave it unset and
+  the skill still runs and prints its full report — it just skips the Slack push.
 
 ## Usage
 
