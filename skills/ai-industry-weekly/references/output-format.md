@@ -4,7 +4,7 @@
 >
 > **编者注**：文中的「46 行」以 `assets/universe.json` 的实际标的数为准。
 >
-> **编者注**：Slack 频道 ID 取自环境变量 `AI_INDUSTRY_SLACK_CHANNEL_ID`（见 SKILL.md 第零步）；
+> **编者注**：Slack 频道 ID 取自环境变量 `NOTIFICATION_SLACK_CHANNEL_ID`（见 SKILL.md 第零步）；
 > 未设置时跳过 Slack 推送，运行结果正文照常完整输出。日报 routine 的 ID 不在本技能内保存。
 > 本 repo 为公开仓库，**任何文件里都不得回填真实 ID**。
 
@@ -38,7 +38,7 @@
 
 **执行顺序：先按「输出格式」把 ①②③ 完整写进运行结果，再做本步推送。Slack 推送是「另外再发一份」，绝不取代运行结果里的整表输出。**
 
-分析完成后，用 Slack MCP 的 `slack_send_message` 把结果推送到频道 **`$AI_INDUSTRY_SLACK_CHANNEL_ID`**（channel_id 取自该环境变量）。**固定分两条，且第二条作为第一条的 thread 回复**：
+分析完成后，用 Slack MCP 的 `slack_send_message` 把结果推送到频道 **`$NOTIFICATION_SLACK_CHANNEL_ID`**（channel_id 取自该环境变量）。**固定分两条，且第二条作为第一条的 thread 回复**：
 - **第一条（发到频道）**：标题 + 变动摘要 + 关键数据漂移。
   1. 标题：`📅 AI算力产业表周更 | <数据日期 YYYY-MM-DD>`
   2. 🔀 本周变动摘要：评级有变的标的逐条；全无变动则写「本周评级无变动」
