@@ -68,7 +68,7 @@ metadata:
 
 ```bash
 SKILL_DIR=<本 SKILL.md 所在目录的绝对路径>
-echo "${AI_INDUSTRY_SLACK_CHANNEL_ID:-<unset>}"
+echo "${NOTIFICATION_SLACK_CHANNEL_ID:-<unset>}"
 python3 "$SKILL_DIR/scripts/industry_table.py" --check
 ```
 
@@ -82,7 +82,7 @@ done
 
 读法：
 
-- **`AI_INDUSTRY_SLACK_CHANNEL_ID` 未设置** → 跳过第六步的 Slack 推送，在正文末尾注明「本次未推送 Slack（`AI_INDUSTRY_SLACK_CHANNEL_ID` 未设置）」。**报告本身照常完整输出**（精简版 + 完整版都要写在对话里）。本技能不带任何配置文件；**绝不把真实频道 ID 写进本 repo 的任何文件**（公开仓库），一律只写 `$AI_INDUSTRY_SLACK_CHANNEL_ID` 占位符。
+- **`NOTIFICATION_SLACK_CHANNEL_ID` 未设置** → 跳过第六步的 Slack 推送，在正文末尾注明「本次未推送 Slack（`NOTIFICATION_SLACK_CHANNEL_ID` 未设置）」。**报告本身照常完整输出**（精简版 + 完整版都要写在对话里）。本技能不带任何配置文件；**绝不把真实频道 ID 写进本 repo 的任何文件**（公开仓库），一律只写 `$NOTIFICATION_SLACK_CHANNEL_ID` 占位符。
 - **`--check` 失败**（exit 1）→ 说明姊妹技能 `ai-industry-weekly` 没装在同级目录，或它的基准表坏了/解析不出。**必须先解决再往下走**：产业评级是第五步分桶的**质量闸门**，没有它，「好公司 ＋ 回调触发」这个核心等式的前半截就是空的，整个框架失效——不要用记忆里的评级顶替，也不要临时自己评级。
 - **基准表陈旧告警**：`industry_table.py` 在基准表超过 **10 天**未更新时会打横幅。那不是错误，是提醒**周更该跑了**（评级已可能落后于财报与估值）。照常运行本日报告，但在完整版注明基准表数据日期与陈旧天数。
 - **数据日期在未来告警**：基准表的「数据日期」比本机今天还晚时单独打横幅。此时 10 天陈旧闸门**永远不会触发**（表可能其实很旧，只是日期写错），故「新鲜」这个结论不可信。先核对本机日期；确是表里日期写错就去周更技能重跑覆写。照常出报告，但完整版须注明本次无法判定基准表新鲜度。
@@ -168,7 +168,7 @@ python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --compact  # 精简版�
 **读 `references/output-format.md`**，按其中的报告头、一句话总结、精简版逐行格式、完整版各子节、全局规则与静默/强制完整推送条件逐条执行。
 
 - **精简版**：Slack markdown（*粗体* + • 项目符号，不用表格，**≤5000 字符**——以 `references/output-format.md` 原文为准）。必出行：🧭 引爆点、💳 信用④、💵 利率、✅ 未触发；条件必出：📅 事件（FOMC 窗口）、🚨 论点告警横幅、🌙 盘后隐含。
-- **推送**：发到 `$AI_INDUSTRY_SLACK_CHANNEL_ID`，报告生成后直接发送，无需草稿或二次确认。**发送时不含外层 ```**——包了外层代码块，粗体与项目符号不会渲染。（在对话里展示时可以包，便于整段复制。）发送失败 → 说明可能原因并给出可复制的兜底文本。
+- **推送**：发到 `$NOTIFICATION_SLACK_CHANNEL_ID`，报告生成后直接发送，无需草稿或二次确认。**发送时不含外层 ```**——包了外层代码块，粗体与项目符号不会渲染。（在对话里展示时可以包，便于整段复制。）发送失败 → 说明可能原因并给出可复制的兜底文本。
 - **完整版只在对话中输出，不发往 Slack。**
 - 未设置频道变量 → 跳过推送，两版照常完整输出。
 

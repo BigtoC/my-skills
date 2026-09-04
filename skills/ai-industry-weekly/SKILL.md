@@ -17,7 +17,7 @@ metadata:
 
 ## 角色
 
-你是 AI 算力产业链「产业质量参考表」周更助手。每周用最新基本面，按统一评级规则重算 46 个标的的产业质量表，并和基准表（见第三步）对比，输出：① 评级/数据变动摘要 ② 完整更新后的产业表（可直接粘贴）③ 应用说明 ④ 推送到指定 Slack 频道（`$AI_INDUSTRY_SLACK_CHANNEL_ID`）。
+你是 AI 算力产业链「产业质量参考表」周更助手。每周用最新基本面，按统一评级规则重算 46 个标的的产业质量表，并和基准表（见第三步）对比，输出：① 评级/数据变动摘要 ② 完整更新后的产业表（可直接粘贴）③ 应用说明 ④ 推送到指定 Slack 频道（`$NOTIFICATION_SLACK_CHANNEL_ID`）。
 
 **⚠️ 交付双轨（最重要，勿省）：①②③ 必须【完整写在本次运行结果（对话回复正文）里】，④ 的 Slack 推送是【额外分发】而非替代。**「已推送 Slack」「详见 thread」「链接如上」等**都不算完成运行结果输出**——运行结果里没有完整 46 行产业表，本次任务即视为未完成。
 
@@ -78,20 +78,20 @@ ls "$SKILL_DIR/scripts/baseline.py" "$SKILL_DIR/assets/universe.json"
 ### 0.2 读频道配置
 
 ```bash
-echo "${AI_INDUSTRY_SLACK_CHANNEL_ID:-<unset>}"
+echo "${NOTIFICATION_SLACK_CHANNEL_ID:-<unset>}"
 ```
 
-Slack 频道 ID 只从环境变量 **`AI_INDUSTRY_SLACK_CHANNEL_ID`** 读取，本技能不带任何配置文件。
+Slack 频道 ID 只从环境变量 **`NOTIFICATION_SLACK_CHANNEL_ID`** 读取，本技能不带任何配置文件。
 
-**未设置时**：跳过第五步 Slack 推送，并在正文末尾注明「本次未推送 Slack（`AI_INDUSTRY_SLACK_CHANNEL_ID` 未设置）」。这**不影响**正文 ①②③ 的完整性要求——它们照常完整输出。
+**未设置时**：跳过第五步 Slack 推送，并在正文末尾注明「本次未推送 Slack（`NOTIFICATION_SLACK_CHANNEL_ID` 未设置）」。这**不影响**正文 ①②③ 的完整性要求——它们照常完整输出。
 
 需要推送时让用户自行设置（写进 shell profile 或 `.claude/settings.json` 的 `env`）：
 
 ```bash
-export AI_INDUSTRY_SLACK_CHANNEL_ID=C0XXXXXXXXX
+export NOTIFICATION_SLACK_CHANNEL_ID=C0XXXXXXXXX
 ```
 
-**绝不把真实频道 ID 写进本 repo 的任何文件**（公开仓库）。正文、references、提交内容里一律只用 `$AI_INDUSTRY_SLACK_CHANNEL_ID` 占位符。
+**绝不把真实频道 ID 写进本 repo 的任何文件**（公开仓库）。正文、references、提交内容里一律只用 `$NOTIFICATION_SLACK_CHANNEL_ID` 占位符。
 
 ## 第一步 · 取数
 
@@ -152,7 +152,7 @@ export AV_API_KEYS=KEY1,KEY2,KEY3
 
 **这是可选增强，不是必需依赖。** 本技能没有它照样跑完整流程。
 
-**`AV_API_KEYS` 未设置时**：跳过第一级，直接从 yfinance 起——对 LYTE / NCLD 那是 0 笔，实际等于只剩第三级（人工翻官网）。**只有全量来源才有的字段**（逐笔全量成分、AUM、下面表里标 N/A 的那几项）记 `N/A`。**费率与上市日不受影响**——那两项 `rating-rules.md` 正文已按发行商官网核实过（三档均 0.65%），权威来源与 AV 无关，不因本步缺席而降级成 `N/A`，**正文 ①②③ 照常完整输出**。处置与第零步 `AI_INDUSTRY_SLACK_CHANNEL_ID` 未设置时完全一致：少一路增强，不少一段交付。限流用尽、字段回 `n/a`、整档抓空——同样记 `N/A`，**绝不估算**。
+**`AV_API_KEYS` 未设置时**：跳过第一级，直接从 yfinance 起——对 LYTE / NCLD 那是 0 笔，实际等于只剩第三级（人工翻官网）。**只有全量来源才有的字段**（逐笔全量成分、AUM、下面表里标 N/A 的那几项）记 `N/A`。**费率与上市日不受影响**——那两项 `rating-rules.md` 正文已按发行商官网核实过（三档均 0.65%），权威来源与 AV 无关，不因本步缺席而降级成 `N/A`，**正文 ①②③ 照常完整输出**。处置与第零步 `NOTIFICATION_SLACK_CHANNEL_ID` 未设置时完全一致：少一路增强，不少一段交付。限流用尽、字段回 `n/a`、整档抓空——同样记 `N/A`，**绝不估算**。
 
 #### ⚠️ 口径红线一：top-N 来源下，有些派生量根本不可算
 
@@ -266,9 +266,9 @@ python3 "$SKILL_DIR/scripts/baseline.py" write /tmp/industry_table_new.md --date
 
 细则见 **`references/output-format.md`「第四步」一节**：固定两条，第一条（摘要 + 关键数据漂移）发到频道，第二条（完整整表 + L8 太空曝险提醒 + 免责声明）以第一条的 `message_ts` 作 `thread_ts` 发到 thread，不勾 `reply_broadcast`。推送成功后把两条链接附在运行结果**整表之后**。
 
-频道 ID 取自环境变量 `AI_INDUSTRY_SLACK_CHANNEL_ID`（第零步已读）。**运行结果正文、以及任何写进 repo 的文本里，只写 `$AI_INDUSTRY_SLACK_CHANNEL_ID` 占位符，绝不回填真实 ID。**
+频道 ID 取自环境变量 `NOTIFICATION_SLACK_CHANNEL_ID`（第零步已读）。**运行结果正文、以及任何写进 repo 的文本里，只写 `$NOTIFICATION_SLACK_CHANNEL_ID` 占位符，绝不回填真实 ID。**
 
-`AI_INDUSTRY_SLACK_CHANNEL_ID` 未设置 → 跳过本步，在正文末尾注明「本次未推送 Slack（`AI_INDUSTRY_SLACK_CHANNEL_ID` 未设置）」。这**不影响**正文 ①②③ 的完整性要求。
+`NOTIFICATION_SLACK_CHANNEL_ID` 未设置 → 跳过本步，在正文末尾注明「本次未推送 Slack（`NOTIFICATION_SLACK_CHANNEL_ID` 未设置）」。这**不影响**正文 ①②③ 的完整性要求。
 
 ## 第六步 · 交付自检
 
