@@ -81,7 +81,7 @@ metadata:
 
 ```bash
 SKILL_DIR=<本 SKILL.md 所在目录的绝对路径>
-echo "${RISK_MONITOR_SLACK_CHANNEL_ID:-<unset>}"
+echo "${NOTIFICATION_SLACK_CHANNEL_ID:-<unset>}"
 ```
 
 拿不准时探测（两种安装形态都覆盖）：
@@ -92,7 +92,7 @@ for d in "$HOME/.claude/skills/daily-risk-monitor" "$(git rev-parse --show-tople
 done
 ```
 
-Slack 频道 ID 只从环境变量 **`RISK_MONITOR_SLACK_CHANNEL_ID`** 读，本技能不带任何配置文件。**未设置** → 跳过第 7 步推送，在正文末尾注明「本次未推送 Slack（`RISK_MONITOR_SLACK_CHANNEL_ID` 未设置）」；**报告本身照常完整输出**。本仓库公开：**绝不把真实频道 ID 写进任何文件，也绝不写进运行结果正文**，一律只用 `$RISK_MONITOR_SLACK_CHANNEL_ID` 占位符。
+Slack 频道 ID 只从环境变量 **`NOTIFICATION_SLACK_CHANNEL_ID`** 读，本技能不带任何配置文件。**未设置** → 跳过第 7 步推送，在正文末尾注明「本次未推送 Slack（`NOTIFICATION_SLACK_CHANNEL_ID` 未设置）」；**报告本身照常完整输出**。本仓库公开：**绝不把真实频道 ID 写进任何文件，也绝不写进运行结果正文**，一律只用 `$NOTIFICATION_SLACK_CHANNEL_ID` 占位符。
 
 ### 0.2 与昨日对照（先做这个）
 
@@ -102,7 +102,7 @@ python3 "$SKILL_DIR/scripts/snapshot.py" show
 
 它打印上次运行写下的**每个信号的状态档位**、**战略基准**与**战术档位**。
 
-- **本地状态档是首选来源。** 只有 `assets/last_run.json` 不存在 / 解析失败时，才**回退**用 `slack_read_channel` 读 `$RISK_MONITOR_SLACK_CHANNEL_ID`，找标题含「每日风险监控」的最近一条本任务报告。两条路都不通 / 首次运行 → 标注「无昨日基准，本次为首次建立」，不影响其余部分，**不重试超过 2 次**。
+- **本地状态档是首选来源。** 只有 `assets/last_run.json` 不存在 / 解析失败时，才**回退**用 `slack_read_channel` 读 `$NOTIFICATION_SLACK_CHANNEL_ID`，找标题含「每日风险监控」的最近一条本任务报告。两条路都不通 / 首次运行 → 标注「无昨日基准，本次为首次建立」，不影响其余部分，**不重试超过 2 次**。
 - **只比对状态档位（🟢🟡🔴），不比对具体数值**——数值天天动，档位才是信号。
 - 今日报告必须回答：**哪些信号档位变了、哪些没变**。
 - **若价格大跌但 0 个信号档位改变**，「今日解读」第一句必须是：「**30 个信号中 0 个状态改变，变的只有价格。**」
@@ -245,7 +245,7 @@ python3 "$SKILL_DIR/scripts/snapshot.py" write /tmp/today.json --date 2026-09-03
 
 ## 第 7 步 · Slack 推送
 
-按 `references/output-format.md`「Slack 推送」一节（精简版、真表格不用代码块、Slack 表格规则）发到 `$RISK_MONITOR_SLACK_CHANNEL_ID`。未设置该变量 → 跳过本步并在正文末尾注明，**不影响正文完整性**。推送失败 → 说明可能原因并给出可复制的兜底文本。
+按 `references/output-format.md`「Slack 推送」一节（精简版、真表格不用代码块、Slack 表格规则）发到 `$NOTIFICATION_SLACK_CHANNEL_ID`。未设置该变量 → 跳过本步并在正文末尾注明，**不影响正文完整性**。推送失败 → 说明可能原因并给出可复制的兜底文本。
 
 ## 第 8 步 · 交付自检
 

@@ -358,14 +358,31 @@ no output contains a local absolute path.
 
 ## Public repo
 
-`BigtoC/my-skills` is public. Slack channel ids come from environment variables —
-`AI_INDUSTRY_SLACK_CHANNEL_ID` for the two AI-compute skills,
-`RISK_MONITOR_SLACK_CHANNEL_ID` for `daily-risk-monitor` (a general market-risk
-routine, deliberately not on the `AI_INDUSTRY_` prefix even if both point at the
-same channel). The skills intentionally ship no config file and contain no
-channel or routine ids. With the variable unset a skill still runs and prints its
-full report, skipping only the push. The same rule covers runtime output: no real
-channel id, absolute home path, or username may appear in a report body either.
+`BigtoC/my-skills` is public. The skills intentionally ship no config file and
+contain no channel or routine ids — Slack channel ids come from the environment,
+and no real channel id, absolute home path, or username may appear in a report
+body either.
+
+**One variable for every skill that notifies: `NOTIFICATION_SLACK_CHANNEL_ID`.**
+All three notifying skills (`ai-industry-weekly`, `ai-pullback-daily`,
+`daily-risk-monitor`) read that single name, and a new skill that pushes to Slack
+reuses it rather than minting its own. With it unset a skill still runs and
+prints its full report, skipping only the push.
+
+It replaced a pair grouped by routine family — `AI_INDUSTRY_SLACK_CHANNEL_ID` for
+the two AI-compute skills, `RISK_MONITOR_SLACK_CHANNEL_ID` for
+`daily-risk-monitor`, which was deliberately kept off the `AI_INDUSTRY_` prefix
+because it is not part of that pair. Neither name may come back. Grouping by
+family read as tidy and cost real usability: the notification target is a
+property of the *operator*, not of the routine, so configuring a skill meant
+first knowing which family it belonged to, and a skill fitting no existing family
+meant another export pointing at the same channel. A skill that genuinely needs a
+different destination is a deliberate exception to argue for, not a default to
+reach for.
+
+The rule covers Slack notification targets only. Non-notification variables keep
+their own descriptive names — `AI_INDUSTRY_WEEKLY_DIR` (sibling-skill location),
+`AV_API_KEYS` (Alpha Vantage keys) — and renaming those is not part of it.
 
 `git push` uses the SSH host alias `github.com-personal`, while `gh` may be
 authenticated as a different account — check `gh auth status` before assuming
