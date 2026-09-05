@@ -2,7 +2,7 @@
 name: daily-risk-monitor
 description: 每日金融市场风险监控助手。每天跑一次跨市场（TradFi + Crypto + 长线估值）风险巡检：30 个信号 + 双轨决策层（周一另加 4 项宏观定价指标），逐项判定状态档位、算出 7 项硬阈值触发数与告警分级，最终给出「战略基准 × 战术系数 = 最终目标仓位」，并推送 Slack。当用户提到 每日风险监控、市场风险、风险巡检、30 信号、双轨决策、战略层/战术层、战略基准、战术系数、目标仓位、7 项硬阈值、VIX、VIX 期限结构、HY 信用利差、Fear & Greed、净流动性、TGA/RRP、Sahm Rule、CAPE、Buffett 指标、200DMA、σ倍数、VRP、资金费率、永续、清算、稳定币供应、内部人买卖比、BofA 牛熊、NAAIM、AAII、Put/Call、Margin Debt、腾落线、减仓、止盈、停止加仓、仓位、这跌正不正常 时自动使用。
 license: MIT
-compatibility: Portable Agent Skills format for agents that support SKILL.md. 取数脚本需 bash + curl + awk（FRED / CNN / Binance / Hyperliquid / CoinGecko / DeFiLlama / multpl），其中 `crypto.sh` / `cnn_fng.sh` / `stock_perp.sh` **另需 jq**（缺 jq 会 exit 2，`fred.sh` / `cape.sh` 不需要）；`scripts/market.py` 需 python3 + `requests`/`yfinance`/`pandas`/`numpy`；`scripts/snapshot.py` 只用标准库。另有 `scripts/crypto.py` / `scripts/stock_perp.py` 两支 Python 埠，只需 python3 + `requests`（不用 jq/awk/curl），但**目前仅在平行评估期、尚未接线**——本 SKILL.md 的所有命令仍调用 .sh，**jq 依旧是硬依赖**。部分信号需 WebSearch / web_fetch。**检索传输层可选**：若运行时能把检索分组交给独立的子上下文各自取数、各自写一个 JSON 档，就照 `references/search-contract.md` 走；没有这个能力时由本体自己按**同一份契约**取同样的数、写同样那批 JSON 档，报告内容不受影响。取数调度用 shell 后台作业（`&` 起、逐 PID `wait` 收），没有作业控制的环境改成逐条串行执行，输出相同。Slack 推送需 Slack MCP，可跳过。
+compatibility: Portable Agent Skills format for agents that support SKILL.md. 取数脚本需 bash + curl + awk（FRED / CNN / Binance / Hyperliquid / CoinGecko / DeFiLlama / multpl），其中 `crypto.sh` / `cnn_fng.sh` / `stock_perp.sh` **另需 jq**（缺 jq 会 exit 2，`fred.sh` / `cape.sh` 不需要）；`scripts/market.py` 需 python3 + `requests`/`yfinance`/`pandas`/`numpy`；`scripts/snapshot.py` 只用标准库。另有 `scripts/crypto.py` / `scripts/stock_perp.py` 两支 Python 埠，只需 python3 + `requests`（不用 jq/awk/curl），但**目前仅在平行评估期、尚未接线**——本 SKILL.md 的所有命令仍调用 .sh，**jq 依旧是硬依赖**。部分信号需 WebSearch / web_fetch。**检索传输层可选**：若运行时能把检索分组交给独立的子上下文各自取数、各自写一个 JSON 档，就照 `references/search-contract.md` 走；没有这个能力时由本体自己按**同一份契约**取同样的数、写同样那批 JSON 档，报告内容不受影响。取数调度用 shell 后台作业（`&` 起，退出码经 `<unit>.rc` 落档回收——启动与收作业不在同一个 shell，PID 收不到），没有作业控制的环境改成逐条串行执行，输出相同。Slack 推送需 Slack MCP，可跳过。
 metadata:
   author: BigtoC
   version: "0.1.0"
@@ -146,61 +146,70 @@ curl 类取数一律走独立 shell script（可直接单独调用调试）。
 ⚠️ **`fred.sh` 与 `crypto.sh` 不带参数只会印用法并 exit 1**——前者要序列 ID 或组合模式，后者要子命令。下面这段是可以照抄直接跑的完整命令：
 
 ```bash
+# ⚠️ 这个块与下面的「收作业」块**不在同一个 shell**——中间要去派发 1.2 的检索。
+# 每次工具调用都是全新 shell，变量一律不跨调用，所以：
+#   ① SKILL_DIR 在这里**重新写死**，不要依赖第零步那个块留下的值；
+#   ② 退出码经由 <unit>.rc **落档**传给收作业块，不用 $! / wait（跨 shell 收不到 PID）。
+SKILL_DIR=<本 SKILL.md 所在目录的绝对路径>
 RUN=/tmp/drm-fetch; mkdir -p "$RUN"
+rm -f "$RUN"/*.json "$RUN"/*.err "$RUN"/*.rc "$RUN"/*.out   # 清掉上次残留：「档在」≠「本次写的」
+
+# 用法：bg <单元名> <stdout 目标> -- <命令...>
+bg() { u=$1; out=$2; shift 3
+       ( "$@" >"$RUN/$out" 2>"$RUN/$u.err"; echo $? >"$RUN/$u.rc" ) & }
 
 # 信号 1、4、23、24 —— 一次给多个序列 ID 即可，逐个请求
-"$SKILL_DIR/scripts/fred.sh" BAMLH0A0HYM2 VIXCLS VXVCLS T10Y2Y T10Y3M SAHMREALTIME --json \
-  >"$RUN/fred_series.json" 2>"$RUN/fred_series.err" & P_fred_series=$!
+bg fred_series  fred_series.json  -- "$SKILL_DIR/scripts/fred.sh" BAMLH0A0HYM2 VIXCLS VXVCLS T10Y2Y T10Y3M SAHMREALTIME --json
 # 信号 5：要看「连 4 周下降」，故取 5 笔
-"$SKILL_DIR/scripts/fred.sh" --net-liquidity --days 5 --json \
-  >"$RUN/fred_netliq.json" 2>"$RUN/fred_netliq.err" & P_fred_netliq=$!
+bg fred_netliq  fred_netliq.json  -- "$SKILL_DIR/scripts/fred.sh" --net-liquidity --days 5 --json
 # 信号 27：**同季对齐**后取末行 + 50–250% 量级自检
-"$SKILL_DIR/scripts/fred.sh" --buffett --json \
-  >"$RUN/fred_buffett.json" 2>"$RUN/fred_buffett.err" & P_fred_buffett=$!
+bg fred_buffett fred_buffett.json -- "$SKILL_DIR/scripts/fred.sh" --buffett --json
 # 信号 9 → references/signals-b-positioning.md
-"$SKILL_DIR/scripts/cnn_fng.sh" --json \
-  >"$RUN/cnn_fng.json" 2>"$RUN/cnn_fng.err" & P_cnn_fng=$!
+bg cnn_fng      cnn_fng.json      -- "$SKILL_DIR/scripts/cnn_fng.sh" --json
 # 信号 14–17（子命令必给）→ references/signals-c-crypto.md
-"$SKILL_DIR/scripts/crypto.sh" all --json \
-  >"$RUN/crypto_all.json" 2>"$RUN/crypto_all.err" & P_crypto_all=$!
+bg crypto_all   crypto_all.json   -- "$SKILL_DIR/scripts/crypto.sh" all --json
 # 信号 18 → references/signals-c-crypto.md「D. 美股 24/7 永续」
-"$SKILL_DIR/scripts/stock_perp.sh" --from-fred --json \
-  >"$RUN/stock_perp.json" 2>"$RUN/stock_perp.err" & P_stock_perp=$!
+bg stock_perp   stock_perp.json   -- "$SKILL_DIR/scripts/stock_perp.sh" --from-fred --json
 # 信号 28 → references/signals-e-cycle-valuation.md
-"$SKILL_DIR/scripts/cape.sh" --json \
-  >"$RUN/cape.json" 2>"$RUN/cape.err" & P_cape=$!
+bg cape         cape.json         -- "$SKILL_DIR/scripts/cape.sh" --json
 # 信号 19–22、26、33–34 → signals-d-antiemotion.md、signals-e-cycle-valuation.md
-python3 "$SKILL_DIR/scripts/market.py" --json "$RUN/market.json" \
-  >"$RUN/market.out" 2>"$RUN/market.err" & P_market=$!
+# market.py 自己用 --json 落档，stdout 只有一行「已写入 …」，所以 stdout 收进 .out
+bg market       market.out        -- python3 "$SKILL_DIR/scripts/market.py" --json "$RUN/market.json"
 
 # 周一多一支：信号 32（10Y TIPS 实质殖利率），同样丢后台
-# "$SKILL_DIR/scripts/fred.sh" DFII10 --json \
-#   >"$RUN/fred_dfii10.json" 2>"$RUN/fred_dfii10.err" & P_fred_dfii10=$!
+# bg fred_dfii10 fred_dfii10.json -- "$SKILL_DIR/scripts/fred.sh" DFII10 --json
 ```
 
-**起完这一批就立刻去做 1.2 的派发，不要在这里等。**
+**起完这一批就立刻去做 1.2 的派发，不要在这里等。** 后台作业会活过本次工具调用，
+`.rc` / `.json` / `.err` 都会照常落到 `$RUN`；收作业块稍后按档名去捡。
 
 #### 四条守则（缺一不可）
 
 1. **一个单元一个档，没有两个 job 共用 stdout。** 后台作业交织的 stdout 是并发下的**头号污染源**——两份 JSON 交错在一起，既解析不了，也看不出坏的是哪一份。本技能这七支脚本**都没有 `--quiet`**，而 `--json` **只有 `market.py` 收档名**（`--json OUT.json`，写档后 stdout 只剩一行「已写入 …」），其余五支 shell 脚本的 `--json` 只印到 stdout——**所以隔离靠重定向，不是靠 flag；别去写一个不存在的 `--quiet`**。
    stderr 也是一单元一档（`<unit>.err`），但那是**分流不是消音**：join 之后必须逐档印出来。「回退必须响」的那些 ⚠ 行今天就活在 stderr 上，而并发本身会诱发限流，这些行在并发下只会更重要。
-2. **逐 PID 收退出码**（`wait $P_<unit>` 一个一个收），**绝不裸 `wait`**。裸 `wait` 只回最后一个作业的状态，而本技能的退出码个个有意义：`crypto.sh` 的 `liquidations` **设计上一定 exit 3**（在 `all` 里它是暂缺项、`all` 本身仍回 0），`fred.sh --buffett` / `--net-liquidity` 与 `cape.sh` 量级自检不过是 **exit 4**，`stock_perp.sh` 撞上 ctxs 短缺是 **exit 5**。裸 `wait` 把这些全丢掉，等于把「取数失败」静默记成「查过了没事」。
+2. **逐单元收退出码**（读 `<unit>.rc`），**绝不裸 `wait`，也不要靠 `$!` / `wait $PID`**——启动块与收作业块不在同一个 shell，PID 跨调用收不到，`wait` 会直接报 `job not found` 并把每个单元误判成失败。裸 `wait` 则只回最后一个作业的状态，而本技能的退出码个个有意义：`crypto.sh` 的 `liquidations` **设计上一定 exit 3**（在 `all` 里它是暂缺项、`all` 本身仍回 0），`fred.sh --buffett` / `--net-liquidity` 与 `cape.sh` 量级自检不过是 **exit 4**，`stock_perp.sh` 撞上 ctxs 短缺是 **exit 5**。裸 `wait` 把这些全丢掉，等于把「取数失败」静默记成「查过了没事」。
 3. **缺档必须响亮失败。** join 时逐个确认那个 `<unit>.json` 真的存在、非空、解析得开。**缺档绝不能被读成「该单元没有数据」**——那正是红线一挡的那件事。缺档就按该单元覆盖的信号逐项记 ⚪️、列出已尝试来源、报滞后周数，**不得当成「未触发」**。
 4. **join 之后、写任何一个字之前，先把降级浮出来。** 任何单元 `degraded: true`、`do_not_quote` 非 `null`、或退出码非零，**必须先列出来**（哪个单元、退出码、`degraded_reasons[]` 照抄措辞），再开始判信号。顺序反过来，一次被限流的运行就会被静默正常化成一次正常运行。
 
-收作业（**逐 PID**）：
+收作业（**逐单元读 `.rc`**）：
 
 ```bash
-for pair in fred_series:$P_fred_series fred_netliq:$P_fred_netliq fred_buffett:$P_fred_buffett \
-            cnn_fng:$P_cnn_fng crypto_all:$P_crypto_all stock_perp:$P_stock_perp \
-            cape:$P_cape market:$P_market; do
-  u=${pair%%:*}; p=${pair##*:}
-  wait "$p"; rc=$?
+# 本块与启动块**不在同一个 shell**，$P_* 与 $RUN 都已不存在——
+# 所以路径写死、退出码读 <unit>.rc，绝不用 wait（跨 shell 收不到 PID）。
+RUN=/tmp/drm-fetch                       # 必须与启动块同一个路径
+DEADLINE=$(( $(date +%s) + 180 ))        # 最多再等 3 分钟；超时按取数失败处理
+
+for u in fred_series fred_netliq fred_buffett cnn_fng crypto_all stock_perp cape market; do
+  while [ ! -f "$RUN/$u.rc" ] && [ "$(date +%s)" -lt "$DEADLINE" ]; do sleep 1; done
+  if [ -f "$RUN/$u.rc" ]; then rc=$(cat "$RUN/$u.rc"); else rc="TIMEOUT"; fi
   echo "── $u exit=$rc"
   [ -s "$RUN/$u.json" ] || echo "  ⚠️ $u 没有产出 JSON —— 按取数失败处理，不得读成「该单元无数据」"
   if [ -s "$RUN/$u.err" ]; then echo "  stderr:"; cat "$RUN/$u.err"; fi
 done
 ```
+
+⚠️ **`rc=TIMEOUT` 与 `rc=0` 一样要当一件事处理：它代表这个单元至今没跑完，不代表它没数据。**
+按取数失败走（该单元覆盖的信号逐项 ⚪️ + 列已尝试来源 + 报滞后周数），**不得写成「未触发」**。
 
 （`market.py` 的 JSON 由 `--json "$RUN/market.json"` 自己落档，`$RUN/market.out` 里只有那行「已写入 …」。）
 
@@ -212,7 +221,7 @@ done
 - ⚠️ **`stock_perp.sh` 有一个已知缺陷**：Hyperliquid 回的 ctxs 阵列短于 universe（某个市场少了报价）时，`--json` 分支会中止在 **exit 5**——**5 不在本仓库的保留码里**（1 参数错误｜2 依赖缺失｜3 取数失败｜4 判定取错市场），且 stdout 上不是可解析的 JSON。碰到 exit 5 一律**当取数失败处理**：信号 18 标 ⚪️、列出已尝试来源、报滞后周数，**不得当成「未触发」**。（Python 埠 `stock_perp.py` 在同一情况下逐市场降级、保留另一个市场并 exit 3；但埠尚未接线，见文件地图。）
 - `fred.sh --days N` 会把**要求笔数与实得笔数并列**印出：回看区间内不足 N 笔时文字分支写「要求 N 笔｜实得 G 笔」并多印一段告警，`--json` 逐序列给 `days_requested` / `observations_returned` / `short_return`，顶层另有 `any_short_return`，`ok` 与 `degraded` 同步转 false。**短拿仍 exit 0**（数据是真的，只是不够长），退出码不会替你挡——引用时照实写实得笔数，「连 4 周下降」这种要数笔数的判定短拿时判不了，记 ⚪️。
 - `fred.sh --buffett` / `--net-liquidity` / `cape.sh` 量级自检不过时 **exit 4**：这时**不要引用那个数字**，按「先怀疑单位」处理。`--json` 下**照样把整份 JSON 印完再 exit 4**，禁令本身就是字段 `do_not_quote`（`ok` 与 `sanity.pass` 同步为 false），只读 stdout 也看得到，不必去捞 stderr。
-- 信号 32（10Y TIPS 实质殖利率）只在**周一**取：`"$SKILL_DIR/scripts/fred.sh" DFII10`（周一时把它当第九个单元，照 1.1 那段注释掉的写法一起丢后台、一起逐 PID 收）。
+- 信号 32（10Y TIPS 实质殖利率）只在**周一**取：`"$SKILL_DIR/scripts/fred.sh" DFII10`（周一时把它当第九个单元，照 1.1 那段注释掉的 `bg` 写法一起丢后台，并把 `fred_dfii10` 加进收作业块的单元清单）。
 
 ### 1.2 检索分组（与 1.1 同时派发，不等脚本）
 
@@ -367,7 +376,7 @@ python3 "$SKILL_DIR/scripts/snapshot.py" write /tmp/today.json --date 2026-09-03
 6. [ ] 与昨日档位的对照结论已写；0 变动时那句话已照写
 7. [ ] `snapshot.py write` 已成功执行（exit 0）且在推送之前
 8. [ ] 正文与 Slack 文本里没有真实频道 ID、没有本机绝对家目录路径
-9. [ ] 第 1.1 步八个单元**逐 PID** 收过退出码（没有裸 `wait`），缺档的单元已按取数失败处理、没有被读成「该单元无数据」；`degraded` / `do_not_quote` / 非零退出码已在动笔之前先浮出来
+9. [ ] 第 1.1 步八个单元**逐单元读过 `.rc` 退出码**（没有裸 `wait`、没有靠 PID），`rc=TIMEOUT` 已按取数失败处理，缺档的单元已按取数失败处理、没有被读成「该单元无数据」；`degraded` / `do_not_quote` / 非零退出码已在动笔之前先浮出来
 10. [ ] 第 1.2 步五组检索各自落在 `/tmp/drm-search-*.json`、与 `/tmp/drm-fetch/` 没有混档；每项 `attempted[]` 的第一条就是该项写死的第一级来源（否则已打回重取）
 11. [ ] 检索传输层缺席时，那句降级说明写在**运行输出**里，**没有**混进报告正文的第 0–8 部分，也没有进 Slack
 
@@ -398,7 +407,7 @@ python3 "$SKILL_DIR/scripts/snapshot.py" write /tmp/today.json --date 2026-09-03
 **两个可选增强，缺了都不少一段交付**：
 
 - **检索传输层**（第 0.3、1.2 步）——能把一组检索交给独立子上下文时照 `references/search-contract.md` 走；不能时**由本体自己按同一份契约做同样这 18 项检索、写同样那批 JSON 档**，报告字节相同，降级说明只进运行输出、不进正文。
-- **后台作业调度**（第 1.1 步）——`&` 起、逐 PID `wait` 收是本技能的默认跑法；环境没有作业控制时改成**逐条串行**执行同样这八条命令，每条仍各写各的 `<unit>.json`，退出码仍逐条检查、缺档仍响亮失败——**慢，但一个读数都不少**。
+- **后台作业调度**（第 1.1 步）——`&` 起、经 `<unit>.rc` 落档收退出码是本技能的默认跑法；环境没有作业控制时改成**逐条串行**执行同样这八条命令，每条仍各写各的 `<unit>.json`，退出码仍逐条检查、缺档仍响亮失败——**慢，但一个读数都不少**。
 
 `scripts/crypto.py` 与 `scripts/stock_perp.py` 是 `crypto.sh` / `stock_perp.sh` 的 **Python 埠，与 .sh 并存**：CLI 与输出以 .sh 为规格，依赖只有 python3 + `requests`（不用 jq / awk / curl），因此这两支埠本身不吃 jq。但**它们尚未接线**——本 SKILL.md 第 1 步的命令一律调用 .sh，**平行评估期结束前 .sh 仍是权威**。不要因为埠存在就把 jq 从依赖里划掉，也不要把任何一条命令换成 .py。
 
