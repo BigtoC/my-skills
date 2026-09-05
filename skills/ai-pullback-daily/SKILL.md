@@ -145,25 +145,44 @@ done
 彼此独立，t=0 全部甩出去，让 30–75 秒的脚本取数整个消失在检索延迟底下。**脚本内部零改动。**
 
 ```bash
+# ⚠️ 起作业与收作业是**两个块、两次工具调用**——中间要去派发 ④ 的检索分组。
+# 每次调用都是全新 shell：变量不跨调用，PID 也收不到（`wait` 会报 job not found）。
+# 所以 SKILL_DIR 在这里**重新写死**，退出码经 <unit>.rc **落档**回收。
+SKILL_DIR=<本 SKILL.md 所在目录的绝对路径>
 S="$SKILL_DIR/scripts"
 mkdir -p /tmp/search                       # 检索分组自己的命名空间，与脚本产物分开
+rm -f /tmp/check.json /tmp/check.err /tmp/tech.json /tmp/perp.json \
+      /tmp/techperp.log /tmp/credit.md /tmp/credit.err /tmp/*.rc
+#      ^ 这些档由脚本自己写，不是 shell 重定向目标：不清掉，昨天的档会通过下面
+#        「存在且非空」的检查，perp_quotes 就会拿到**隔日**的现货基准而毫无征兆。
 
 # ① 最先起：stop-the-line 闸门。它最短，先起才能最早收
-python3 "$S/industry_table.py" --check --json > /tmp/check.json 2>/tmp/check.err & CHECK=$!
+( python3 "$S/industry_table.py" --check --json >/tmp/check.json 2>/tmp/check.err
+  echo $? >/tmp/check.rc ) &
 
 # ② 有序边留在同一个 job 内 —— technicals → perp_quotes 是**一个**顺序 job，不是两个
 ( python3 "$S/technicals.py" --json /tmp/tech.json \
-  && python3 "$S/perp_quotes.py" --spot /tmp/tech.json --json /tmp/perp.json --quiet ) \
-  > /tmp/techperp.log 2>&1 & TECHPERP=$!
+    && python3 "$S/perp_quotes.py" --spot /tmp/tech.json --json /tmp/perp.json --quiet
+  echo $? >/tmp/techperp.rc ) >/tmp/techperp.log 2>&1 &
 
 # ③ 信用层：一次取数、两份渲染，全天**只跑这一次**
-python3 "$S/neocloud_credit_monitor.py" --emit both > /tmp/credit.md 2>/tmp/credit.err & CREDIT=$!
+( python3 "$S/neocloud_credit_monitor.py" --emit both >/tmp/credit.md 2>/tmp/credit.err
+  echo $? >/tmp/credit.rc ) &
+```
 
-# ④ 同一时刻派发 A/B/C/D 四个检索分组，各写 /tmp/search/<组>.json
+**起完就立刻去派发 ④ 的四个检索分组，不要在这里等** —— 这一步才是重叠的来源。
+派发完再回来跑收作业块：
 
-wait $CHECK;    RC_CHECK=$?                # 逐 PID 收退出码，绝不裸 wait
-wait $TECHPERP; RC_TECHPERP=$?
-wait $CREDIT;   RC_CREDIT=$?
+```bash
+DEADLINE=$(( $(date +%s) + 180 ))          # 最多再等 3 分钟
+for u in check techperp credit; do
+  while [ ! -f "/tmp/$u.rc" ] && [ "$(date +%s)" -lt "$DEADLINE" ]; do sleep 1; done
+  [ -f "/tmp/$u.rc" ] && eval "RC_$u=\$(cat /tmp/$u.rc)" || eval "RC_$u=TIMEOUT"
+  eval "echo \"── $u exit=\$RC_$u\""
+done
+
+# 停线闸门：非 0 就别往下写报告了
+[ "$RC_check" = "0" ] || { echo "✗ 停线：industry_table --check exit=$RC_check"; cat /tmp/check.err; }
 ```
 
 **守则，缺一不可：**
@@ -186,8 +205,10 @@ wait $CREDIT;   RC_CREDIT=$?
     `--emit both` 与 `--json` 同给会被响亮拒绝并 exit 1。所以这一路重定向 stdout 落档。
     **不要为了拿机读 JSON 再跑一次**——那是第二轮网络取数，还会同日写第二笔历史档
     （明天的⑩跨档比对的是第二次，而报告引用的是第一次）。
-- **逐 PID `wait` 收退出码，绝不裸 `wait`。** 裸 `wait` 只回最后一个 job 的码，
-  停线闸门与信用层的失败会被静默吞掉。
+- **逐单元读 `<unit>.rc` 收退出码，绝不裸 `wait`、也不要靠 `$!` / `wait $PID`。**
+  起作业与收作业不在同一个 shell，PID 跨调用收不到，`wait` 会直接报 job not found
+  并把每个单元误判成失败；裸 `wait` 则只回最后一个 job 的码，停线闸门与信用层的
+  失败会被静默吞掉。`RC_x=TIMEOUT` 代表该单元还没跑完、**不代表它没数据**，按取数失败处理。
 - **join 对缺档必须响亮失败。** `/tmp/check.json`、`/tmp/tech.json`、`/tmp/perp.json`、`/tmp/credit.md`、
   `/tmp/search/{a,b,c,d}.json` 逐个确认存在再读。**缺一个单元绝不能被读成「该单元无数据」**——
   前者是取数没跑成（要查、要在报告里说清楚），后者是「查过了、没有」，把前者写成后者，
@@ -195,7 +216,10 @@ wait $CREDIT;   RC_CREDIT=$?
 - **任何 `degraded: true` 或非零退出的单元，必须在写下第一行报告文字之前先浮出来。**
   要看的地方：`/tmp/check.json` 的 `degraded` / `degraded_reasons[]`、`/tmp/tech.json` 与
   `/tmp/perp.json` 的顶层 `degraded` / `degraded_reasons[]`、`/tmp/credit.md` 的「⑧ 数据缺口」块、
-  以及四份检索组档里所有 `status = missing` 的项。**并发本身会诱发限流**（yfinance 尤其），
+  以及四份检索组档里所有 `status = missing` 的项。
+  ⚠️ **还要逐档 `cat` 三份 stderr：`/tmp/techperp.log`、`/tmp/check.err`、`/tmp/credit.err`。**
+  它们不是「日志」是**唯一出口**——`technicals.py` 写档失败时的告警只在 stderr（而且它
+  exit 0、`/tmp/tech.json` 根本不存在），只看上面那五个 JSON 位置是看不到的。**并发本身会诱发限流**（yfinance 尤其），
   所以这些降级信号在并发下比串行时更重要，不是更不重要。
 - **检索分组的产物走自己的命名空间 `/tmp/search/`**，与脚本产物分开：最终要 join 来自
   两个生产者的七八个文件，同一个目录里混着两套命名，早晚会把「哪个单元没落盘」看丢。
