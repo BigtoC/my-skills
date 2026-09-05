@@ -2,7 +2,8 @@
 # fred.sh —— FRED 序列取数（信号 1 / 4 / 5 / 23 / 24 / 27 / 30 等共用）
 #
 # ┌─ 踩坑记录（references/known-traps.md，逐条都是实测换来的）───────────────┐
-# │ 1. **FRED 必须用 curl**。python `requests` 打 FRED 在本环境会超时。      │
+# │ 1. **绝不给 FRED 送浏览器 UA**（送了 25–30s 超时）。本脚本用 curl 是为   │
+# │    了不引入 Python 套件依赖；`requests` 其实也打得通（实测 0.50s）。     │
 # │    不要「顺手」把这支脚本改写成 python。                                 │
 # │ 2. **不要加自订 User-Agent**。姊妹技能 neocloud_credit_monitor.py 实测： │
 # │    带 UA 请求 FRED 会挂住直到超时，不带 UA 反而稳定 200。                │
@@ -104,7 +105,7 @@ scrub() {
       -e 's#/var/folders/[^[:space:]"]*#~#g'
 }
 
-command -v curl >/dev/null 2>&1 || die "找不到 curl。本脚本必须用 curl 取 FRED（python requests 会超时）。" 2
+command -v curl >/dev/null 2>&1 || die "找不到 curl。本脚本是 shell 实作，取数走 curl。" 2
 command -v awk  >/dev/null 2>&1 || die "找不到 awk。" 2
 
 WORK="$(mktemp -d 2>/dev/null)" || die "无法建立临时目录。" 2

@@ -223,7 +223,7 @@ fi
 # ── --from-fred：从 FRED 日收盘序列补上一收盘 ──
 # 这段刻意与 fred.sh 重复一小块取数逻辑，好让 stock_perp.sh 可以单独发布、单独执行，
 # 不依赖同目录还有没有 fred.sh。两处的规则必须一致：
-#   · **必须用 curl**（python requests 打 FRED 会超时）
+#   · 用 curl（本脚本是 shell 实作）；**关键是不要送浏览器 UA**，送了会超时
 #   · **不要加自订 User-Agent**（带 UA 会挂住到超时）
 #   · FRED 用 `.` 表示缺值 → 跳过，取最近一个有值的点，并回报该点日期
 fred_last() {   # $1=SERIES_ID → 「值<TAB>日期」；取不到回空字串

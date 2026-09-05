@@ -66,7 +66,7 @@
 | Buffett Indicator                       | 两序列末行日期常不同季                               | 必须 `merge(on="date")` 后取末行                                                                                            |
 | WALCL / WTREGEN / RRPONTSYD             | 单位不一致（百万 / 百万 / 十亿）                     | 前两者 ÷1000                                                                                                                |
 | Hyperliquid 主池 `SPX`                  | 那是 SPX6900 迷因币，不是标普500                     | 必须指定 `"dex":"xyz"`                                                                                                      |
-| FRED via python `requests`              | 会超时                                               | 必须用 `curl`                                                                                                               |
+| FRED via python `requests`              | **旧记录「会超时」已被推翻**（2026-09-05 实测 0.50s 正常）；真正会超时的是**送浏览器 UA**（25–30s），与语言无关 | 必须用 `curl`                                                                                                               |
 | yfinance via `urllib`                   | SSL 验证失败                                         | 必须用 `requests.Session` + UA                                                                                              |
 
 > **编者注（2026-09-05 追加）：`stock_perp.sh` 的一个本仓库自身缺陷——ctxs 阵列短于 universe 时以 exit 5 中止。**

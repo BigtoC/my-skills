@@ -270,7 +270,7 @@ done
 | Shiller CAPE                                                    | `scripts/cape.sh`（curl + 正则）           | multpl.com，解析配方见 `references/signals-e-cycle-valuation.md` 信号 28                                                                  |
 | 其余（BofA、内部人、IPO、A/D Line、NAAIM、AAII、Put/Call、LEI） | WebSearch / web_fetch                      | 上面取不到时才用；**分组、公共信封与交接照 `references/search-contract.md`**（一组一档、返回一行收据）                                     |
 
-⚠️ **最容易搞混的一对相反要求**：**FRED 必须用 curl（`requests` 超时）**，而 **yfinance 必须用 `requests.Session` + UA（urllib SSL 失败）**。两者方向相反，改脚本时不要互相「统一」。
+⚠️ **最容易搞混的一对相反要求，但方向是 header 不是语言**：**FRED 绝不能送浏览器 UA**（Chrome UA → 25–30s 超时；curl 与 `requests` 默认 UA 都通，实测 2026-09-05 分别 1.16s / 0.50s），而 **yfinance 必须送**（裸 `requests.Session` 会被 Yahoo 限流）。`fred.sh` 用 curl 是为了不引入 Python 套件依赖——**不是**因为 `requests` 会超时，那条旧说法已被实测推翻，见 `CLAUDE.md`。两者方向相反，改脚本时不要互相「统一」。
 
 其余高频坑（脚本已内建，人工补数时同样适用）：yfinance `^VIX3M`/`^VIX9D`/`^VIX6M` 已停更 → 信号 4 改用 FRED `VXVCLS`；`WALCL`/`WTREGEN` 单位是百万、`RRPONTSYD` 是十亿 → 前两者 ÷1000；Buffett 两序列末行常不同季 → 必须 `merge(on="date")` 后取末行（**`fred.sh --buffett` 已内建这一步并会把两序列各自的末行日期一并印出**；人工补数或换源时这条仍然适用）。
 

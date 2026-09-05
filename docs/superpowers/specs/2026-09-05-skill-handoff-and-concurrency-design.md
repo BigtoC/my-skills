@@ -307,7 +307,7 @@ t=?   逐 PID wait，读回各自的 JSON
 1. `HTTPAdapter` 的 `pool_maxsize` 要 ≥ worker 数（requests 默认 10，超了会静默 churn 连接）；
 2. `fetch_fundamentals.py:210` 的全局 `_SESSION_OK`（`:231` 写、`:471` 读）**没有锁** —— 仓库今天零并发，没有任何一行是防御性写的。
 
-**FRED 的约束指向相反方向**：必须留在 curl（python `requests` 在本环境超时），且**绝不能加 User-Agent**（`neocloud_credit_monitor.py:195-198` 记着：加 UA → 10s，不加 → 0.7s）。**不要「统一」这两边。**
+**FRED 的约束是 header 不是语言**：**绝不能加浏览器 User-Agent**（实测 2026-09-05：Chrome UA → 25–30s 超时；`requests` 默认 UA 0.50s、curl 1.16s，两者都通）。`fred.sh` 留在 curl 是为了不引入 Python 套件依赖，不是因为 `requests` 打不通（`neocloud_credit_monitor.py:195-198` 记着：加 UA → 10s，不加 → 0.7s）。**不要「统一」这两边。**
 
 ### 5.7 绝不并发
 
