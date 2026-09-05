@@ -1,7 +1,7 @@
 # 交接面自足化、检索传输层与并发 —— 设计文档
 
 - 日期：2026-09-05
-- 分支：`feat/subagent-architecture`
+- 分支：`feat/script-output-contract`（原名 `feat/subagent-architecture`，因设计否决了 subagent 拆分而改名）
 - 状态：设计已确认，待实施
 - 触发问题：①「可以把这些 skills 改成 subagent 吗，获取数据的是一个 agent，分析数据的是一个 agent，避免上下文过长与污染」②「整个流程太慢了，能不能并发获取数据」
 
