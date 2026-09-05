@@ -17,6 +17,11 @@
 # │ 6. Buffett Indicator（信号 27）：NCBEILQ027S 与 GDP 的**末行常不同季**   │
 # │    （例如股权数据到 Q1、GDP 已到 Q2）。各取各的末行相除 = 混用不同季度。│
 # │    → `--buffett` 模式先按 date 做内连接（等价 merge(on="date")）再取末行。│
+# │ 7. 多档 awk 合并**不可以数档案**（`FNR==1 { f++ }`）：空档案永远不触发   │
+# │    FNR==1，之后每一档都往前挪一格 —— RRPONTSYD 掉进 TGA 桶被 ÷1000 当成  │
+# │    百万。今天唯一挡着的是 14 行之前那个 `[ -s ]` 守卫；守卫一松，挪位后  │
+# │    仍有料的组合算出来的数字会长得完全正常。一律用 FILENAME 对号入座，    │
+# │    并在 END 做元数自检（桶对不上就退 3，不给「先算出来再说」留活路）。   │
 # └──────────────────────────────────────────────────────────────────────────┘
 #
 # 依赖：bash（3.2 即可）、curl、awk、sed、date。**不需要 jq**（FRED 回 CSV）。
@@ -50,6 +55,8 @@ ${PROG} —— FRED 序列取数（免 API key）
   --days N          输出最近 N 笔**有值**观测（默认 1）
                     --net-liquidity 模式下 N = 最近 N 个 WALCL 观测周
                     --buffett 模式下 N = 最近 N 个**同季对齐后**的季度
+                    一般序列模式下**实得笔数不足 N 会照实印出实得笔数并标记降级**
+                    （少拿了却照抄「最近 N 笔」= 把「没拿全」记成「查过了，没事」）
   --start YYYY-MM-DD  指定起始日期（默认按 --days 自动回看）
   --json            以 JSON 输出
   --net-liquidity   净流动性组合 = WALCL − WTREGEN − RRPONTSYD
@@ -132,26 +139,60 @@ lag_text() {  # $1=滞后天数 → 中文描述
   fi
 }
 
-# ── 取一条序列 → $2 指定的档案；回 0 成功 ──
-fetch_series() {  # $1=SERIES_ID  $2=起始日期  $3=输出档
-  local id="$1" start="$2" out="$3" code rc=0
+# ── 一次 curl --parallel 取回全部序列 → 每条一个 $WORK/<id>.csv ──
+# 实测（6 条序列）：串行 3.26 秒 → 并行 1.08 秒。
+# ⚠️ --parallel 的**完成顺序不等于命令列顺序**。所以这支函式只做「把每条序列
+#    写进以 id 命名的档案」这一件事，顺序敏感的归并一律留给父层的串行迴圈
+#    （JSON series 阵列顺序 = 人类分支印出顺序 = $IDS 顺序，三者必须一致，
+#     见档尾那行注解）。累加器（ANY_FAIL / JSON_PARTS / DEG_JSON）也因此
+#    绝不能跑进子 shell —— 子 shell 里的赋值出了 ) 就没了。
+# `-w '%{url_effective} %{http_code}\n'` 让**每一笔**传输自己报出 URL 与状态码，
+# 「哪一条挂了」才逐条归得回去；curl 的**总**退出码做不到这件事。
+fetch_parallel() {  # $1=起始日期  $2..=SERIES_ID...；逐条结果写进 $WORK/<id>.state
+  local start="$1"; shift
+  local id code err rc=0
+  local -a args
   # 注意：这里刻意不带 -H "User-Agent: ..."（见档头踩坑记录第 2 条）
-  code="$(curl -sS --max-time "$TIMEOUT" --retry 2 --retry-delay 2 \
-            -o "$out" -w '%{http_code}' \
-            "${FRED_CSV}?id=${id}&cosd=${start}" 2>"$WORK/curl.err")" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    warn "⚪️ ${id}：FRED 连线失败（curl 退出码 ${rc}）：$(scrub < "$WORK/curl.err" | tr '\n' ' ')"
-    return 3
-  fi
-  if [ "$code" != "200" ]; then
-    warn "⚪️ ${id}：FRED 回 HTTP ${code}"
-    return 3
-  fi
-  if ! head -n 1 "$out" | grep -qiE '^(observation_date|DATE),'; then
-    warn "⚪️ ${id}：FRED 回传的不是 CSV（序列名可能拼错；或误用了 id=A,B,C 多序列写法——那会回 ZIP）"
-    return 3
-  fi
+  args=( -sS --max-time "$TIMEOUT" --retry 2 --retry-delay 2 \
+         --parallel --parallel-max 6 -w '%{url_effective} %{http_code}\n' )
+  for id in "$@"; do
+    # 先把档案建出来：传输失败时 curl 根本不会产生 -o 档，后面要有东西可读。
+    : > "$WORK/$id.csv"
+    args+=( -o "$WORK/$id.csv" --url "${FRED_CSV}?id=${id}&cosd=${start}" )
+  done
+  : > "$WORK/http.status"
+  curl "${args[@]}" > "$WORK/http.status" 2> "$WORK/curl.err" || rc=$?
+  # curl 的 stderr 是**整批共用**的一份，没办法逐条切开（错误行里不带 URL）。
+  # 所以这里去重后原样附在每条失败讯息后面，并在措辞上讲明「这是整批的」——
+  # 把整批 stderr 讲成某一条自己的，就是在猜。
+  err="$(scrub < "$WORK/curl.err" | awk '!seen[$0]++' | tr '\n' ' ')"
+  for id in "$@"; do
+    # 用 URL 里的 `id=<ID>&` 对号入座；结尾那个 & 让 GDP 不会比对到 GDPC1。
+    code="$(awk -v pat="id=${id}&" 'index($0, pat) { c=$NF } END { print c }' "$WORK/http.status")"
+    if [ -z "$code" ] || [ "$code" = "000" ]; then
+      # 「哪一条挂了」靠的是上面那笔 000（或整行缺席），不是 $rc —— 并行模式下
+      # $rc 与 stderr 都是**整批**的，讲成这一条专属的会误导排查方向。
+      printf 'FRED 连线失败（curl 整批退出码 %s；下列 stderr 属整批并行传输，未逐条切分）：%s\n' \
+        "$rc" "$err" > "$WORK/$id.state"
+    elif [ "$code" != "200" ]; then
+      printf 'FRED 回 HTTP %s\n' "$code" > "$WORK/$id.state"
+    elif ! head -n 1 "$WORK/$id.csv" | grep -qiE '^(observation_date|DATE),'; then
+      printf 'FRED 回传的不是 CSV（序列名可能拼错；或误用了 id=A,B,C 多序列写法——那会回 ZIP）\n' > "$WORK/$id.state"
+    else
+      printf 'ok\n' > "$WORK/$id.state"
+    fi
+  done
   return 0
+}
+
+# ── 逐条检查取数结果；失败时印出与串行版逐字相同的 ⚪️ 告警，回 3 ──
+fetch_ok() {  # $1=SERIES_ID
+  local id="$1" st
+  st="$(cat "$WORK/$id.state" 2>/dev/null || true)"
+  # 写成 if 而不是 `[ ] && return 0`——理由同下方参数检查处那条注解。
+  if [ "$st" = "ok" ]; then return 0; fi
+  warn "⚪️ ${id}：${st:-未取数（fetch_parallel 没跑到这条）}"
+  return 3
 }
 
 # 抽出有值观测（跳过 FRED 的 `.` 缺值），输出 `YYYY-MM-DD,值` 每行一笔
@@ -210,9 +251,12 @@ if [ "$NETLIQ" -eq 1 ]; then
 
   if [ -n "$START" ]; then NL_START="$START"; else NL_START="$(days_ago $(( DAYS * 7 + 120 )))"; fi
 
+  # 三条一次并行取回；顺序敏感的部分（哪一条失败要挂哪一条的名字）留在下面串行做。
+  fetch_parallel "$NL_START" WALCL WTREGEN RRPONTSYD
+
   FAILED=""
   for id in WALCL WTREGEN RRPONTSYD; do
-    if fetch_series "$id" "$NL_START" "$WORK/$id.csv"; then
+    if fetch_ok "$id"; then
       valid_rows "$WORK/$id.csv" > "$WORK/$id.rows"
       [ -s "$WORK/$id.rows" ] || { FAILED="${FAILED}${FAILED:+, }${id}(无有值观测)"; }
     else
@@ -226,12 +270,29 @@ if [ "$NETLIQ" -eq 1 ]; then
 
   # 以 WALCL（周度，通常周三）为主轴；TGA / RRP 取「日期 ≤ 该周三」的最近一笔。
   # 单位对齐在这里一次做完：WALCL、WTREGEN 百万 ÷1000 → 十亿；RRPONTSYD 本就是十亿。
-  awk -F, -v n="$DAYS" '
-    FNR==1 { f++ }
-    f==1 { wd[++nw]=$1; wv[nw]=$2+0; next }
-    f==2 { td[++nt]=$1; tv[nt]=$2+0; next }
-    f==3 { rd[++nr]=$1; rv[nr]=$2+0; next }
+  #
+  # ⚠️ 桶位**用 FILENAME 对号入座，不数档案**（档头踩坑记录第 7 条）：旧版的
+  #    `FNR==1 { f++ }` 数的是「读到过的档案」，空档案永远不触发 FNR==1，
+  #    RRPONTSYD 就整个挪进 TGA 桶再被 ÷1000 当成百万。
+  #    实测（拿掉上面那个 `[ -s ]` 守卫、清空 WTREGEN）：旧版报的是
+  #    「没有一个 WALCL 观测周能同时对上 TGA 与 RRP，请加大 --days」——
+  #    诊断挂错科，加多长的回看都救不了；桶位一旦挪得「刚好有料」，
+  #    出来的就不是错误讯息而是一张挂错序列的表了。
+  #    END 的元数自检（三个桶都要有料、档案数刚好等于传进来的 3）是最后一道闸。
+  NL_RC=0
+  awk -F, -v n="$DAYS" \
+      -v fw="$WORK/WALCL.rows" -v ft="$WORK/WTREGEN.rows" -v fr="$WORK/RRPONTSYD.rows" '
+    FILENAME == fw { wd[++nw]=$1; wv[nw]=$2+0; fseen[fw]=1; next }
+    FILENAME == ft { td[++nt]=$1; tv[nt]=$2+0; fseen[ft]=1; next }
+    FILENAME == fr { rd[++nr]=$1; rv[nr]=$2+0; fseen[fr]=1; next }
+    { printf "错误：合并时收到预期外的档案。\n" > "/dev/stderr"; bad=1; exit 3 }
     END {
+      if (bad) exit 3
+      k = 0; for (x in fseen) k++
+      if (k != 3 || nw == 0 || nt == 0 || nr == 0) {
+        printf "错误：三序列元数自检未通过 —— WALCL %d 笔／WTREGEN %d 笔／RRPONTSYD %d 笔，实际读到 %d 个有内容的档案（传进来 3 个）。\n", nw, nt, nr, k > "/dev/stderr"
+        exit 3
+      }
       start = nw - n + 1; if (start < 1) start = 1
       for (i = start; i <= nw; i++) {
         d = wd[i]
@@ -245,7 +306,12 @@ if [ "$NETLIQ" -eq 1 ]; then
         printf "%s|%.1f|%.1f|%s|%.2f|%s|%.1f\n", d, walcl_bn, tga_bn, td[tj], rrp_bn, rd[rj], net_bn
       }
     }
-  ' "$WORK/WALCL.rows" "$WORK/WTREGEN.rows" "$WORK/RRPONTSYD.rows" > "$WORK/nl.txt"
+  ' "$WORK/WALCL.rows" "$WORK/WTREGEN.rows" "$WORK/RRPONTSYD.rows" > "$WORK/nl.txt" || NL_RC=$?
+
+  if [ "$NL_RC" -ne 0 ]; then
+    warn "⚪️ 净流动性数据暂缺 —— 三序列合并元数自检未通过（原因见上一行）"
+    die "桶位对不上就不算：挪一格会把 RRPONTSYD 的十亿当成 TGA 的百万，算出来的净流动性照样长得很正常。" 3
+  fi
 
   [ -s "$WORK/nl.txt" ] || die "三个序列取到了，但没有一个 WALCL 观测周能同时对上 TGA 与 RRP。请加大 --days 或 --start 回看范围。" 3
 
@@ -324,9 +390,12 @@ if [ "$BUFFETT" -eq 1 ]; then
   # 季度序列：一个季度 ≈ 92 天，另加 400 天缓冲吸收 GDP 的发布滞后。
   if [ -n "$START" ]; then BI_START="$START"; else BI_START="$(days_ago $(( DAYS * 95 + 400 )))"; fi
 
+  # 两条一次并行取回；哪一条失败仍逐条归得回去（见 fetch_ok）。
+  fetch_parallel "$BI_START" NCBEILQ027S GDP
+
   FAILED=""
   for id in NCBEILQ027S GDP; do
-    if fetch_series "$id" "$BI_START" "$WORK/$id.csv"; then
+    if fetch_ok "$id"; then
       valid_rows "$WORK/$id.csv" > "$WORK/$id.rows"
       [ -s "$WORK/$id.rows" ] || { FAILED="${FAILED}${FAILED:+, }${id}(无有值观测)"; }
     else
@@ -340,13 +409,28 @@ if [ "$BUFFETT" -eq 1 ]; then
 
   # 同季对齐 = 只保留**两条序列都有观测**的那些季度（等价 pandas merge(on="date") 内连接），
   # 再取末行。单位对齐同时做完：NCBEILQ027S 百万 ÷1000 → 十亿；GDP 本就是十亿。
-  awk -F, -v n="$DAYS" '
-    FNR==1 { f++ }
-    f==1 { ed[++ne]=$1; ev[ne]=$2+0; next }
-    f==2 { gv[$1]=$2+0; seen[$1]=1; next }
+  #
+  # ⚠️ 桶位同样**用 FILENAME 对号入座，不数档案**（档头踩坑记录第 7 条）：
+  #    `FNR==1 { f++ }` 遇到空档案会让 GDP 的行掉进股权市值那一桶，内连接于是
+  #    永远空手而归。实测（清空 NCBEILQ027S）旧版报的是「没有任何一个季度同时
+  #    有两者的观测 → 无法同季对齐，请加大 --days」——这是本模式**最不该**误报的
+  #    那句话（它正是陷阱 #6 的守门讯息），真因却是挂错桶。
+  #    fseen 数的是**档案**，gseen 数的是**GDP 的季度**，两者不要混。
+  BI_RC=0
+  awk -F, -v n="$DAYS" \
+      -v fe="$WORK/NCBEILQ027S.rows" -v fg="$WORK/GDP.rows" '
+    FILENAME == fe { ed[++ne]=$1; ev[ne]=$2+0; fseen[fe]=1; next }
+    FILENAME == fg { gv[$1]=$2+0; gseen[$1]=1; ng++; fseen[fg]=1; next }
+    { printf "错误：合并时收到预期外的档案。\n" > "/dev/stderr"; bad=1; exit 3 }
     END {
+      if (bad) exit 3
+      k = 0; for (x in fseen) k++
+      if (k != 2 || ne == 0 || ng == 0) {
+        printf "错误：两序列元数自检未通过 —— NCBEILQ027S %d 笔／GDP %d 笔，实际读到 %d 个有内容的档案（传进来 2 个）。\n", ne, ng, k > "/dev/stderr"
+        exit 3
+      }
       m = 0
-      for (i = 1; i <= ne; i++) if (seen[ed[i]] && gv[ed[i]] > 0) { md[++m]=ed[i]; mv[m]=ev[i] }
+      for (i = 1; i <= ne; i++) if (gseen[ed[i]] && gv[ed[i]] > 0) { md[++m]=ed[i]; mv[m]=ev[i] }
       if (m == 0) exit 0
       start = m - n + 1; if (start < 1) start = 1
       for (i = start; i <= m; i++) {
@@ -355,7 +439,12 @@ if [ "$BUFFETT" -eq 1 ]; then
         printf "%s|%.1f|%.1f|%.2f\n", md[i], eq_bn, gdp_bn, eq_bn / gdp_bn * 100
       }
     }
-  ' "$WORK/NCBEILQ027S.rows" "$WORK/GDP.rows" > "$WORK/bi.txt"
+  ' "$WORK/NCBEILQ027S.rows" "$WORK/GDP.rows" > "$WORK/bi.txt" || BI_RC=$?
+
+  if [ "$BI_RC" -ne 0 ]; then
+    warn "⚪️ Buffett Indicator 数据暂缺 —— 两序列合并元数自检未通过（原因见上一行）"
+    die "桶位对不上就不算：挂错桶的内连接会空手而归，看起来只像「这季还没对齐」。" 3
+  fi
 
   EQ_LAST_DATE="$(tail -n 1 "$WORK/NCBEILQ027S.rows" | cut -d, -f1)"
   GDP_LAST_DATE="$(tail -n 1 "$WORK/GDP.rows" | cut -d, -f1)"
@@ -456,19 +545,41 @@ fi
 if [ -n "$START" ]; then
   DEF_START="$START"
 else
-  LOOKBACK=$(( DAYS * 40 + 400 ))
+  # 一季 95 天 + 400 天缓冲吸收发布滞后（与 --buffett 模式同一套算法）。
+  # 旧式 DAYS*40+400 是照**日频**序列调的，季频序列一定短拿：
+  # `GDP --days 20` 只回得到 13 笔。
+  # ⚠️ 拉长回看只让「本来就存在的点」拿得回来，**不是**这个洞的修法：
+  #    实得笔数仍然逐条与要求笔数比对，短少一律照实印出并标记降级（见下方 SHORT）。
+  #    序列本身就没那么长（例如 2020 才开始的序列）时，加多长都还是短拿。
+  LOOKBACK=$(( DAYS * 95 + 400 ))
   DEF_START="$(days_ago "$LOOKBACK")"
 fi
 
 ANY_FAIL=0
+ANY_SHORT=0
 JSON_PARTS=""
 
+# 同一个 id 给两次时只取一次：并行下两笔传输会同时写同一个 -o 档，会互相踩烂。
+# （$IDS 保持原样——它决定输出顺序，去重只影响「抓几次」。）
+UNIQ_IDS=""
 for id in $IDS; do
-  if ! fetch_series "$id" "$DEF_START" "$WORK/$id.csv"; then
+  case " ${UNIQ_IDS} " in *" ${id} "*) continue ;; esac
+  UNIQ_IDS="${UNIQ_IDS}${UNIQ_IDS:+ }${id}"
+done
+
+# 一次并行取回全部序列；下面这圈**串行**归并，顺序完全由 $IDS 决定。
+# $UNIQ_IDS 刻意不加引号：这里要的就是断词（一条 id 一个参数），同 `for id in $IDS`。
+# shellcheck disable=SC2086
+fetch_parallel "$DEF_START" $UNIQ_IDS
+
+for id in $IDS; do
+  if ! fetch_ok "$id"; then
     ANY_FAIL=1
     add_degraded "${id}：取数失败（已尝试来源：FRED fredgraph.csv）"
     if [ "$JSON" -eq 1 ]; then
-      JSON_PARTS="${JSON_PARTS}${JSON_PARTS:+,}{\"id\":\"${id}\",\"ok\":false,\"error\":\"取数失败\",\"observations\":[]}"
+      # short_return 是 null 不是 false：这一条根本没取到数，短拿判定**没判过**
+      # （false = 判过了、没短拿）。
+      JSON_PARTS="${JSON_PARTS}${JSON_PARTS:+,}{\"id\":\"${id}\",\"ok\":false,\"error\":\"取数失败\",\"days_requested\":${DAYS},\"observations_returned\":0,\"short_return\":null,\"observations\":[]}"
     else
       echo "${id}：⚪️ 数据暂缺（已尝试来源：FRED fredgraph.csv）。不得以记忆或推断填补。"
     fi
@@ -481,7 +592,7 @@ for id in $IDS; do
     ANY_FAIL=1
     add_degraded "${id}：回看区间（自 ${DEF_START}）内全是 FRED 缺值符号「.」"
     if [ "$JSON" -eq 1 ]; then
-      JSON_PARTS="${JSON_PARTS}${JSON_PARTS:+,}{\"id\":\"${id}\",\"ok\":false,\"error\":\"回看区间内全是缺值(.)\",\"observations\":[]}"
+      JSON_PARTS="${JSON_PARTS}${JSON_PARTS:+,}{\"id\":\"${id}\",\"ok\":false,\"error\":\"回看区间内全是缺值(.)\",\"days_requested\":${DAYS},\"observations_returned\":0,\"short_return\":null,\"observations\":[]}"
     else
       echo "${id}：⚪️ 数据暂缺 —— 回看区间（自 ${DEF_START}）内全是 FRED 缺值符号「.」。请用 --start 拉长回看。"
     fi
@@ -492,23 +603,51 @@ for id in $IDS; do
   LDATE="${LAST%%,*}"; LVAL="${LAST##*,}"
   LAG="$(lag_days "$LDATE")"
 
+  # 要的笔数 vs 真正拿到的笔数。少拿了却照抄「最近 N 笔」，等于把「没拿全」
+  # 记成「查过了，没事」——行为准则第 1 条挡的就是这个。
+  GOT="$(awk 'END{print NR}' "$WORK/$id.rows")"
+  if [ "$GOT" -lt "$DAYS" ]; then
+    SHORT=true
+    ANY_SHORT=1
+    add_degraded "${id}：要求 ${DAYS} 笔有值观测，回看区间（自 ${DEF_START}）内只有 ${GOT} 笔"
+  else
+    SHORT=false
+  fi
+
   if [ "$JSON" -eq 1 ]; then
     OBS="$(awk -F, '{ if (NR>1) printf ","; printf "{\"date\":\"%s\",\"value\":%s}", $1, $2 }' "$WORK/$id.rows")"
-    JSON_PARTS="${JSON_PARTS}${JSON_PARTS:+,}{\"id\":\"${id}\",\"ok\":true,\"latest\":{\"date\":\"${LDATE}\",\"value\":${LVAL},\"lag_days\":${LAG}},\"observations\":[${OBS}]}"
+    # 要求笔数与实得笔数是**两个各自独立的字段**：只给其中一个，读的人就得自己
+    # 去数 observations 的长度才知道有没有短拿——没人会数。
+    JSON_PARTS="${JSON_PARTS}${JSON_PARTS:+,}{\"id\":\"${id}\",\"ok\":true,\"latest\":{\"date\":\"${LDATE}\",\"value\":${LVAL},\"lag_days\":${LAG}},\"days_requested\":${DAYS},\"observations_returned\":${GOT},\"short_return\":${SHORT},\"observations\":[${OBS}]}"
   else
     if [ "$DAYS" -eq 1 ]; then
       printf '%-14s %12s  @%s  %s\n' "$id" "$LVAL" "$LDATE" "$(lag_text "$LAG")"
     else
-      echo "${id}  最近 ${DAYS} 笔有值观测（最新 @${LDATE}，$(lag_text "$LAG")）"
+      # 标题一律印**实得**笔数；短拿时把要求笔数一起写出来，两个数字并列。
+      if [ "$SHORT" = "true" ]; then
+        echo "${id}  最近 ${GOT} 笔有值观测（要求 ${DAYS} 笔｜实得 ${GOT} 笔，最新 @${LDATE}，$(lag_text "$LAG")）"
+      else
+        echo "${id}  最近 ${DAYS} 笔有值观测（最新 @${LDATE}，$(lag_text "$LAG")）"
+      fi
       awk -F, '{ printf "  %s  %12s\n", $1, $2 }' "$WORK/$id.rows"
+      if [ "$SHORT" = "true" ]; then
+        echo "  ⚠️ 回看区间（自 ${DEF_START}）内只有 ${GOT} 笔有值观测，少于要求的 ${DAYS} 笔。"
+        echo "     引用时请照实写 ${GOT} 笔（这不是「最近 ${DAYS} 笔」），或用 --start 拉长回看。"
+      fi
     fi
   fi
 done
 
 if [ "$JSON" -eq 1 ]; then
   # series 阵列的顺序 = 人类分支逐行印出的顺序 = 命令列上 $IDS 的顺序，三者必须一致。
-  printf '{"ok":%s,"source":"FRED fredgraph.csv","start":"%s","days":%s,"series":[%s],' \
-    "$([ "$ANY_FAIL" -eq 0 ] && echo true || echo false)" "$DEF_START" "$DAYS" "$JSON_PARTS"
+  # `days` 是**要求**的笔数；真正拿到几笔看每条序列自己的 observations_returned。
+  # ok 不是字面量：有任何一条短拿就不是 true——要了 20 笔只给 13 笔却回 ok:true、
+  # degraded:false，正是「没拿全被记成查过了没事」的原形。
+  # （短拿不套用退出码 3：3 是「取数失败」，这里数据是真的、只是不够长；
+  #   降级走 degraded + ok:false 两个字段，不去挤占保留码。）
+  printf '{"ok":%s,"source":"FRED fredgraph.csv","start":"%s","days":%s,"any_short_return":%s,"series":[%s],' \
+    "$([ "$ANY_FAIL" -eq 0 ] && [ "$ANY_SHORT" -eq 0 ] && echo true || echo false)" \
+    "$DEF_START" "$DAYS" "$([ "$ANY_SHORT" -eq 0 ] && echo false || echo true)" "$JSON_PARTS"
   printf '"degraded":%s,"degraded_reasons":[%s]}\n' \
     "$([ "$DEGRADED" -eq 1 ] && echo true || echo false)" "$DEG_JSON"
 fi

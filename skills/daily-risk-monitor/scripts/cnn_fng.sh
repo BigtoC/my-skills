@@ -159,8 +159,22 @@ zh_rating() {
   esac
 }
 
-fmt() { awk -v v="$1" 'BEGIN{ printf "%.1f", v }'; }
-delta() { awk -v a="$1" -v b="$2" 'BEGIN{ d=a-b; printf "%s %+.1f", (d>0.05?"↑":(d<-0.05?"↓":"→")), d }'; }
+# 缺值绝不进 awk。端点改版整栏消失时，PREV/W1/M1/Y1 会是空字串，或是 jq `tostring`
+# 把 null 转出来的字串 "null"（近 N 日高点缺序列时同理是 "NA"）。这三种喂进 awk：
+#   fmt   → 印成「0.0」            —— 一个凭空捏造的读数
+#   delta → 印成「↑ +41.9」        —— 一个凭空捏造的单日变动
+# 而文字分支是要被逐字照抄进报告的那一份，所以缺就是缺：一律记 N/A，不估算也不补 0。
+# 判定条件与 jnum 保持同一套口径（''|null），另加历史序列那边的 NA。
+has_num() { case "$1" in ''|null|NA) return 1 ;; *) return 0 ;; esac; }
+fmt() {
+  has_num "$1" || { printf 'N/A'; return 0; }
+  awk -v v="$1" 'BEGIN{ printf "%.1f", v }'
+}
+delta() {
+  # 两个操作数缺任一个就没有「变动」可言 —— 不是 0.0，也不是箭头，是算不出来。
+  if ! has_num "$1" || ! has_num "$2"; then printf 'N/A（缺对照读数，不计算变动）'; return 0; fi
+  awk -v a="$1" -v b="$2" 'BEGIN{ d=a-b; printf "%s %+.1f", (d>0.05?"↑":(d<-0.05?"↓":"→")), d }'
+}
 yesno() { if [ "$1" -eq 1 ]; then echo "✅ 触发"; else echo "❌ 未触发"; fi; }
 
 T_GREED=0;  awk -v s="$SCORE" 'BEGIN{ exit (s>75)?0:1 }' && T_GREED=1

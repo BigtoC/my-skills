@@ -32,6 +32,11 @@
 #     拿滞后的收盘当「上一收盘」算出来的隐含跳空是错的，必须让人看得见滞后。
 #   · 最准的还是呼叫方直接传 --spx / --ndx。绝不自己编一个收盘价。
 #
+# ⚠️ 收盘价必须是**正数**：隐含跳空是 markPx ÷ 收盘价，0 会让 awk 直接 fatal
+#    （awk 自己以 2 退出，而 2 在本仓库是「依赖缺失」，等于把参数错误谎报成没装 jq／curl），
+#    负数则算得出一个看起来正常、实际毫无意义的跳空。两者一律在进 awk 前挡掉，
+#    绝不带着坏值往下跑。三个来源（--spx/--ndx、--closes、--from-fred）都要各自把关。
+#
 # 依赖：bash、curl、jq、awk。
 # 退出码：0 正常｜1 参数错误｜2 依赖缺失｜3 取数失败（数据暂缺）｜4 判定取错市场
 
@@ -118,6 +123,10 @@ FRED_FAILED=0                   # --from-fred 两个序列都没取到 → 降�
 JSON=0
 
 is_num() { echo "$1" | grep -qE '^-?[0-9]+(\.[0-9]+)?$'; }
+# 只查正负、不查格式：给 --closes 用（jq 已保证是 number，但可能是 0／负数／科学记号）。
+is_pos() { awk -v v="$1" 'BEGIN{ exit (v + 0 > 0) ? 0 : 1 }'; }
+# 格式与正负都查：给 --spx / --ndx / FRED 用。
+is_pos_num() { is_num "$1" && is_pos "$1"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -126,9 +135,11 @@ while [ $# -gt 0 ]; do
     --from-fred) FROM_FRED=1; shift ;;
     --spx) [ $# -ge 2 ] || die "--spx 需要一个数字。" 1
            is_num "$2" || die "--spx 必须是数字，收到「$2」。" 1
+           is_pos "$2" || die "--spx 必须大于 0（隐含跳空要拿标记价除以它），收到「$2」。" 1
            SPX_CLOSE="$2"; SPX_SRC="--spx 参数"; shift 2 ;;
     --ndx) [ $# -ge 2 ] || die "--ndx 需要一个数字。" 1
            is_num "$2" || die "--ndx 必须是数字，收到「$2」。" 1
+           is_pos "$2" || die "--ndx 必须大于 0（隐含跳空要拿标记价除以它），收到「$2」。" 1
            NDX_CLOSE="$2"; NDX_SRC="--ndx 参数"; shift 2 ;;
     --closes) [ $# -ge 2 ] || die "--closes 需要一个 JSON 档路径。" 1
               [ -f "$2" ] || die "--closes 指定的档案不存在。" 1
@@ -139,6 +150,47 @@ done
 
 WORK="$(mktemp -d 2>/dev/null)" || die "无法建立临时目录。" 2
 trap 'rm -rf "$WORK"' EXIT INT TERM
+
+# ══════════════════════ fixture 回放钩子（离线迁移验证用）══════════════════
+# 正常执行时这段等于不存在：**只有** RISK_FIXTURE_DIR 指到一个存在的目录才启用，
+# 变数没设 = 一律走网络。指到不存在的目录一律当参数错误当场停（exit 1），
+# 绝不「悄悄退回连网」——那会让一次以为在离线比对的跑法偷偷打了真上游。
+#
+# 目录布局：一个请求两个档
+#   <slug>.body   原始回应内容（bytes 照抄）
+#   <slug>.code   HTTP 码；档案不存在时视为 200
+# slug 规则（Python 埠必须逐字一致）：
+#   GET  : 去掉 scheme，再把 [^A-Za-z0-9._-] 全部换成 "_"
+#   POST : "POST_" + 上述规则处理过的 url + "_" + 上述规则处理过的 body
+# 找不到 fixture 时**大声**回放成连线失败（000）并印一行 stderr，绝不静默。
+#
+# RISK_FIXTURE_NOW（epoch 秒）同样只在 fixture 模式下生效，用来冻结「今天」，
+# 让含日期／年龄的输出可以逐字比对。单独设它而不设 RISK_FIXTURE_DIR 无效。
+FIXTURE_DIR="${RISK_FIXTURE_DIR:-}"
+[ -z "$FIXTURE_DIR" ] || [ -d "$FIXTURE_DIR" ] \
+  || die "RISK_FIXTURE_DIR 指向的目录不存在：${FIXTURE_DIR}" 1
+fx_slug() { printf '%s' "$1" | sed -e 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' -e 's#[^A-Za-z0-9._-]#_#g'; }
+fx_serve() {   # $1=slug  $2=输出档 → http_code 到 stdout
+  if [ -f "${FIXTURE_DIR}/$1.body" ]; then
+    cat "${FIXTURE_DIR}/$1.body" > "$2"
+    if [ -f "${FIXTURE_DIR}/$1.code" ]; then cat "${FIXTURE_DIR}/$1.code"; else printf '200'; fi
+  else
+    : > "$2"
+    warn "⚠️ RISK_FIXTURE_DIR 里没有 fixture「$1」，本次请求以连线失败（000）回放。"
+    printf '000'
+  fi
+}
+fx_epoch() {
+  if [ -n "$FIXTURE_DIR" ] && [ -n "${RISK_FIXTURE_NOW:-}" ]; then printf '%s' "$RISK_FIXTURE_NOW"
+  else date +%s; fi
+}
+fx_date_u() {  # $1=strftime 格式（不含前导 +）
+  if [ -n "$FIXTURE_DIR" ] && [ -n "${RISK_FIXTURE_NOW:-}" ]; then
+    date -u -r "$RISK_FIXTURE_NOW" +"$1" 2>/dev/null || date -u -d "@${RISK_FIXTURE_NOW}" +"$1"
+  else
+    date -u +"$1"
+  fi
+}
 
 # ── --closes：容错读取（容器键只展开一层，与姊妹技能 perp_quotes.py 同语义）──
 if [ -n "$CLOSES_FILE" ]; then
@@ -151,13 +203,20 @@ if [ -n "$CLOSES_FILE" ]; then
             | (if (.value|type)=="object" then (.value.close // .value.price // empty) else .value end))
       | flatten | map(select(type=="number")) | first // empty' "$CLOSES_FILE"
   }
+  # 档案里读到 0／负数一样是参数错误：宁可当场喊停，也不要带着坏值去除。
   if [ -z "$SPX_CLOSE" ]; then
     SPX_CLOSE="$(read_close '^GSPC,GSPC,SPX,SP500,标普500')"
-    [ -z "$SPX_CLOSE" ] || SPX_SRC="--closes 档案"
+    if [ -n "$SPX_CLOSE" ]; then
+      is_pos "$SPX_CLOSE" || die "--closes 档案里的 ^GSPC 收盘价必须大于 0，读到「${SPX_CLOSE}」。" 1
+      SPX_SRC="--closes 档案"
+    fi
   fi
   if [ -z "$NDX_CLOSE" ]; then
     NDX_CLOSE="$(read_close '^NDX,NDX,NASDAQ100,NDX100,纳斯达克100')"
-    [ -z "$NDX_CLOSE" ] || NDX_SRC="--closes 档案"
+    if [ -n "$NDX_CLOSE" ]; then
+      is_pos "$NDX_CLOSE" || die "--closes 档案里的 ^NDX 收盘价必须大于 0，读到「${NDX_CLOSE}」。" 1
+      NDX_SRC="--closes 档案"
+    fi
   fi
 fi
 
@@ -168,9 +227,13 @@ fi
 #   · **不要加自订 User-Agent**（带 UA 会挂住到超时）
 #   · FRED 用 `.` 表示缺值 → 跳过，取最近一个有值的点，并回报该点日期
 fred_last() {   # $1=SERIES_ID → 「值<TAB>日期」；取不到回空字串
-  local id="$1" code rc=0
-  code="$(curl -sS --max-time "$TIMEOUT" --retry 1 -o "$WORK/fred_${id}.csv" -w '%{http_code}' \
-            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=${id}" 2>/dev/null)" || rc=$?
+  local id="$1" code rc=0 url="https://fred.stlouisfed.org/graph/fredgraph.csv?id=$1"
+  if [ -n "$FIXTURE_DIR" ]; then
+    code="$(fx_serve "$(fx_slug "$url")" "$WORK/fred_${id}.csv")"
+  else
+    code="$(curl -sS --max-time "$TIMEOUT" --retry 1 -o "$WORK/fred_${id}.csv" -w '%{http_code}' \
+              "$url" 2>/dev/null)" || rc=$?
+  fi
   [ "$rc" -eq 0 ] && [ "$code" = "200" ] || return 0
   awk -F, 'NR>1 { sub(/\r$/,""); if ($2 != "" && $2 != ".") { v=$2; d=$1 } }
            END { if (v != "") printf "%s\t%s", v, d }' "$WORK/fred_${id}.csv"
@@ -178,11 +241,23 @@ fred_last() {   # $1=SERIES_ID → 「值<TAB>日期」；取不到回空字串
 if [ "$FROM_FRED" -eq 1 ]; then
   if [ -z "$SPX_CLOSE" ]; then
     L="$(fred_last SP500)"
-    if [ -n "$L" ]; then SPX_CLOSE="${L%%	*}"; SPX_CLOSE_DATE="${L##*	}"; SPX_SRC="FRED SP500"; fi
+    if [ -n "$L" ]; then
+      V="${L%%	*}"
+      # FRED 理论上不会回 0／负数，但真回了就是取数出问题，不是参数问题：
+      # 一律当成「没取到」走 ⚪️，绝不拿去当除数。
+      if is_pos_num "$V"; then SPX_CLOSE="$V"; SPX_CLOSE_DATE="${L##*	}"; SPX_SRC="FRED SP500"
+      else warn "⚠️ FRED SP500 回的收盘价「${V}」不是正数，不采用（隐含跳空将标 ⚪️ 无法判定）。"; fi
+    fi
   fi
   if [ -z "$NDX_CLOSE" ]; then
     L="$(fred_last NASDAQ100)"
-    if [ -n "$L" ]; then NDX_CLOSE="${L%%	*}"; NDX_CLOSE_DATE="${L##*	}"; NDX_SRC="FRED NASDAQ100"; fi
+    if [ -n "$L" ]; then
+      V="${L%%	*}"
+      # FRED 理论上不会回 0／负数，但真回了就是取数出问题，不是参数问题：
+      # 一律当成「没取到」走 ⚪️，绝不拿去当除数。
+      if is_pos_num "$V"; then NDX_CLOSE="$V"; NDX_CLOSE_DATE="${L##*	}"; NDX_SRC="FRED NASDAQ100"
+      else warn "⚠️ FRED NASDAQ100 回的收盘价「${V}」不是正数，不采用（隐含跳空将标 ⚪️ 无法判定）。"; fi
+    fi
   fi
   if [ -z "$SPX_CLOSE" ] && [ -z "$NDX_CLOSE" ]; then
     FRED_FAILED=1
@@ -198,16 +273,21 @@ lag_days() {   # $1=YYYY-MM-DD → 距今天数；无日期回 -1
   if [ "$_BSD_DATE" -eq 1 ]; then e="$(date -j -f "%Y-%m-%d" "$1" +%s 2>/dev/null || true)"
   else e="$(date -d "$1" +%s 2>/dev/null || true)"; fi
   [ -n "$e" ] || { echo -1; return 0; }
-  echo $(( ( $(date +%s) - e ) / 86400 ))
+  echo $(( ( $(fx_epoch) - e ) / 86400 ))
 }
 
 # ── 取数：POST，必须带 "dex":"xyz" ──
 RC=0
-CODE="$(curl -sS --max-time "$TIMEOUT" --retry 1 --retry-delay 2 \
-          -o "$WORK/hl.json" -w '%{http_code}' \
-          -X POST -H 'Content-Type: application/json' \
-          -d "{\"type\":\"metaAndAssetCtxs\",\"dex\":\"${DEX}\"}" \
-          "$API" 2>"$WORK/curl.err")" || RC=$?
+BODY="{\"type\":\"metaAndAssetCtxs\",\"dex\":\"${DEX}\"}"
+if [ -n "$FIXTURE_DIR" ]; then
+  CODE="$(fx_serve "POST_$(fx_slug "$API")_$(fx_slug "$BODY")" "$WORK/hl.json")"
+else
+  CODE="$(curl -sS --max-time "$TIMEOUT" --retry 1 --retry-delay 2 \
+            -o "$WORK/hl.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            -d "$BODY" \
+            "$API" 2>"$WORK/curl.err")" || RC=$?
+fi
 
 if [ "$RC" -ne 0 ]; then
   warn "⚪️ 信号 18 数据暂缺 —— 已尝试来源：${API}（dex=${DEX}）"
@@ -250,7 +330,9 @@ while IFS="$(printf '\t')" read -r NAME MARK PREV FUND OI VLM; do
     f8   = fund * 8 * 100            # 每小时 → 8h 口径百分比
     fann = f8 * 3 * 365              # 年化%
     liquid = (notional >= oimin) ? "YES" : "NO"
-    if (cls == "") { gap = "NA"; wrong = "NA" }
+    # cls 为空＝未提供。cls <= 0 上游三个来源都已各自挡掉，这里再兜一次：
+    # 本档唯一一条「除数是变数」的除法就在下一行，任何情况下都不许除以零。
+    if (cls == "" || cls + 0 <= 0) { gap = "NA"; wrong = "NA" }
     else {
       g = (mark / cls - 1) * 100
       gap = sprintf("%.4f", g)

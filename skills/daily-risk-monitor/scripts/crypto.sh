@@ -167,22 +167,77 @@ done
 WORK="$(mktemp -d 2>/dev/null)" || die "无法建立临时目录。" 2
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
-NOW_MS="$(( $(date +%s) * 1000 ))"
+
+# ══════════════════════ fixture 回放钩子（离线迁移验证用）══════════════════
+# 正常执行时这段等于不存在：**只有** RISK_FIXTURE_DIR 指到一个存在的目录才启用，
+# 变数没设 = 一律走网络。指到不存在的目录一律当参数错误当场停（exit 1），
+# 绝不「悄悄退回连网」——那会让一次以为在离线比对的跑法偷偷打了真上游。
+#
+# 目录布局：一个请求两个档
+#   <slug>.body   原始回应内容（bytes 照抄）
+#   <slug>.code   HTTP 码；档案不存在时视为 200
+# slug 规则（Python 埠必须逐字一致）：
+#   GET  : 去掉 scheme，再把 [^A-Za-z0-9._-] 全部换成 "_"
+#   POST : "POST_" + 上述规则处理过的 url + "_" + 上述规则处理过的 body
+# 找不到 fixture 时**大声**回放成连线失败（000）并印一行 stderr，绝不静默。
+#
+# RISK_FIXTURE_NOW（epoch 秒）同样只在 fixture 模式下生效，用来冻结「今天」，
+# 让含日期／年龄的输出可以逐字比对。单独设它而不设 RISK_FIXTURE_DIR 无效。
+FIXTURE_DIR="${RISK_FIXTURE_DIR:-}"
+[ -z "$FIXTURE_DIR" ] || [ -d "$FIXTURE_DIR" ] \
+  || die "RISK_FIXTURE_DIR 指向的目录不存在：${FIXTURE_DIR}" 1
+fx_slug() { printf '%s' "$1" | sed -e 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' -e 's#[^A-Za-z0-9._-]#_#g'; }
+fx_serve() {   # $1=slug  $2=输出档 → http_code 到 stdout
+  if [ -f "${FIXTURE_DIR}/$1.body" ]; then
+    cat "${FIXTURE_DIR}/$1.body" > "$2"
+    if [ -f "${FIXTURE_DIR}/$1.code" ]; then cat "${FIXTURE_DIR}/$1.code"; else printf '200'; fi
+  else
+    : > "$2"
+    warn "⚠️ RISK_FIXTURE_DIR 里没有 fixture「$1」，本次请求以连线失败（000）回放。"
+    printf '000'
+  fi
+}
+fx_epoch() {
+  if [ -n "$FIXTURE_DIR" ] && [ -n "${RISK_FIXTURE_NOW:-}" ]; then printf '%s' "$RISK_FIXTURE_NOW"
+  else date +%s; fi
+}
+fx_date_u() {  # $1=strftime 格式（不含前导 +）
+  if [ -n "$FIXTURE_DIR" ] && [ -n "${RISK_FIXTURE_NOW:-}" ]; then
+    date -u -r "$RISK_FIXTURE_NOW" +"$1" 2>/dev/null || date -u -d "@${RISK_FIXTURE_NOW}" +"$1"
+  else
+    date -u +"$1"
+  fi
+}
+
+NOW_MS="$(( $(fx_epoch) * 1000 ))"
 
 # ── HTTP 工具：回传 http_code 到 stdout；连线层失败回 000 ──
 http_get() {   # $1=url  $2=输出档
   local rc=0 code
+  if [ -n "$FIXTURE_DIR" ]; then fx_serve "$(fx_slug "$1")" "$2"; return 0; fi
   code="$(curl -sS --max-time "$TIMEOUT" -o "$2" -w '%{http_code}' "$1" 2>>"$WORK/curl.err")" || rc=$?
   [ "$rc" -eq 0 ] || code="000"
   printf '%s' "$code"
 }
 http_post_json() {  # $1=url  $2=body  $3=输出档
   local rc=0 code
+  if [ -n "$FIXTURE_DIR" ]; then fx_serve "POST_$(fx_slug "$1")_$(fx_slug "$2")" "$3"; return 0; fi
   code="$(curl -sS --max-time "$TIMEOUT" -o "$3" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' -d "$2" "$1" 2>>"$WORK/curl.err")" || rc=$?
   [ "$rc" -eq 0 ] || code="000"
   printf '%s' "$code"
 }
+
+# ── 数字自检：拿去比大小之前，先确认它真的是个数 ────────────────────────────
+# **本文件最容易致命的一处**：bash 的 [ "$x" -lt 2 ] 在 $x 为空时**不是 false**，
+# 而是 test 报「integer expression expected」并回状态 2 —— if 于是走 **else** 分支，
+# 写在 then 里的 return 1 永远不会执行，一次彻底的取数失败就被记成成功
+# （实测：bash -c 'if [ "" -lt 2 ]; then echo then; else echo else; fi' 印 else）。
+# 数字只要来自 curl / jq / awk，就可能是空的（连线失败、栏位不存在、jq 中途报错），
+# 所以一律先过这一关，验不过就当**取数失败**处理，绝不当成「条件成立／未触发」。
+is_uint()    { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; return 0; }   # 非负整数（笔数用）
+is_num()     { awk -v v="${1:-}" 'BEGIN{ exit (v ~ /^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$/) ? 0 : 1 }'; }
+is_pos_num() { awk -v v="${1:-}" 'BEGIN{ exit (v ~ /^\+?([0-9]+\.?[0-9]*|\.[0-9]+)$/ && v+0 > 0) ? 0 : 1 }'; }
 
 num() { awk -v v="$1" -v f="${2:-2}" 'BEGIN{ printf "%." f "f", v }'; }
 # 带正负号的格式化。**变动量一律走这个**：印在「跌幅」这类带方向的标签底下时，
@@ -211,6 +266,14 @@ funding_binance() {
     # 结算周期：查不到该币种 → 按 Binance 默认 8 小时（reference 明订）
     iv="$(jq -r --arg s "${sym}USDT" '[.[] | select(.symbol==$s) | .fundingIntervalHours] | first // 8' "$WORK/fundinfo.json")"
     [ -n "$iv" ] && [ "$iv" != "null" ] || iv=8
+    # 「查不到该币种 → 默认 8」只适用于**栏位不存在**。若栏位在、值却不是正数
+    # （jq 中途报错、API 改了型别），**不能也退回 8**：r8 = raw × 8 ÷ iv，
+    # 真实周期若是 4h 而按 8h 算，0.1% 会被读成 0.05%，正好漏掉档头警告的那种
+    # 危险信号；iv=0 更会算出 inf。一律当取数失败。
+    if ! is_pos_num "$iv"; then
+      FUNDING_NOTE="Binance /fundingInfo 给出无法解析的 ${sym}USDT 结算周期「${iv}」，无法换算 8h 口径"
+      ok=0; break
+    fi
 
     code="$(http_get "${BINANCE}/premiumIndex?symbol=${sym}USDT" "$WORK/pi_${sym}.json")"
     if [ "$code" != "200" ] || ! ok_json "$WORK/pi_${sym}.json"; then
@@ -244,6 +307,12 @@ EOF
     else
       n24=0; persist="UNKNOWN"
     fi
+    # jq 中途报错时 read 读到的是空字串，不是 0，也不是 "NO"。空的 n24 会让下游
+    # tonumber 整个炸掉（--json 分支因此吐不出任何东西，文字分支却照印一份报告）；
+    # 空的 persist 则会被 $9=="YES" 判成「不是 YES」= 未触发。两者都要退回既有的
+    # 「无法判定」表示法：不知道就是不知道，不是没触发（行为准则第 1 条）。
+    is_uint "$n24" || n24=0
+    case "$persist" in YES|NO|UNKNOWN) ;; *) persist="UNKNOWN" ;; esac
 
     # 注意：awk 里不能用 next 当变量名（保留字），故写成 nxt。
     awk -v s="$sym" -v src="Binance" -v raw="$raw" -v iv="$iv" -v mark="$mark" \
@@ -315,20 +384,28 @@ render_funding_text() {
   echo
   echo "阈值判定（8h 口径，严格比对，不加软化语言）："
   local n_all n_hot n_persist n_extreme extreme_list
-  n_all="$(wc -l < "$WORK/funding.tsv" | tr -d ' ')"
-  n_hot="$(awk -F'\t' -v h="$FUND_HOT_8H" '$5 > h' "$WORK/funding.tsv" | wc -l | tr -d ' ')"
-  n_persist="$(awk -F'\t' -v h="$FUND_HOT_8H" '$5 > h && $9=="YES"' "$WORK/funding.tsv" | wc -l | tr -d ' ')"
-  n_extreme="$(awk -F'\t' -v e="$FUND_EXTREME_8H" '$5 > e' "$WORK/funding.tsv" | wc -l | tr -d ' ')"
-  extreme_list="$(awk -F'\t' -v e="$FUND_EXTREME_8H" '$5 > e { printf "%s(%.4f%%) ", $1, $5 }' "$WORK/funding.tsv")"
+  # 每一句都补 `|| x=""`：统计失败时要走到下面的 ⚪️ 分支去，
+  # 而不是被 set -e 掐掉——半截输出没有任何一行说明它是半截的。
+  n_all="$(wc -l < "$WORK/funding.tsv" | tr -d ' ')" || n_all=""
+  n_hot="$(awk -F'\t' -v h="$FUND_HOT_8H" '$5 > h' "$WORK/funding.tsv" | wc -l | tr -d ' ')" || n_hot=""
+  n_persist="$(awk -F'\t' -v h="$FUND_HOT_8H" '$5 > h && $9=="YES"' "$WORK/funding.tsv" | wc -l | tr -d ' ')" || n_persist=""
+  n_extreme="$(awk -F'\t' -v e="$FUND_EXTREME_8H" '$5 > e' "$WORK/funding.tsv" | wc -l | tr -d ' ')" || n_extreme=""
+  extreme_list="$(awk -F'\t' -v e="$FUND_EXTREME_8H" '$5 > e { printf "%s(%.4f%%) ", $1, $5 }' "$WORK/funding.tsv")" || extreme_list=""
 
-  if [ "$n_persist" = "$n_all" ] && [ "$n_all" -gt 0 ]; then
+  # 笔数本身都没统计出来 → 只能 ⚪️。空的 n_all 会让 [ "$n_all" -gt 0 ] 报错回 2，
+  # if 因此掉进 else，印出「❌ 未触发（/ 个币种…）」——把「不知道」记成「查过、没事」。
+  if ! is_uint "$n_all" || ! is_uint "$n_hot" || ! is_uint "$n_persist"; then
+    printf '  多头杠杆过热（三者同时 >%s%%/8h 持续 ≥24h） ... ⚪️ 无法判定（币种笔数统计失败，不得当成未触发）\n' "$FUND_HOT_8H"
+  elif [ "$n_persist" = "$n_all" ] && [ "$n_all" -gt 0 ]; then
     printf '  多头杠杆过热（三者同时 >%s%%/8h 持续 ≥24h） ... ✅ 触发\n' "$FUND_HOT_8H"
   elif [ "$n_hot" = "$n_all" ] && [ "$n_all" -gt 0 ]; then
     printf '  多头杠杆过热（三者同时 >%s%%/8h 持续 ≥24h） ... ❌ 未触发（当下三者皆 >阈值，但未满足持续 ≥24h）\n' "$FUND_HOT_8H"
   else
     printf '  多头杠杆过热（三者同时 >%s%%/8h 持续 ≥24h） ... ❌ 未触发（%s/%s 个币种当下高于阈值）\n' "$FUND_HOT_8H" "$n_hot" "$n_all"
   fi
-  if [ "$n_extreme" -gt 0 ]; then
+  if ! is_uint "$n_extreme"; then
+    printf '  急迫反转风险（任一 >%s%%/8h） .............. ⚪️ 无法判定（币种笔数统计失败，不得当成未触发）\n' "$FUND_EXTREME_8H"
+  elif [ "$n_extreme" -gt 0 ]; then
     printf '  急迫反转风险（任一 >%s%%/8h） .............. ✅ 触发：%s\n' "$FUND_EXTREME_8H" "$extreme_list"
   else
     printf '  急迫反转风险（任一 >%s%%/8h） .............. ❌ 未触发\n' "$FUND_EXTREME_8H"
@@ -513,8 +590,8 @@ dom_seven_day() {   # $1=today $2=dominance_now $3=source_key → JSON 到 stdou
 dom_record_and_seven() {
   # 取数成功后：先落一笔历史，再据历史算 7d。日期一律 UTC，与纪录里的一致。
   local today ts dom src
-  today="$(date -u +%Y-%m-%d)"
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  today="$(fx_date_u %Y-%m-%d)"
+  ts="$(fx_date_u %Y-%m-%dT%H:%M:%SZ)"
   dom="$(jq -r '.dominance_pct // empty' "$WORK/dom.json")"
   src="$(jq -r '.source_key // empty' "$WORK/dom.json")"
   if [ -z "$dom" ] || [ -z "$src" ]; then
@@ -548,7 +625,7 @@ render_dom_history() {
   dom_history_read | jq -sr 'sort_by(.date)[] | [.date, (.dominance_pct|tostring), .source, (.fetched_at // "—")] | @tsv' \
     | awk -F'\t' '{ printf "  %-12s %11.2f  %-14s %s\n", $1, $2, $3, $4 }'
   dom_history_read | jq -sr \
-      --arg today "$(date -u +%Y-%m-%d)" \
+      --arg today "$(fx_date_u %Y-%m-%d)" \
       --argjson amin "$DOM_7D_MIN_AGE" --argjson amax "$DOM_7D_MAX_AGE" '
       def epochday: (strptime("%Y-%m-%d") | mktime) / 86400 | floor;
       ($today | epochday) as $t0
@@ -684,7 +761,9 @@ render_dominance_text() {
   esac
   echo
   echo "阈值判定（信号 16：24h 跌幅 >2% 或 7d 跌幅 >3% = 山寨狂热期）："
-  if [ "$drel" = "null" ]; then
+  # 非数字（jq 没读出来）也一律 ⚪️：awk 里空字串会**当字串**跟 -2.0 比大小，
+  # "" < "-2" 成立 → 印成「✅ 触发」，凭空造一个警报出来。先验数字再比。
+  if [ "$drel" = "null" ] || ! is_num "$drel"; then
     printf '  24h 跌幅 >%s%% ... ⚪️ 无法判定\n' "$DOM_DROP_24H"
   else
     # 这里印的是**带号的变动量**（正=上升、负=下降），不是「跌幅」的绝对值。
@@ -700,15 +779,22 @@ render_dominance_text() {
   case "$st7" in
     ok)
       # 与 24h 同一套规则：阈值按**相对百分比**判定，Δpt 另印一份供百分点口径使用。
-      if awk -v d="$d7rel" -v t="$DOM_DROP_7D" 'BEGIN{ exit (d < -t) ? 0 : 1 }'; then
+      if ! is_num "$d7rel"; then
+        printf '  7d 跌幅 >%s%% .... ⚪️ 无法判定（7d 变动读数解析失败）\n' "$DOM_DROP_7D"
+        echo "     **不得因为其余条件都正常就把这条腿写成「未触发」**——那会让加密信号触发计数偏低。"
+      elif awk -v d="$d7rel" -v t="$DOM_DROP_7D" 'BEGIN{ exit (d < -t) ? 0 : 1 }'; then
         printf '  7d 跌幅 >%s%% .... ✅ 触发（7d 变动 相对 %s%%，基准日 %s）\n' \
                "$DOM_DROP_7D" "$(snum "$d7rel" 2)" "$bdate"
       else
         printf '  7d 跌幅 >%s%% .... ❌ 未触发（7d 变动 相对 %s%%，正=上升／负=下降）\n' \
                "$DOM_DROP_7D" "$(snum "$d7rel" 2)"
       fi
-      echo "     ⚠️ 口径提示：上面按**相对百分比**判定。若报告采用**百分点**口径，"
-      printf '        请改用 Δpt = %s pt 自行判定——两种口径结论可能不同，别混用。\n' "$(snum "$d7pt" 2)"
+      # Δpt 也一样：读不出来就别印。snum "" 会印出 "+0.00"，
+      # 那是个看起来完全正常、实际上凭空生出来的数字。
+      if is_num "$d7pt"; then
+        echo "     ⚠️ 口径提示：上面按**相对百分比**判定。若报告采用**百分点**口径，"
+        printf '        请改用 Δpt = %s pt 自行判定——两种口径结论可能不同，别混用。\n' "$(snum "$d7pt" 2)"
+      fi
       ;;
     source_mismatch)
       printf '  7d 跌幅 >%s%% .... ⚪️ 无法判定（7 日前那笔与今日不同源，分母口径不可比较）\n' "$DOM_DROP_7D"
@@ -760,7 +846,15 @@ run_stablecoins() {
     | sort_by(.date)' > "$WORK/st_series.json"
 
   local n
-  n="$(jq 'length' "$WORK/st_series.json")"
+  # 上面那段 jq 一旦中途报错（对方回 200 但内容不是预期结构），st_series.json 会是
+  # **空档**；jq 对空输入不报错、也不印东西，于是 n 是空字串而不是 0。
+  # 空的 n 拿去比 [ "$n" -lt 2 ] 不会是 false，而是 test 报错回 2 → if 走 else →
+  # 写在 then 里的 return 1 从来不执行 → 函数回 0 → 一次全灭的取数被记成成功，
+  # 报告上印出 USDT $0.00 B / 合计 $0.00 B 这种凭空生出来的数字。先验数字再比。
+  n="$(jq 'length' "$WORK/st_series.json" 2>/dev/null)" || n=""
+  if ! is_uint "$n"; then
+    STABLE_NOTE="DeFiLlama 两条序列对齐失败（回应结构非预期，无法取得对齐后天数）"; return 1
+  fi
   if [ "$n" -lt 2 ]; then
     STABLE_NOTE="USDT / USDC 两条序列的日期无交集（只对齐到 ${n} 天）"; return 1
   fi

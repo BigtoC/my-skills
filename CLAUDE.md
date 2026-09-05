@@ -73,13 +73,39 @@ from a private source document and carry the same edit-only-what-you-must rule.
 
 Three things about it are load-bearing and easy to erode:
 
-- **Fetching is split by transport, deliberately.** All curl fetches live in
-  standalone shell scripts (`fred.sh`, `cnn_fng.sh`, `crypto.sh`, `stock_perp.sh`,
-  `cape.sh`) so they can be run and debugged alone; only yfinance work is Python
-  (`market.py`). This is not stylistic drift — **FRED must use curl** (python
-  `requests` times out in this environment) while **yfinance must use
-  `requests.Session` + UA** (urllib fails SSL verification). The two requirements
-  point opposite ways; "unifying" them breaks one side silently.
+- **Fetching is split so each source can be run and debugged alone.** Every fetch
+  lives in its own standalone script. **Standalone invocation is the requirement;
+  the language is not.** The real constraints are **per-host headers, and they are
+  language-independent** (all measured 2026-09-05 on this machine):
+
+  | host | rule | evidence |
+  |---|---|---|
+  | FRED | **never** send a browser User-Agent | Chrome UA → 25–30s ReadTimeout, from curl *and* `requests`. curl-like or `requests`' default UA → HTTP 200 in ~0.5s |
+  | Yahoo | **always** send one | a bare `requests.Session` gets throttled (`market.py:303`); `stock_perp.sh:28` records a stable 429 from the chart endpoint |
+  | CNN F&G | needs full browser UA **+ Referer + Origin** | otherwise HTTP 418 「I'm a teapot. You're a bot.」 |
+
+  These do **not** conflict at the language level — only per-host, which one
+  program handles with per-host headers. `stock_perp.sh` already straddles both
+  (Hyperliquid JSON + FRED CSV).
+
+  > An earlier version of this bullet claimed **"FRED must use curl (python
+  > `requests` times out in this environment)"**. That is **false**: `requests`
+  > returns FRED in 0.50s versus curl's 1.16s. The failing transport is stdlib
+  > `urllib`, which hits `CERTIFICATE_VERIFY_FAILED` against FRED, multpl.com
+  > *and* CNN alike — this environment's Python has no CA bundle wired to the
+  > system store, so it is not a yfinance-specific fault. `urllib` + `certifi`
+  > works (0.48s). Do not restore the old claim; it misdirects anyone debugging
+  > FRED.
+
+  What the language choice *does* turn on is dependencies: `fred.sh` and
+  `cape.sh` need only bash + curl + awk and **no Python packages at all**.
+  Porting those two would trade a satisfied dependency for `requests` — a
+  portability loss for a repo whose purpose is portable skills. Keep them shell.
+  Concurrency is not a reason to port either: `curl --parallel` with
+  `-w '%{url_effective} %{http_code}'` fetches six FRED series in 1.08s versus
+  3.26s serial **and keeps per-URL status attribution**, so the ⚪️ per-series
+  accounting and `fred.sh`'s three-way ordering invariant survive with the
+  reduction loop staying serial in the parent.
 - **`assets/last_run.json` is the day-over-day baseline.** `snapshot.py write`
   rewrites it each run with every signal's tier plus both track readings, and it
   lands *before* the Slack push so a failed push cannot lose the tiers. Reading
