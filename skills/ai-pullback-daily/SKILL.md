@@ -2,7 +2,7 @@
 name: ai-pullback-daily
 description: AI 算力产业链「质量 × 时机」回调进场监控日更助手。每个日历日（含周末与美股休市日）跑一次：引爆点监控（Thesis Tripwire，5 项结构性信号）＋ 24/7 永续盘后隐含变动 ＋ Neocloud 信用层四层判定 ＋ 个股 T1/T2/T3 技术触发，经「技术分桶 → 产业质量闸门 → 论点宏观闸门 → 驱动源节奏层」四步产出 🚨重点买入 / ⚡轻仓试探 / 👀观察 / ✅未触发 分桶，输出精简版（推 Slack）+ 完整版双层报告。当用户提到 AI 算力回调监控、回调进场监控、日更监控、抄底监控、T1/T2/T3 触发、52周回撤/20日高/RSI 超卖、引爆点、Thesis Tripwire、论点闸门、分桶、重点买入/轻仓试探/观察、Neocloud 信用层、L1 公司层/L2 项目层、回调驱动源、折现率驱动 vs AI论点驱动、盘后隐含、24/7 永续、双层报告推 Slack 时自动使用。
 license: MIT
-compatibility: Portable Agent Skills format for agents that support SKILL.md. **硬依赖同级安装的 `ai-industry-weekly` 技能**（产业评级表与 `hk_quote.py` 都在那边）。脚本需 python3 + `yfinance` / `pandas` / `numpy` + 联网；WebSearch 用于引爆点与个股取数；Slack 推送需 Slack MCP，可跳过。
+compatibility: Portable Agent Skills format for agents that support SKILL.md. **硬依赖同级安装的 `ai-industry-weekly` 技能**（产业评级表与 `hk_quote.py` 都在那边）。脚本需 python3 + `yfinance` / `pandas` / `numpy` + 联网；WebSearch 用于引爆点与个股取数；**检索传输层为可选增强**（把四组检索交给独立取数上下文、只回传结构化 JSON），缺席时由本体按同一份契约自行检索、报告字节相同；Slack 推送需 Slack MCP，可跳过。
 metadata:
   author: BigtoC
   version: "0.1.0"
@@ -52,6 +52,7 @@ metadata:
 | `references/neocloud-credit.md`        | Neocloud 信用层 L1–L4 阈值与判定                  |
 | `references/buckets.md`                | 触发条件、四步分桶、风险标签、操作建议映射        |
 | `references/output-format.md`          | 双层报告结构、全局规则、Slack 推送、静默条件      |
+| `references/search-contract.md`        | 检索传输层契约：21 项、四组、信封与 payload 六族   |
 | `scripts/industry_table.py`            | 读**姊妹技能**的产业质量参考表                    |
 | `scripts/technicals.py`                | 个股技术面 + 宏观利率/驱动源输入                  |
 | `scripts/perp_quotes.py`               | 24/7 永续隐含变动                                 |
@@ -89,6 +90,125 @@ done
 - **基准表 ↔ 标的清单不一致告警**：`--check` 会把基准表的**数据行数**与周更 `assets/universe.json` 的**标的数**做交叉校验，对不上就打横幅。这说明周更改过 `universe.json` 却还没重跑 `baseline.py write`——**第一步（读 `baseline.md`）与第二步（读 `universe.json`）会报出不同的标的数，同一份日报自相矛盾**。日更对周更只读、修不了，**应先去跑一轮周更技能**让两个文件对齐再跑日更；确实要带着不一致跑，必须在两版报告顶部显式写明两个数字与其成因。
 - 上述三条**都不阻断**（`--check` 仍 exit 0）：数据本身解析得出来，日更照常出报告；它们指向的都是周更那一侧的问题。真正阻断的只有 exit 1（定位不到姊妹技能 / 基准表解析失败 / 基准表不是合法 UTF-8）。
 
+## 检索传输层（可选增强）
+
+本技能有 21 项读数没有脚本，只能检索取得（引爆点 ①②③⑤、2Y / 2s10s / HY 基准利差、FOMC 日历与
+隐含概率、事件日历、异动起因、债券报价与一级市场条款、个股技术补数）。**检索传输层**是一项
+**可选能力**：把这些取数交给**独立的取数上下文**执行——取数侧读它那一份 governing reference、
+按文档化的来源顺序检索、把**读数与出处**写成结构化 JSON 文件；**判断留在写报告这一侧**。
+原始 snippet（一次 40–120 KB）就死在取数侧，一个字都不进写报告的上下文。
+
+**契约是唯一规格，写在 `references/search-contract.md`**（公共信封、payload 六族、
+`threshold_comparable` 与 `carry_forward_policy` 两个必填槽、四种缺失哨兵、落单前自检 10 条）。
+**有没有传输层能力，都照这份契约执行**——它定义的是数据形状，不是执行机制。
+
+| 组    | 内容                        | 加载的 governing reference                                                        | 项数 | 写到                     |
+|-------|-----------------------------|-----------------------------------------------------------------------------------|------|--------------------------|
+| **A** | 引爆点 ①②③⑤                | `references/tripwires.md`                                                          | 4    | `/tmp/search/a.json`     |
+| **B** | 宏观利率与 Fed ＋ 技术补数   | `references/data-acquisition.md`                                                   | 9    | `/tmp/search/b.json`     |
+| **C** | 事件日历与因由检索          | `references/data-acquisition.md`（宏观催化段）＋ `drawdown-driver.md` ＋ `perp-overnight.md` | 3    | `/tmp/search/c.json`     |
+| **D** | 债券报价与一级市场          | `references/neocloud-credit.md`                                                    | 5    | `/tmp/search/d.json`     |
+
+- **引爆点④ 不在其中**，永远不要把它做成检索项：它的状态由 `neocloud_credit_monitor.py` 产出
+  （第三步「唯一例外」那条）。④ 的**输入**（债券报价、一级市场条款、`manual_flags`）是 D 组的检索项——
+  输入与判定是两回事。
+- **交接：一组一个 JSON 文件，返回消息只有一行**，形如 `wrote 9 items to <path>, 7 ok / 2 missing`。
+  **返回消息永远不是内容的渲染**——不摘要、不贴表、不带一句读数；一旦返回消息开始携带数字，
+  snippet 污染就从后门回来了，这层白做。父级读文件，并按每项的 `attempted[]` 审计来源顺序：
+  个股技术补数写死了 Finviz > Yahoo Finance > TradingView > StockAnalysis.com，
+  `tier_used = 2` 而 `attempted[]` 里没有 Finviz 那一笔，**打回重取**，不接受结果。
+- **一组失败不是「组失败」。** 某项取不到，在文件里表达为该项 `status = missing` 加调用方指定的哨兵；
+  **绝不表达为整组失败、也绝不让整组文件不落盘**。一项缺失只让报告少一行读数，不让报告少一段。
+  （本仓库保留的退出码 1 参数错误 / 2 依赖缺失 / 3 取数失败 / 4 量级自检未通过 是**脚本**的约定，
+  不要套到检索单元上——取数组没有退出码。）
+
+### 缺席时的降级路径
+
+**没有检索传输层能力时，由你自己（写报告这个上下文）直接检索**，读同一份 governing reference、
+走同一份 `references/search-contract.md` 契约、写同样的四个 JSON 文件、受同样的 `attempted[]` 审计。
+**报告字节相同**：每一个读数、每一个哨兵、每一行渲染都不变，变的只是搜索发生在哪个上下文里。
+
+**这条降级的通知写在运行输出里，不写进报告正文**——在对话里说一句「本次未启用检索传输层，
+四组检索由本体直接执行」就够了，两版报告正文一个字都不加。
+
+**为什么它与 `AV_API_KEYS` 缺席那类降级不同**：判据是**降级是否改变数据口径**。
+`AV_API_KEYS` 缺席会把 ETF 持仓从全量降成 top-N，「swap 总额 / 非美持仓 / 现金与国库券」
+直接变成不可计算的 N/A——**口径变了，读者据此下的结论也得跟着变**，所以必须写进正文。
+检索传输层缺席不改任何一项的口径、来源顺序、哨兵或阈值可比性，写进正文只是噪音。
+这是一个**刻意的、有判据的例外**，不是「回退可以不响」的口子：口径一变就回到必须写进正文。
+仓库法则照旧——**少一路增强，不少一段交付**：少的是一路增强（父级上下文更干净），
+不少任何一段报告。
+
+## 并发调度 · t=0 一次甩出
+
+**判读顺序（第一步 → 第六步）不变，改的只是取数何时开始。** 三个脚本单元与四个检索分组
+彼此独立，t=0 全部甩出去，让 30–75 秒的脚本取数整个消失在检索延迟底下。**脚本内部零改动。**
+
+```bash
+S="$SKILL_DIR/scripts"
+mkdir -p /tmp/search                       # 检索分组自己的命名空间，与脚本产物分开
+
+# ① 最先起：stop-the-line 闸门。它最短，先起才能最早收
+python3 "$S/industry_table.py" --check --json > /tmp/check.json 2>/tmp/check.err & CHECK=$!
+
+# ② 有序边留在同一个 job 内 —— technicals → perp_quotes 是**一个**顺序 job，不是两个
+( python3 "$S/technicals.py" --json /tmp/tech.json \
+  && python3 "$S/perp_quotes.py" --spot /tmp/tech.json --json /tmp/perp.json --quiet ) \
+  > /tmp/techperp.log 2>&1 & TECHPERP=$!
+
+# ③ 信用层：一次取数、两份渲染，全天**只跑这一次**
+python3 "$S/neocloud_credit_monitor.py" --emit both > /tmp/credit.md 2>/tmp/credit.err & CREDIT=$!
+
+# ④ 同一时刻派发 A/B/C/D 四个检索分组，各写 /tmp/search/<组>.json
+
+wait $CHECK;    RC_CHECK=$?                # 逐 PID 收退出码，绝不裸 wait
+wait $TECHPERP; RC_TECHPERP=$?
+wait $CREDIT;   RC_CREDIT=$?
+```
+
+**守则，缺一不可：**
+
+- **`--check` 是停线闸门，最先起、最先收、在写下任何一行报告文字之前判读。** `RC_CHECK` 为 1
+  即第零步的阻断性失败（定位不到姊妹技能 / 基准表解析失败 / 不是合法 UTF-8）——**立刻停线**，
+  不要等另外两个 job，更不要开始写报告；否则 45 秒的 `technicals.py` 花完了才发现质量闸门是空的。
+  `--check --json` 的退出码语义与文本分支**完全一致**，阻断性失败也会给一份
+  `ok:false` / `blocking:true` 的 JSON，所以 `/tmp/check.json` 在这种情况下照样可读。
+  三类告警（陈旧 / 日期在未来 / 行数不一致）在 `alerts[]` 与 `degraded_reasons[]` 里，**不阻断**
+  （`exit_code` 恒 0），按第零步照常处置。
+- **每个单元有自己的出口，没有两个 job 共享 stdout**——但四个单元的出口形式**不一样**，别混：
+  - `industry_table.py --check --json` 打到 stdout，重定向落档；
+  - `technicals.py --json /tmp/tech.json` **自己写档**，stdout 只剩一行「已写入」（它**没有** `--quiet`，
+    也不需要）。⚠️ 写档失败时它**故意**把整份 JSON 改打到 stdout 并保持 exit 0——这时
+    `/tmp/tech.json` 不存在而退出码是 0，join 必须按「缺档」响亮失败，**不得读成「该单元无数据」**；
+  - `perp_quotes.py --json ... --quiet` 只关 stdout 的人读正文（并发下正文会交织），
+    **stderr 照常喊、降级照常进 JSON 的 `degraded` / `degraded_reasons`**；
+  - `neocloud_credit_monitor.py --emit both` **只有 stdout 一种出口**：`--emit` 只取一个值，
+    `--emit both` 与 `--json` 同给会被响亮拒绝并 exit 1。所以这一路重定向 stdout 落档。
+    **不要为了拿机读 JSON 再跑一次**——那是第二轮网络取数，还会同日写第二笔历史档
+    （明天的⑩跨档比对的是第二次，而报告引用的是第一次）。
+- **逐 PID `wait` 收退出码，绝不裸 `wait`。** 裸 `wait` 只回最后一个 job 的码，
+  停线闸门与信用层的失败会被静默吞掉。
+- **join 对缺档必须响亮失败。** `/tmp/check.json`、`/tmp/tech.json`、`/tmp/perp.json`、`/tmp/credit.md`、
+  `/tmp/search/{a,b,c,d}.json` 逐个确认存在再读。**缺一个单元绝不能被读成「该单元无数据」**——
+  前者是取数没跑成（要查、要在报告里说清楚），后者是「查过了、没有」，把前者写成后者，
+  就是本技能 ⚪ 与 ❌ 的语义塌缩，只不过这次由「让它更快」这个改动触发。
+- **任何 `degraded: true` 或非零退出的单元，必须在写下第一行报告文字之前先浮出来。**
+  要看的地方：`/tmp/check.json` 的 `degraded` / `degraded_reasons[]`、`/tmp/tech.json` 与
+  `/tmp/perp.json` 的顶层 `degraded` / `degraded_reasons[]`、`/tmp/credit.md` 的「⑧ 数据缺口」块、
+  以及四份检索组档里所有 `status = missing` 的项。**并发本身会诱发限流**（yfinance 尤其），
+  所以这些降级信号在并发下比串行时更重要，不是更不重要。
+- **检索分组的产物走自己的命名空间 `/tmp/search/`**，与脚本产物分开：最终要 join 来自
+  两个生产者的七八个文件，同一个目录里混着两套命名，早晚会把「哪个单元没落盘」看丢。
+
+**这两条边绝不能拆成并行 job：**
+
+- **`technicals.py --json /tmp/tech.json` → `perp_quotes.py --spot /tmp/tech.json`**（第二步的硬约束）。
+  漏了 `--spot`，`perp_quotes.py` **照样 exit 0、照样打 perp 价与 OI 分档**——失败是静默的，
+  产出的是一节看起来正常、实则被掏空的「🌙 盘后隐含」（隐含变动% 全不计算、`|≥2%|` 过滤没有输入、
+  `≥5%` 重大异动不标记、跨阈值预告不出现）。而休市日这一节是**当日唯一的活报价**。
+- **`neocloud_credit_monitor.py` 不得与自身或 `neocloud_credit_lite.py` 同时跑**：两者每次运行都
+  往历史档 append 并按同日覆盖，并发争抢同一次 append，一份读数会静默丢失。
+
 ## 第一步 · 产业质量参考表（读姊妹技能）
 
 ```bash
@@ -116,6 +236,8 @@ python3 "$SKILL_DIR/scripts/perp_quotes.py" --spot /tmp/tech.json --json /tmp/pe
 python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --emit both
 ```
 
+这三条就是「并发调度 · t=0 一次甩出」那一节里的三个脚本单元——串行跑同样正确，命令、旗标与产物路径一模一样；并发只是把它们同时起在后台，并把 ① 与 ② 的有序边留在同一个 job 内。
+
 - **执行顺序是硬约束：`technicals.py --json /tmp/tech.json` 必须先跑，`perp_quotes.py` 再跑并以它为 `--spot`。** 隐含变动 = perp 价 vs 现货收盘价，现货那一半只能来自 `/tmp/tech.json`。漏了 `--spot`，脚本只打 perp 价与 OI 分档：隐含变动% 全不计算、`|≥2%|` 过滤没有输入、`≥5%` 重大异动不标记、跨 T1/T2 阈值的「预告」也不会出现——「🌙 盘后隐含」整节等于作废。而该节是**每个日历日必出**、休市日更是**当日唯一的活报价**，缺了它休市日报告就没有任何当日信息。tech.json 生成失败时，如实写「本次未取到现货基准，🌙 盘后隐含只给 perp 价与 OI 分档」，不要拿别处的价格凑数。
 - **宏观区块直接读 `/tmp/tech.json` 的 `macro`，不再跑第二次 `--macro-only`。** 全量运行与 `--macro-only` 输出的是**同一个 macro 对象**（两条路径都写 `"macro": macro` 与顶层 `"indices": macro.get("indices", {})`），字段一致是结构上的，不需要逐字段核对。再跑一次只是把 8 个指数代码重新下载一遍，且那是**另一个时点**的报价——同一份日报的宏观数字会因此与个股区对不上。
 - **`--macro-only` 保留为降级日兜底**：只有 ① 整轮取数失败（或只想单看宏观）时才跑 `python3 "$SKILL_DIR/scripts/technicals.py" --macro-only`。**若 `/tmp/tech.json` 里没有 `macro` 区块，必须在报告里明写「本次未取到宏观区块」并改跑 `--macro-only` 兜底；绝不拿一个缺失的字段拼出一节宏观。**
@@ -135,6 +257,7 @@ python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --emit both
 
 - 状态口径：🟢 未触发｜🟡 预警｜🔴 触发｜⚪ 数据不足（沿用上次状态并注明）。
 - **①②③⑤ 用 WebSearch 取数，逐项附来源 URL；本次取不到可靠新数据的记 ⚪，不估算、不臆测、不脑补。** 慢-中变量，重点是「状态是否发生跨档变化」，不必每天有新数字。
+- 这四项即检索传输层的 **A 组**（governing reference 就是本节要读的 `references/tripwires.md`）。取数侧只回**证据散文 + 日期 + URL**，**不返回 🟢🟡🔴、不做任何阈值比较**——档位由你在这一步按 `tripwires.md` 判。② 的 🔴 要求一段序列（`window` 为 null 或只有一个观测就不得判 🔴）、③ 的 🔴 是两条腿的合取，口径写在 `references/search-contract.md` 第 5.1 节；**有没有传输层能力，这些形状都一样**。
 - **第④项是唯一例外**：其状态**由 `neocloud_credit_monitor.py` 脚本产出**，直接引用脚本输出的第⑨块，**不另行人工判读、不得与脚本结论冲突**。人工只负责把债券报价与一级市场条款喂进 `assets/neocloud_bonds.json`。
 - **汇总裁决**：`0🔴 且 ≤1🟡` → 论点完整；`≥2🟡（无🔴）` → 论点转弱·节奏保守；`≥1🔴` → 🚨 论点告警，触发第五步宏观闸门，两版顶部挂醒目横幅。⚪ 不计入 🟡/🔴 计数，但要在完整版列出。
 
@@ -179,6 +302,7 @@ python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --emit both
 
 - **硬依赖同级安装的 `ai-industry-weekly` 技能**：产业质量参考表（`assets/baseline.md`）、标的清单（`assets/universe.json`）与港股行情脚本（`scripts/hk_quote.py`）都由它单点维护，本技能只读不写。两个技能须装在同一父目录（repo 内 `skills/`，或 `$HOME/.claude/skills/`）；非常规布局可用环境变量 `AI_INDUSTRY_WEEKLY_DIR` 覆盖。
 - `python3` + `yfinance` / `pandas` / `numpy`，以及可联网（FRED / yfinance / Hyperliquid / WebSearch）。
+- **检索传输层（可选增强，见「检索传输层」一节）**：缺席时四组检索由本体直接执行，契约、来源顺序、哨兵与报告正文完全不变，只在运行输出里说明一句。
 - Slack MCP（可选，仅第六步推送用）。
 
 ## 规则

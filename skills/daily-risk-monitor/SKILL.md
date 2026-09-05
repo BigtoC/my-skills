@@ -2,7 +2,7 @@
 name: daily-risk-monitor
 description: 每日金融市场风险监控助手。每天跑一次跨市场（TradFi + Crypto + 长线估值）风险巡检：30 个信号 + 双轨决策层（周一另加 4 项宏观定价指标），逐项判定状态档位、算出 7 项硬阈值触发数与告警分级，最终给出「战略基准 × 战术系数 = 最终目标仓位」，并推送 Slack。当用户提到 每日风险监控、市场风险、风险巡检、30 信号、双轨决策、战略层/战术层、战略基准、战术系数、目标仓位、7 项硬阈值、VIX、VIX 期限结构、HY 信用利差、Fear & Greed、净流动性、TGA/RRP、Sahm Rule、CAPE、Buffett 指标、200DMA、σ倍数、VRP、资金费率、永续、清算、稳定币供应、内部人买卖比、BofA 牛熊、NAAIM、AAII、Put/Call、Margin Debt、腾落线、减仓、止盈、停止加仓、仓位、这跌正不正常 时自动使用。
 license: MIT
-compatibility: Portable Agent Skills format for agents that support SKILL.md. 取数脚本需 bash + curl + awk（FRED / CNN / Binance / Hyperliquid / CoinGecko / DeFiLlama / multpl），其中 `crypto.sh` / `cnn_fng.sh` / `stock_perp.sh` **另需 jq**（缺 jq 会 exit 2，`fred.sh` / `cape.sh` 不需要）；`scripts/market.py` 需 python3 + `requests`/`yfinance`/`pandas`/`numpy`；`scripts/snapshot.py` 只用标准库。部分信号需 WebSearch / web_fetch。Slack 推送需 Slack MCP，可跳过。
+compatibility: Portable Agent Skills format for agents that support SKILL.md. 取数脚本需 bash + curl + awk（FRED / CNN / Binance / Hyperliquid / CoinGecko / DeFiLlama / multpl），其中 `crypto.sh` / `cnn_fng.sh` / `stock_perp.sh` **另需 jq**（缺 jq 会 exit 2，`fred.sh` / `cape.sh` 不需要）；`scripts/market.py` 需 python3 + `requests`/`yfinance`/`pandas`/`numpy`；`scripts/snapshot.py` 只用标准库。另有 `scripts/crypto.py` / `scripts/stock_perp.py` 两支 Python 埠，只需 python3 + `requests`（不用 jq/awk/curl），但**目前仅在平行评估期、尚未接线**——本 SKILL.md 的所有命令仍调用 .sh，**jq 依旧是硬依赖**。部分信号需 WebSearch / web_fetch。**检索传输层可选**：若运行时能把检索分组交给独立的子上下文各自取数、各自写一个 JSON 档，就照 `references/search-contract.md` 走；没有这个能力时由本体自己按**同一份契约**取同样的数、写同样那批 JSON 档，报告内容不受影响。取数调度用 shell 后台作业（`&` 起、逐 PID `wait` 收），没有作业控制的环境改成逐条串行执行，输出相同。Slack 推送需 Slack MCP，可跳过。
 metadata:
   author: BigtoC
   version: "0.1.0"
@@ -55,13 +55,15 @@ metadata:
 | `references/decision-framework.md`        | 告警分级、7 项硬阈值、双轨决策层、停止加仓定义、恢复条件                                                                                                                                                                                      |
 | `references/output-format.md`             | 报告 9 个部分的结构、强制归因规则、Slack 推送格式                                                                                                                                                                                             |
 | `references/known-traps.md`               | **行为准则**、实测基线、已知失效/陷阱全表                                                                                                                                                                                                     |
+| `references/search-contract.md`           | **检索传输契约**：18 个检索项的公共信封、payload 六族、分组与交接（一组一档、返回一行）。**唯一一份不是逐字迁移的 reference**，可正常编辑；但它引用的每条口径都要回到其余九份里核对                                                            |
 | `scripts/fred.sh`                         | FRED 序列取数（信号 1、4、23、24、32）；`--net-liquidity` 信号 5；`--buffett` 信号 27（**两序列同季对齐**后取末行）                                                                                                                           |
 | `scripts/cnn_fng.sh`                      | CNN Fear & Greed（信号 9）                                                                                                                                                                                                                    |
 | `scripts/crypto.sh`                       | 资金费率 / 清算 / BTC Dominance / 稳定币（信号 14–17）；子命令必给，`liquidations` 设计上一定 exit 3；**信号 16 的 7d 腿靠自己累积的本地历史**（见下）                                                                                        |
 | `scripts/stock_perp.sh`                   | Hyperliquid `xyz` 池美股永续（信号 18）                                                                                                                                                                                                       |
 | `scripts/cape.sh`                         | multpl.com Shiller CAPE（信号 28）                                                                                                                                                                                                            |
 | `scripts/market.py`                       | yfinance 行情与波动率块（信号 19–22、26、33–34）。信号 20 的 VIX 走 `fred.sh VIXCLS`（与信号 4／硬阈值 1 同源同日）；信号 26 出 `above_200dma_streak`（连续站稳交易日数，纯历史计算、不依赖状态档）+ `above_200dma`/`slope_positive` 当日布尔 |
-| `scripts/snapshot.py`                     | 滚动状态档 `assets/last_run.json` 的 show / diff / write（子命令用法见 `--help`）                                                                                                                                                             |
+| `scripts/snapshot.py`                     | 滚动状态档 `assets/last_run.json` 的 show / diff / write（子命令用法见 `--help`）；`show --json` 与 `show` 等价，不是子集（见第 0 步）                                                                                                        |
+| `scripts/crypto.py` `scripts/stock_perp.py` | `crypto.sh` / `stock_perp.sh` 的 **Python 埠，与 .sh 并存、评估中、尚未接线**。CLI 与输出以 .sh 为规格，依赖只有 python3 + `requests`（不用 jq / awk / curl）。**平行期结束前 .sh 仍是权威**，下文所有命令一律调用 .sh                        |
 | `assets/.gitkeep`                         | 占位档，**只为让 git 跟踪 `assets/` 这个目录**（git 不跟踪空目录）。不要删                                                                                                                                                                    |
 | `assets/last_run.json`                    | 上次运行的各信号档位 + 两条轨道档位，**每次运行后被覆写**；**随技能分发的版本里没有这个档**（见下）                                                                                                                                           |
 | `assets/dominance_history.jsonl`          | BTC Dominance 每日读数（一天一笔），**信号 16 的 7d 腿靠它自答**；每次 `crypto.sh dominance` 成功取数后追加/覆写，**随技能分发的版本里也没有这个档**（见下）                                                                                  |
@@ -107,41 +109,145 @@ python3 "$SKILL_DIR/scripts/snapshot.py" show
 - 今日报告必须回答：**哪些信号档位变了、哪些没变**。
 - **若价格大跌但 0 个信号档位改变**，「今日解读」第一句必须是：「**30 个信号中 0 个状态改变，变的只有价格。**」
 
+需要机读时用 `snapshot.py show --json`。它**不是**把 `last_run.json` 原样倒出来——人读分支算出来的每一块都有对应字段：`staleness`（含「报告里请写「对比 N 天前」，不要写成「对比昨日」」那句禁令）、`signals`（档位分布 + ⚪️ 编号）、`tracks`（两条轨道读数）、`hard_thresholds`（7 行 + `count` / `denominator` / `worst_case` / `counting_rule`）、`recovery`（两条轨道的回补 / 恢复判定），原始状态档收在 `state` 键下，顶层另有 `ok` / `degraded` / `degraded_reasons[]`（`ok` 不是常量：状态档本身校验不过就是 `false`，逐条问题在 `validation.problems`）。两点必须照读：
+
+- **`hard_thresholds.rows[].fired` 是三态** `true` / `false` / `null`，另有 `counted_in_denominator` 单列。`null` 就是 ⚪️：**分子分母都不进**，`denominator` 已经是 7 − M，不要自己再减一次。
+- **首次运行**（状态档不存在）时所有派生块都是 `null`，不是 0 / false——`first_run: true`、`ok: true`、`degraded: true`，`degraded_reasons` 里就是那句「无昨日基准，本次为首次建立」。没有基准 ≠「各档位都没变」。
+
 > 📖 **为什么这是第 0 步**：情绪的最大来源是「今天感觉和昨天不一样」。但绝大多数下跌日，基本面信号一个都没变——**变的只有价格和你的心情**。先把这件事摆在最前面。
+
+### 0.3 检索传输层的处置（可选增强）
+
+第 1.2 步的 18 个检索项照 `references/search-contract.md` 分成 5 组派发。**这一层是可选的**，先确认本次有没有：
+
+- **有**——运行时能把一组检索交给一个独立的子上下文（该子上下文只加载那一组的 `references/signals-*.md`、只回一个 JSON 档、返回消息只有一行收据）：照契约走，父级读档不读收据。这样做的**唯一目的**是让 WebSearch / web_fetch 的原始 snippet 不进写报告的这个上下文——几十 KB 的散文会同时冲淡资料日期与来源，还会把判定往 snippet 自己的措辞上带（红线二挡的正是这个）。
+- **没有**——**由你自己按同一份契约做同样这 18 项检索**：同样的分组、同样的搜索顺序、同样的公共信封、写同样那批 `/tmp/drm-search-*.json`，然后照样读回来。**报告与有传输层时字节相同**，因为数据本身完全一样。
+
+**降级通知写在本次运行输出里，不写进报告正文**——判据是「**这次降级有没有改变数据的口径**」：
+
+- `NOTIFICATION_SLACK_CHANNEL_ID` 未设置 → 少一段分发，**要写进正文末尾**（见 0.1）；本仓库别处那种「缺 API key → 持仓口径从全量降成 top-N」的降级，**更要写进正文**——那都改变了交付物本身。
+- 检索传输层缺席 → **一个读数都没变**，同一份契约、同一批 JSON 档、同一份报告，**变的只是搜索发生在哪个上下文里**。写进正文是噪音。
+- **这条区分要照此保留，不得被侵蚀成「所有降级都可以不写进正文」**：改变口径的降级永远要进正文，只改变执行位置的降级才留在运行输出。
+
+它与本仓库其它可选依赖同一条法律：**少一路增强，不少一段交付**。
 
 ## 第 1 步 · 取数
 
 **先读 `references/data-cadence.md`**：全部 30 项每天都抓，但各项源头更新频率不同，**非更新日抓到相同值 = 正常**，标 `as of MM/DD`，**绝不因为数值没变就判定异常或标数据暂缺**。
 
-curl 类取数一律走独立 shell script（可直接单独调用调试）：
+curl 类取数一律走独立 shell script（可直接单独调用调试）。
 
-⚠️ **`fred.sh` 与 `crypto.sh` 不带参数只会印用法并 exit 1**——前者要序列 ID 或组合模式，后者要子命令。下面这几行是可以照抄直接跑的完整命令：
+### 1.1 调度：八个脚本单元 t=0 一起起，检索分组立刻派发
+
+**这八个单元彼此没有任何依赖边**（照下面的清单逐条核过）：没有哪一支读另一支的输出，`stock_perp.sh --from-fred` 自己去抓 FRED 的 SP500 / NASDAQ100 收盘，**不吃** `fred.sh` 那三路的结果；五支 shell 脚本各自 `mktemp -d` 开临时目录，并发互不踩；唯一会写技能目录内档案的是 `crypto.sh`（`assets/dominance_history.jsonl`），只有它一支在写，不存在争抢；本技能也只有 `market.py` 一支 yfinance 进程（`stock_perp.sh` 是 curl 打 FRED / Hyperliquid），**不会出现第二个并发 yfinance 进程**。
+
+所以**在 t=0 把八个单元全部丢到后台，然后立刻派发 1.2 的检索分组**，让取数的那几十秒整个藏在检索延迟底下。**脚本本身零改动**，改的只是调用方式；本技能真正的有序边一条都没有放松——第 2 步的 `diff`、第 6 步的 `write` 必须早于第 7 步推送，那几条**绝不并发**（它们消费的是分析产物，不是取数）。
+
+⚠️ **`fred.sh` 与 `crypto.sh` 不带参数只会印用法并 exit 1**——前者要序列 ID 或组合模式，后者要子命令。下面这段是可以照抄直接跑的完整命令：
 
 ```bash
-# 信号 1、4、23、24（+ 周一的 32 DFII10）—— 一次给多个序列 ID 即可，逐个请求
-"$SKILL_DIR/scripts/fred.sh" BAMLH0A0HYM2 VIXCLS VXVCLS T10Y2Y T10Y3M SAHMREALTIME
-"$SKILL_DIR/scripts/fred.sh" --net-liquidity --days 5   # 信号 5：要看「连 4 周下降」，故取 5 笔
-"$SKILL_DIR/scripts/fred.sh" --buffett                  # 信号 27：**同季对齐**后取末行 + 50–250% 量级自检
-"$SKILL_DIR/scripts/cnn_fng.sh"                         # 信号 9    → references/signals-b-positioning.md
-"$SKILL_DIR/scripts/crypto.sh" all                      # 信号 14–17（子命令必给）→ references/signals-c-crypto.md
-"$SKILL_DIR/scripts/stock_perp.sh" --from-fred          # 信号 18   → references/signals-c-crypto.md「D. 美股 24/7 永续」
-"$SKILL_DIR/scripts/cape.sh"                            # 信号 28   → references/signals-e-cycle-valuation.md
-python3 "$SKILL_DIR/scripts/market.py"                  # 信号 19–22、26、33–34 → signals-d-antiemotion.md、signals-e-cycle-valuation.md
+RUN=/tmp/drm-fetch; mkdir -p "$RUN"
+
+# 信号 1、4、23、24 —— 一次给多个序列 ID 即可，逐个请求
+"$SKILL_DIR/scripts/fred.sh" BAMLH0A0HYM2 VIXCLS VXVCLS T10Y2Y T10Y3M SAHMREALTIME --json \
+  >"$RUN/fred_series.json" 2>"$RUN/fred_series.err" & P_fred_series=$!
+# 信号 5：要看「连 4 周下降」，故取 5 笔
+"$SKILL_DIR/scripts/fred.sh" --net-liquidity --days 5 --json \
+  >"$RUN/fred_netliq.json" 2>"$RUN/fred_netliq.err" & P_fred_netliq=$!
+# 信号 27：**同季对齐**后取末行 + 50–250% 量级自检
+"$SKILL_DIR/scripts/fred.sh" --buffett --json \
+  >"$RUN/fred_buffett.json" 2>"$RUN/fred_buffett.err" & P_fred_buffett=$!
+# 信号 9 → references/signals-b-positioning.md
+"$SKILL_DIR/scripts/cnn_fng.sh" --json \
+  >"$RUN/cnn_fng.json" 2>"$RUN/cnn_fng.err" & P_cnn_fng=$!
+# 信号 14–17（子命令必给）→ references/signals-c-crypto.md
+"$SKILL_DIR/scripts/crypto.sh" all --json \
+  >"$RUN/crypto_all.json" 2>"$RUN/crypto_all.err" & P_crypto_all=$!
+# 信号 18 → references/signals-c-crypto.md「D. 美股 24/7 永续」
+"$SKILL_DIR/scripts/stock_perp.sh" --from-fred --json \
+  >"$RUN/stock_perp.json" 2>"$RUN/stock_perp.err" & P_stock_perp=$!
+# 信号 28 → references/signals-e-cycle-valuation.md
+"$SKILL_DIR/scripts/cape.sh" --json \
+  >"$RUN/cape.json" 2>"$RUN/cape.err" & P_cape=$!
+# 信号 19–22、26、33–34 → signals-d-antiemotion.md、signals-e-cycle-valuation.md
+python3 "$SKILL_DIR/scripts/market.py" --json "$RUN/market.json" \
+  >"$RUN/market.out" 2>"$RUN/market.err" & P_market=$!
+
+# 周一多一支：信号 32（10Y TIPS 实质殖利率），同样丢后台
+# "$SKILL_DIR/scripts/fred.sh" DFII10 --json \
+#   >"$RUN/fred_dfii10.json" 2>"$RUN/fred_dfii10.err" & P_fred_dfii10=$!
 ```
+
+**起完这一批就立刻去做 1.2 的派发，不要在这里等。**
+
+#### 四条守则（缺一不可）
+
+1. **一个单元一个档，没有两个 job 共用 stdout。** 后台作业交织的 stdout 是并发下的**头号污染源**——两份 JSON 交错在一起，既解析不了，也看不出坏的是哪一份。本技能这七支脚本**都没有 `--quiet`**，而 `--json` **只有 `market.py` 收档名**（`--json OUT.json`，写档后 stdout 只剩一行「已写入 …」），其余五支 shell 脚本的 `--json` 只印到 stdout——**所以隔离靠重定向，不是靠 flag；别去写一个不存在的 `--quiet`**。
+   stderr 也是一单元一档（`<unit>.err`），但那是**分流不是消音**：join 之后必须逐档印出来。「回退必须响」的那些 ⚠ 行今天就活在 stderr 上，而并发本身会诱发限流，这些行在并发下只会更重要。
+2. **逐 PID 收退出码**（`wait $P_<unit>` 一个一个收），**绝不裸 `wait`**。裸 `wait` 只回最后一个作业的状态，而本技能的退出码个个有意义：`crypto.sh` 的 `liquidations` **设计上一定 exit 3**（在 `all` 里它是暂缺项、`all` 本身仍回 0），`fred.sh --buffett` / `--net-liquidity` 与 `cape.sh` 量级自检不过是 **exit 4**，`stock_perp.sh` 撞上 ctxs 短缺是 **exit 5**。裸 `wait` 把这些全丢掉，等于把「取数失败」静默记成「查过了没事」。
+3. **缺档必须响亮失败。** join 时逐个确认那个 `<unit>.json` 真的存在、非空、解析得开。**缺档绝不能被读成「该单元没有数据」**——那正是红线一挡的那件事。缺档就按该单元覆盖的信号逐项记 ⚪️、列出已尝试来源、报滞后周数，**不得当成「未触发」**。
+4. **join 之后、写任何一个字之前，先把降级浮出来。** 任何单元 `degraded: true`、`do_not_quote` 非 `null`、或退出码非零，**必须先列出来**（哪个单元、退出码、`degraded_reasons[]` 照抄措辞），再开始判信号。顺序反过来，一次被限流的运行就会被静默正常化成一次正常运行。
+
+收作业（**逐 PID**）：
+
+```bash
+for pair in fred_series:$P_fred_series fred_netliq:$P_fred_netliq fred_buffett:$P_fred_buffett \
+            cnn_fng:$P_cnn_fng crypto_all:$P_crypto_all stock_perp:$P_stock_perp \
+            cape:$P_cape market:$P_market; do
+  u=${pair%%:*}; p=${pair##*:}
+  wait "$p"; rc=$?
+  echo "── $u exit=$rc"
+  [ -s "$RUN/$u.json" ] || echo "  ⚠️ $u 没有产出 JSON —— 按取数失败处理，不得读成「该单元无数据」"
+  if [ -s "$RUN/$u.err" ]; then echo "  stderr:"; cat "$RUN/$u.err"; fi
+done
+```
+
+（`market.py` 的 JSON 由 `--json "$RUN/market.json"` 自己落档，`$RUN/market.out` 里只有那行「已写入 …」。）
 
 几个必须知道的实际行为（都是设计如此，不是故障）：
 
-- **`crypto.sh liquidations` 一定 exit 3**——信号 15 没有任何免费公开源（Coinglass v4 需 API key）。脚本会**实测并印出每个来源的 HTTP 码**再标 ⚪️，这就是它的正常结局；`crypto.sh all` 因此必然把「信号15 清算」列进「本次数据暂缺项」，而 `all` 本身仍回 0。**接到这个 exit 3 就走 `web_search "coinglass liquidations 24h"`**，并在报告里写全三件事：24h 总清算金额（>\$500M = 杠杆洗盘｜>\$1B = 重大事件）、**多头 vs 空头哪一方被清算更多**、以及「上次已知读数 X @ YYYY-MM-DD，已滞后 N 周」。**搜不到也照样要报滞后周数**，不得写成「未触发」。
+- **`crypto.sh liquidations` 一定 exit 3**——信号 15 没有任何免费公开源（Coinglass v4 需 API key）。脚本会**实测并印出每个来源的 HTTP 码**再标 ⚪️，这就是它的正常结局；`crypto.sh all` 因此必然把「信号15 清算」列进「本次数据暂缺项」，而 `all` 本身仍回 0。**接到这个 exit 3 就走 `web_search "coinglass liquidations 24h"`**——因为 exit 3 是必然结局，这项检索（组 C 的 `drm-sig15-liquidations`）在 1.2 里 **t=0 就已派发**，不必等 `wait` 回来；`wait` 之后要做的是把脚本实测印出的**各来源 HTTP 码清单**并进该项的 `attempted[]`（契约 §9.C）。报告里写全三件事：24h 总清算金额（>\$500M = 杠杆洗盘｜>\$1B = 重大事件）、**多头 vs 空头哪一方被清算更多**、以及「上次已知读数 X @ YYYY-MM-DD，已滞后 N 周」。**搜不到也照样要报滞后周数**，不得写成「未触发」。
 - **信号 16 的「7d 跌幅 >3%」由 `crypto.sh` 自己累积的历史回答，不要去换源。** 每次 `dominance` 成功取数会往 `assets/dominance_history.jsonl` 追加一笔（同日重跑覆盖，最多留 90 笔），累积够天数后脚本自己算 7d 变动，并同时印 **Δpt 与相对百分比**两个口径（阈值按相对百分比判定，与 24h 同一套规则）。三种 ⚪️ 的意思不同，报告要照抄脚本的说法：**历史不足**（`已累积 N 天`，连跑就会补齐）、**历史断层**（6–10 天窗口内没有基准；拿 31 天前的读数算出来的是「31 日变动」，贴「7d」的标签就是编数字）、**来源不同**（7 日前那笔是 CoinPaprika、今日是 CoinGecko 之类——两家分母不同，实测同日可差 2pt 以上而阈值只有 3%，一律拒绝比较）。**这三种都必须写成 ⚪️，绝不能因为「其余条件都正常」就推断这条腿安全**——少一条腿就少一次触发机会，会让加密信号触发计数系统性偏低（2 个 = 🟠 过热、3 个 = 🔴 警告）。排查用 `"$SKILL_DIR/scripts/crypto.sh" dominance --history`（不连网，印已累积几天与来源分布）。历史档写不进去（目录只读等）只会在 stderr 印一行告警，取数照常输出、照常 exit 0。
-- `stock_perp.sh` 不给 `--spx/--ndx/--from-fred` 也会跑完并回 0，但隐含跳空全部标 ⚪️。`--from-fred` 的收盘价**滞后 1 个交易日**，脚本会把观测日与滞后天数印出来，报告须照抄这个滞后。
-- `fred.sh --buffett` / `--net-liquidity` / `cape.sh` 量级自检不过时 **exit 4**：这时**不要引用那个数字**，按「先怀疑单位」处理。
-- 信号 32（10Y TIPS 实质殖利率）只在**周一**取：`"$SKILL_DIR/scripts/fred.sh" DFII10`。
+- `stock_perp.sh` 不给 `--spx/--ndx/--from-fred` 也会跑完并回 0，但隐含跳空全部标 ⚪️。`--from-fred` 的收盘价**滞后 1 个交易日**，脚本会把观测日与滞后天数印出来，报告须照抄这个滞后（`--json` 里逐市场给 `cash_close_date` / `cash_close_lag_days` / `cash_close_stale`）。
+- ⚠️ **`stock_perp.sh` 有一个已知缺陷**：Hyperliquid 回的 ctxs 阵列短于 universe（某个市场少了报价）时，`--json` 分支会中止在 **exit 5**——**5 不在本仓库的保留码里**（1 参数错误｜2 依赖缺失｜3 取数失败｜4 判定取错市场），且 stdout 上不是可解析的 JSON。碰到 exit 5 一律**当取数失败处理**：信号 18 标 ⚪️、列出已尝试来源、报滞后周数，**不得当成「未触发」**。（Python 埠 `stock_perp.py` 在同一情况下逐市场降级、保留另一个市场并 exit 3；但埠尚未接线，见文件地图。）
+- `fred.sh --days N` 会把**要求笔数与实得笔数并列**印出：回看区间内不足 N 笔时文字分支写「要求 N 笔｜实得 G 笔」并多印一段告警，`--json` 逐序列给 `days_requested` / `observations_returned` / `short_return`，顶层另有 `any_short_return`，`ok` 与 `degraded` 同步转 false。**短拿仍 exit 0**（数据是真的，只是不够长），退出码不会替你挡——引用时照实写实得笔数，「连 4 周下降」这种要数笔数的判定短拿时判不了，记 ⚪️。
+- `fred.sh --buffett` / `--net-liquidity` / `cape.sh` 量级自检不过时 **exit 4**：这时**不要引用那个数字**，按「先怀疑单位」处理。`--json` 下**照样把整份 JSON 印完再 exit 4**，禁令本身就是字段 `do_not_quote`（`ok` 与 `sanity.pass` 同步为 false），只读 stdout 也看得到，不必去捞 stderr。
+- 信号 32（10Y TIPS 实质殖利率）只在**周一**取：`"$SKILL_DIR/scripts/fred.sh" DFII10`（周一时把它当第九个单元，照 1.1 那段注释掉的写法一起丢后台、一起逐 PID 收）。
+
+### 1.2 检索分组（与 1.1 同时派发，不等脚本）
 
 脚本覆盖不到的信号（2 200DMA 比例、3 BofA 牛熊、6 A/D Line、7 NAAIM、8 AAII、10 Put/Call、11 Margin Debt、12 内部人、13 IPO、25 LEI、29 AAII 配置、30 Margin Debt/GDP，以及周一的 31 Forward P/E）用 WebSearch / web_fetch，逐项按各 `references/signals-*.md` 里写明的搜索顺序与来源优先级执行，**每项附来源**。
 
+**执行方式照 `references/search-contract.md`**（派发前先读它）：18 个检索项按 governing reference 分 **5 组（A / B / C / E / F）**，**一组只加载一个 `references/signals-*.md`**，一组写**一个** JSON 档，返回消息**只有一行收据** `wrote N items to <path>, M ok / K missing`。父级**读档**，不读那行收据里的数字；读回后按 `attempted[]` 审来源顺序，**第一级没被尝试就打回重取**。有没有 0.3 那层传输能力都走这同一份契约、落同一批档。
+
+**两个生产者，两套命名空间**：脚本单元落 `/tmp/drm-fetch/<unit>.json`（1.1），检索分组落 `/tmp/drm-search-{a,b,c,e,f}.json`（契约 §7.1）。**不共用目录、不追加进同一个档**——并发时会互相踩，而两边口径本来就不同（一边是当日实测，一边是文档化来源顺序的降级链），混进同一个档就再也分不出哪个读数是谁产的。
+
+**t=0 派发全部 5 组**（周一才有 F 组；组 C 只有 2 个单元，信号 16 **不派发、禁止检索**，见契约 §9.C）。**只有两个条件项不在 t=0 派发**，它们是检索侧仅有的两条有序边：
+
+- **信号 4 的 vixcentral 备援腿**——只在 `fred.sh` 那一路的 `VIXCLS` / `VXVCLS` 取不到时才派发（首选是同源同日的 FRED，比 yfinance 与 vixcentral 都可靠）；
+- **信号 14 的第三级 coinglass 兜底**——只在 `crypto.sh` 的 Binance / Hyperliquid 两级都没答上来时才派发。
+
+这两项等对应单元 join 完再补派单项单元，各自写 `/tmp/drm-search-a-vix.json` / `/tmp/drm-search-c-funding.json`——**仍在检索命名空间内，但绝不追加进 A / C 两组的档**（一档一个生产者）。降级必须响：备援腿一旦启用，`tier_used` 与 `source_label` 要如实降级，并在报告里明示不同源。
+
 **能用 API 就不要用搜索**——搜索来的资金费率、利差经常是几小时前的缓存值。
 
-**周一**额外执行 `references/signals-f-monday.md` 的 31–34 四项 + Tier 1 四周趋势回顾（HY 利差 4 周变化、净流动性 4 周方向）。这四项**不计入 30 个信号，也不参与任何触发计数**。
+**周一**额外执行 `references/signals-f-monday.md` 的 31–34 四项 + Tier 1 四周趋势回顾（HY 利差 4 周变化、净流动性 4 周方向）。这四项**不计入 30 个信号，也不参与任何触发计数**（其中 31 Forward P/E 走 F 组，`counts_toward` 恒为 `{false, false}`，**绝不可写进 `snapshot.py` 的 `signals`**）。
+
+### 脚本 `--json` 的机读表面
+
+`--json` 与人读输出**等价**，不是它的子集：人读分支印出的每一句判定、告警与禁令都有对应字段。抄进报告时可以只读 stdout，但下面三组字段必须照读：
+
+| 字段                              | 出现在                                                                                                                        | 意思                                                                                                                                                                                    |
+|-----------------------------------|-------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `degraded` / `degraded_reasons[]` | `fred.sh`（三种模式）、`cape.sh`、`cnn_fng.sh`、`crypto.sh all`、`stock_perp.sh`、`snapshot.py show --json`                    | 本次有降级。`degraded_reasons` 逐条照抄人读分支的措辞（含「标 ⚪️、列出已尝试来源、报滞后周数」这类禁令）——**报告要把理由写出来，不能只写结果**                                          |
+| `do_not_quote`                    | `fred.sh --net-liquidity`、`fred.sh --buffett`、`cape.sh`                                                                      | 量级自检未通过时的禁令对象（`reason` + `observed*` + `expected_range*`）；通过时是 `null`。**非 null 就不要引用那个数字**                                                              |
+| `alignment`                       | `fred.sh --buffett`                                                                                                           | 同季对齐口径：`method`、`series_last_obs_differ`、以及 `prohibition`「**不要**改用各取各的末行相除」。两序列末行不同季时 `series_last_obs_differ: true`，报告须照抄这条禁令             |
+
+`ok` 在任何一支脚本里都**不是字面量**：自检没过、有序列短拿、有市场被撞名判定作废时它就是 `false`。别把 `ok: true` 当常数跳过。（`market.py` 与 `crypto.sh` 的**单一**子命令这一轮没有加这组字段，别去 grep 它们的 `degraded`；`crypto.sh all` 有。）
+
+**判不了的东西一律是 `null`，不是 `false`**——`false` 的意思是「判过了、没触发」。今天有三处这样的三态：`cnn_fng.sh` 的 `triggers.hard_threshold_4_greed_burst`、`fred.sh --net-liquidity` 的 `trigger.fired`（规则要看 SPX，本脚本不判 SPX）、`fred.sh` 序列取数失败时的 `short_return`。
+
+⚠️ **`null` 是 ⚪️，`false` 是 ❌ —— 这两个在 7 项硬阈值里的下场完全相反**：`false`（❌ 未触发）**进分母、不进分子**；`null`（⚪️ 数据暂缺）**分子分母都不进**（N = 7 − M）。把 `null` 读成 `false` 等于把「不知道」记成「查过了，没事」，会把分母撑大、触发比例压低，直接推高战略基准——这正是红线一挡的那件事。`cnn_fng.sh` 的三态还配了 `hard_threshold_4_greed_burst_reason`（**只有 `null` 时才有值**，措辞与人读分支那行同源），**把那句理由抄进报告，就是硬阈值第 4 项那格的 ⚪️ 说明**。它的文字分支现在与之一致：端点没回历史序列时印「⚪️ 无法判定（端点未回历史序列）」；四个对照读数（前收盘 / 1 週前 / 1 月前 / 1 年前）缺任一个时，该读数印 `N/A`、变动栏印「N/A（缺对照读数，不计算变动）」——**不再印一个捏造的 `0.0` 和一个捏造的单日变动**。
 
 ### 工具与已知坑（完整表见 `references/known-traps.md`，逐条遵守）
 
@@ -153,7 +259,7 @@ python3 "$SKILL_DIR/scripts/market.py"                  # 信号 19–22、26、
 | 美股 24/7 永续                                                  | `scripts/stock_perp.sh`（curl）            | Hyperliquid 主池 `SPX` 是 SPX6900 迷因币 → **必须 `"dex":"xyz"`**                                                                         |
 | CNN Fear & Greed                                                | `scripts/cnn_fng.sh`（curl）               | 裸请求回 **HTTP 418** → 必须带 `Referer: https://www.cnn.com/` + `Origin`                                                                 |
 | Shiller CAPE                                                    | `scripts/cape.sh`（curl + 正则）           | multpl.com，解析配方见 `references/signals-e-cycle-valuation.md` 信号 28                                                                  |
-| 其余（BofA、内部人、IPO、A/D Line、NAAIM、AAII、Put/Call、LEI） | WebSearch / web_fetch                      | 上面取不到时才用                                                                                                                          |
+| 其余（BofA、内部人、IPO、A/D Line、NAAIM、AAII、Put/Call、LEI） | WebSearch / web_fetch                      | 上面取不到时才用；**分组、公共信封与交接照 `references/search-contract.md`**（一组一档、返回一行收据）                                     |
 
 ⚠️ **最容易搞混的一对相反要求**：**FRED 必须用 curl（`requests` 超时）**，而 **yfinance 必须用 `requests.Session` + UA（urllib SSL 失败）**。两者方向相反，改脚本时不要互相「统一」。
 
@@ -181,6 +287,8 @@ python3 "$SKILL_DIR/scripts/snapshot.py" diff /tmp/today.json
 ## 第 3 步 · 7 项硬阈值 + 告警分级
 
 **读 `references/decision-framework.md`**「告警分级」与「🚨 7 项硬阈值 · 战略卖出触发追踪」两节：输出那张 7 行表（「数据日期」列必填，滞后 >2 周要写 `(滞后 N 周)`），按 Tier 1 / Tier 2 / 加密计数定 🟢正常 / 🟡留意 / 🟠过热 / 🔴警告，并按同一文件的「数据暂缺的计数规则」「警戒升级规则」「估值环境联动」逐条执行。
+
+计数时的机读口径（细节见第 1 步「脚本 `--json` 的机读表面」）：第 4 项直接读 `cnn_fng.sh --json` 的 `triggers.hard_threshold_4_greed_burst`——`null` = ⚪️（分子分母都不进，理由在 `..._reason` 里，照抄进那一格）、`false` = ❌ 未触发（进分母不进分子）、`true` = ✅ 触发。**把 `null` 读成 `false` 就是把 ⚪️ 记成「查过了没事」，分母会多一格。** `snapshot.py show --json` 的 `hard_thresholds.denominator` 已按 N = 7 − M 算好，可拿来交叉验证自己数的那个数。
 
 ## 第 4 步 · 双轨决策层
 
@@ -259,6 +367,9 @@ python3 "$SKILL_DIR/scripts/snapshot.py" write /tmp/today.json --date 2026-09-03
 6. [ ] 与昨日档位的对照结论已写；0 变动时那句话已照写
 7. [ ] `snapshot.py write` 已成功执行（exit 0）且在推送之前
 8. [ ] 正文与 Slack 文本里没有真实频道 ID、没有本机绝对家目录路径
+9. [ ] 第 1.1 步八个单元**逐 PID** 收过退出码（没有裸 `wait`），缺档的单元已按取数失败处理、没有被读成「该单元无数据」；`degraded` / `do_not_quote` / 非零退出码已在动笔之前先浮出来
+10. [ ] 第 1.2 步五组检索各自落在 `/tmp/drm-search-*.json`、与 `/tmp/drm-fetch/` 没有混档；每项 `attempted[]` 的第一条就是该项写死的第一级来源（否则已打回重取）
+11. [ ] 检索传输层缺席时，那句降级说明写在**运行输出**里，**没有**混进报告正文的第 0–8 部分，也没有进 Slack
 
 ## 🔴 两条红线（最容易被违反，每次运行前重读一遍）
 
@@ -283,6 +394,13 @@ python3 "$SKILL_DIR/scripts/snapshot.py" write /tmp/today.json --date 2026-09-03
 `ai-pullback-daily` 与本技能都从 Hyperliquid 的 `xyz` 池读美股永续，但**各自维护自己的脚本、互不引用**——本技能用 `scripts/stock_perp.sh`，那边用它自己的 `scripts/perp_quotes.py`。不要把两者合并或交叉 import。
 
 运行需要：`bash` + `curl` + `awk`；**`jq`**（`crypto.sh` / `cnn_fng.sh` / `stock_perp.sh` 硬依赖，缺了会 exit 2 并印安装指令与降级办法；`fred.sh` / `cape.sh` 不需要）；`python3` + `requests`/`yfinance`/`pandas`/`numpy`（只有 `market.py` 用，`snapshot.py` 纯标准库）；可联网（FRED / yfinance / Binance / Hyperliquid / CoinGecko / CoinPaprika / DeFiLlama / CNN / multpl）；WebSearch / web_fetch 用于脚本覆盖不到的信号；Slack MCP 可选，仅第 7 步用。
+
+**两个可选增强，缺了都不少一段交付**：
+
+- **检索传输层**（第 0.3、1.2 步）——能把一组检索交给独立子上下文时照 `references/search-contract.md` 走；不能时**由本体自己按同一份契约做同样这 18 项检索、写同样那批 JSON 档**，报告字节相同，降级说明只进运行输出、不进正文。
+- **后台作业调度**（第 1.1 步）——`&` 起、逐 PID `wait` 收是本技能的默认跑法；环境没有作业控制时改成**逐条串行**执行同样这八条命令，每条仍各写各的 `<unit>.json`，退出码仍逐条检查、缺档仍响亮失败——**慢，但一个读数都不少**。
+
+`scripts/crypto.py` 与 `scripts/stock_perp.py` 是 `crypto.sh` / `stock_perp.sh` 的 **Python 埠，与 .sh 并存**：CLI 与输出以 .sh 为规格，依赖只有 python3 + `requests`（不用 jq / awk / curl），因此这两支埠本身不吃 jq。但**它们尚未接线**——本 SKILL.md 第 1 步的命令一律调用 .sh，**平行评估期结束前 .sh 仍是权威**。不要因为埠存在就把 jq 从依赖里划掉，也不要把任何一条命令换成 .py。
 
 ## 规则
 

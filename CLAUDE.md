@@ -120,6 +120,52 @@ Three things about it are load-bearing and easy to erode:
 It shares no code with `ai-pullback-daily` even though both read Hyperliquid's
 `xyz` pool — each keeps its own fetcher, and they must not be merged.
 
+### The crypto / stock_perp Python ports — a bounded parallel period
+
+`scripts/crypto.py` and `scripts/stock_perp.py` are committed **alongside**
+`crypto.sh` and `stock_perp.sh`, not in place of them. `SKILL.md` still invokes
+the `.sh`; nothing is switched over. The ports drop `jq` and `awk` entirely and
+need `python3` + `requests`.
+
+Where the language split falls, and why — settled, not to be re-litigated:
+
+- **`fred.sh` and `cape.sh` stay shell.** They need no `jq` and **no Python
+  packages at all**, and this environment's stdlib `urllib` cannot reach these
+  hosts, so porting them would add `requests` for no gain — a portability loss
+  in a repo whose purpose is portable skills.
+- **Concurrency is not a reason to port.** `curl --parallel` with
+  `-w '%{url_effective} %{http_code}'` keeps **per-URL status attribution**, so
+  the ⚪️ per-series accounting and `fred.sh`'s ordering invariant survive in
+  shell.
+- **What Python uniquely buys is two things curl cannot express.**
+  *Heterogeneous-block parallelism*: `crypto.py` fires its four blocks at four
+  different hosts, fences each future separately, and reduces `OKCOUNT` /
+  `MISSING` in fixed submission order — one bad field can no longer discard
+  three good blocks. And *named fields* replacing `stock_perp.sh`'s positional
+  TSV, whose one row is addressed under **three incompatible index bases**
+  (awk `$1…$16`, jq `.[0]…[15]`, and a `read -r` variable list).
+
+**The parallel period is bounded and ends in deleting the `.sh`.** Two
+implementations silently disagreeing about the same verdict is the worst failure
+this skill family has — named above for the neocloud credit twins, whose two
+`TH` dicts make every recalibration a two-place edit. A permanent second copy of
+`crypto` / `stock_perp` is that same trap, over signals 14–18. Do not settle
+into keeping both.
+
+One divergence already exists, and it argues against lingering: when
+Hyperliquid's `assetCtxs` array is shorter than `universe`, `jq`'s `transpose`
+pads with null, the empty fields survive into the `--json` branch's `tonumber`,
+and `set -euo pipefail` propagates jq's exit **5** — a code this repo does not
+reserve — with unparseable JSON on stdout. `stock_perp.py` instead records that
+market as `MissingMarket` with a reason, keeps both markets in the output, and
+exits **3**. The shell defect is still present.
+
+**The migration oracle is what decides when the `.sh` can go**: frozen upstream
+payloads plus a golden stdout / stderr / exit code per case, replayed offline
+through the `RISK_FIXTURE_DIR` / `RISK_FIXTURE_NOW` hook both versions already
+carry. It **currently lives outside the repo, in scratch space** — no fixture or
+golden file is checked in, so a fresh clone cannot replay it.
+
 ### How the two AI-compute skills couple
 
 The industry rating table is maintained in exactly one place:
@@ -272,6 +318,88 @@ mode fallback-rule 6 and the ⚪️ accounting exist to prevent, triggered by th
 change meant to make things faster.
 
 Design record: `docs/superpowers/specs/2026-09-05-skill-handoff-and-concurrency-design.md`.
+
+## Retrieval transport layer
+
+The two daily routines fetch a large part of their signals with WebSearch /
+web_fetch. Raw search results are prose, ads and stale reposts — tens of KB per
+item — and letting them into the context that writes the report both drags the
+verdict toward the snippet's own wording and dilutes the source and as-of date
+that `output-format.md` requires on every line. So retrieval is split into
+**transport** and **judgement**: the transport side returns readings and
+provenance as structured fields, never a 🟢🟡🔴 state, a threshold comparison, a
+「一句話解讀」, or narrative. The shape is enforced by the schema having no such
+fields, not by a prompt asking nicely.
+
+### The contract is deliberately duplicated — a TWO-PLACE EDIT
+
+The contract lives in **two files, one per skill**:
+
+- `skills/ai-pullback-daily/references/search-contract.md`
+- `skills/daily-risk-monitor/references/search-contract.md`
+
+This is not drift waiting to be cleaned up. `daily-risk-monitor` is standalone
+by design — the rule above says it shares no code and no sibling-skill
+dependency with `ai-pullback-daily` — so the contract **cannot** be hoisted into
+one shared file without creating exactly the dependency that rule forbids.
+
+Treat it the way the two `TH` threshold dicts are treated: **a change to the
+common envelope is a two-place edit.** The common part is §2 (the envelope
+fields), §3 (`threshold_comparable`, `carry_forward_policy`), §4 (the sentinel
+is chosen by the caller, not the fetcher), §5 (what is excluded), and the
+one-line handoff receipt. The per-skill parts — the group tables, the dispatch
+lists, the payload families actually used, the per-group caliber notes — are
+genuinely different and must not be homogenised. Two copies silently disagreeing
+about the envelope is the same failure mode as the two `TH` dicts disagreeing
+about tripwire ④: whichever copy the day's run happened to read is what the
+report presents as fact.
+
+Note the copies use **different sentinel sets** (`daily-risk-monitor` has three,
+`ai-pullback-daily` four, including `（无）`), so a sentinel change is a real
+per-skill decision, not a copy-paste.
+
+Unlike `references/*.md`, these two files are **not** verbatim migrations from
+the private source document — they are the skills' own handoff contracts and can
+be edited normally. But a contract may only say **how** a caliber is carried,
+never restate or amend the caliber itself; every rule it cites has to be checked
+back against the migrated `signals-*.md` / `tripwires.md` / `neocloud-credit.md`
+files that own it.
+
+### `.claude/agents/` is optional and must stay that way
+
+`.claude/agents/search-transport.md` is the Claude Code mechanism that executes
+one group of the contract. It is a **Claude Code-only optional enhancement**:
+it is not part of the portable `SKILL.md` layer, and the README's own documented
+install path (`cp -r skills/<name> ~/.claude/skills/`) does not carry it.
+
+- **`SKILL.md` names the capability, never the mechanism.** Keep the repo's
+  existing neutral wording (`WebSearch / web_fetch`, `a Slack MCP server`,
+  `python3 + yfinance`, `jq`). The moment an `@agent-name` or an `mcp__…`
+  identifier appears in a `SKILL.md`, the portable layer is dead. Do not add
+  this agent to any `SKILL.md` by name.
+- **Degrading means the parent searches for itself** — same contract, same JSON
+  file, same report bytes.
+- **`isolation: worktree` is forbidden in that definition**, and the reason is in
+  a comment there: the daily state files have inconsistent git status.
+  `last_run.json` and `dominance_history.jsonl` are **untracked**, so a worktree
+  shows a "first run" world; `neocloud_credit_history.jsonl` **is tracked**, so a
+  worktree shows the last committed state and the day's append evaporates with
+  the tree. The tracked one is the more dangerous of the two failures precisely
+  because it looks normal.
+
+### Where a missing transport layer gets announced — a deliberate exception
+
+The absence of the transport layer goes into **run output, not the report body**.
+That deviates from the repo's "falling back must be loud" rule, so the criterion
+is written down here to stop it eroding into "no fallback needs announcing":
+
+> **Announce a fallback in the report body when it changes the data's caliber;
+> announce it only in run output when the data is byte-identical.**
+
+`AV_API_KEYS` being unset changes the caliber (full holdings → top-N), so it must
+appear in the body. The transport layer being absent changes only *where* the
+searching happened, so putting it in the body is noise. Every other fallback in
+this repo changes caliber and therefore still goes in the body.
 
 ## ai-industry-weekly architecture
 
