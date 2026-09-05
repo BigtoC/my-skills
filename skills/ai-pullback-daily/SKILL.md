@@ -144,6 +144,13 @@ done
 **判读顺序（第一步 → 第六步）不变，改的只是取数何时开始。** 三个脚本单元与四个检索分组
 彼此独立，t=0 全部甩出去，让 30–75 秒的脚本取数整个消失在检索延迟底下。**脚本内部零改动。**
 
+> **重叠有多少，取决于有没有检索传输层——说清楚免得误会。**
+> **有**传输层：四组检索在独立上下文里**并行**跑，脚本那十几秒确实整个藏进去。
+> **没有**（默认形态）：检索由本体自己**逐项串行**做，只能排在脚本之后。实测 2026-09-05：
+> 脚本相 16s、检索相约 4 分钟，两者**零重叠**。此时把脚本丢背景仍然值得（省下那十几秒的
+> 串行等待、且下面那条有序边照样成立），但**它省不掉检索那几分钟**——本节的收益上限就是脚本相。
+
+
 ```bash
 # ⚠️ 起作业与收作业是**两个块、两次工具调用**——中间要去派发 ④ 的检索分组。
 # 每次调用都是全新 shell：变量不跨调用，PID 也收不到（`wait` 会报 job not found）。
@@ -156,34 +163,45 @@ rm -f /tmp/check.json /tmp/check.err /tmp/tech.json /tmp/perp.json \
 #      ^ 这些档由脚本自己写，不是 shell 重定向目标：不清掉，昨天的档会通过下面
 #        「存在且非空」的检查，perp_quotes 就会拿到**隔日**的现货基准而毫无征兆。
 
-# ① 最先起：stop-the-line 闸门。它最短，先起才能最早收
-( python3 "$S/industry_table.py" --check --json >/tmp/check.json 2>/tmp/check.err
-  echo $? >/tmp/check.rc ) &
+# ① 停线闸门：**前台跑，不进背景波次**。它是次秒级的，抢不到并发收益，
+#    而背景化会让它失去闸门作用——RC_CHECK=1 时另外两支已经跑完，
+#    信用层还会**写下一笔当日历史档**，明天的 ⑩ 跨档变化就对着一笔孤儿纪录比。
+python3 "$S/industry_table.py" --check --json >/tmp/check.json 2>/tmp/check.err
+RC_CHECK=$?
+if [ "$RC_CHECK" != "0" ]; then
+  echo "✗ 停线：industry_table --check exit=$RC_CHECK"; cat /tmp/check.err; exit "$RC_CHECK"
+fi
 
-# ② 有序边留在同一个 job 内 —— technicals → perp_quotes 是**一个**顺序 job，不是两个
+# ② 只有这一条进 t=0 背景波次。有序边留在同一个 job 内 ——
+#    technicals → perp_quotes 是**一个**顺序 job，不是两个
 ( python3 "$S/technicals.py" --json /tmp/tech.json \
     && python3 "$S/perp_quotes.py" --spot /tmp/tech.json --json /tmp/perp.json --quiet
   echo $? >/tmp/techperp.rc ) >/tmp/techperp.log 2>&1 &
-
-# ③ 信用层：一次取数、两份渲染，全天**只跑这一次**
-( python3 "$S/neocloud_credit_monitor.py" --emit both >/tmp/credit.md 2>/tmp/credit.err
-  echo $? >/tmp/credit.rc ) &
 ```
 
-**起完就立刻去派发 ④ 的四个检索分组，不要在这里等** —— 这一步才是重叠的来源。
-派发完再回来跑收作业块：
+**起完就立刻去派发 ③ 的四个检索分组，不要在这里等** —— 这一步才是重叠的来源。
+
+**③ 信用层必须排在 D 组之后，不能进 t=0 波次。**
+`neocloud_credit_monitor.py` **读** `assets/neocloud_bonds.json`，而 D 组正是负责刷新那份报价的人
+（第三步：「人工只负责把债券报价与一级市场条款喂进 `assets/neocloud_bonds.json`」）。两者并发 =
+信用层永远读到上一轮的旧报价。**实测后果**：L2 项目层唯一那笔报价 37 天陈旧、过 5 天硬闸 → L2 判 ⚪，
+而第五步 ⛔红线「只有 L2/L4 才走论点闸门」的前提正是 L2 可判——本轮内无路可补。
+
+所以顺序是：**D 组回来 → 把 `quote.price / quote.as_of / quote.source` 写进 `neocloud_bonds.json` → 才跑信用层。**
 
 ```bash
-DEADLINE=$(( $(date +%s) + 180 ))          # 最多再等 3 分钟
-for u in check techperp credit; do
-  while [ ! -f "/tmp/$u.rc" ] && [ "$(date +%s)" -lt "$DEADLINE" ]; do sleep 1; done
-  [ -f "/tmp/$u.rc" ] && eval "RC_$u=\$(cat /tmp/$u.rc)" || eval "RC_$u=TIMEOUT"
-  eval "echo \"── $u exit=\$RC_$u\""
-done
+# 四组检索都回来、且 D 组的报价已写进 assets/neocloud_bonds.json 之后：
+python3 "$S/neocloud_credit_monitor.py" --emit both >/tmp/credit.md 2>/tmp/credit.err
+RC_CREDIT=$?; echo "── credit exit=$RC_CREDIT"
 
-# 停线闸门：非 0 就别往下写报告了
-[ "$RC_check" = "0" ] || { echo "✗ 停线：industry_table --check exit=$RC_check"; cat /tmp/check.err; }
+# 收 t=0 那条背景 job（它多半早就跑完了）
+DEADLINE=$(( $(date +%s) + 180 ))
+while [ ! -f /tmp/techperp.rc ] && [ "$(date +%s)" -lt "$DEADLINE" ]; do sleep 1; done
+[ -f /tmp/techperp.rc ] && RC_TECHPERP=$(cat /tmp/techperp.rc) || RC_TECHPERP=TIMEOUT
+echo "── techperp exit=$RC_TECHPERP"
 ```
+
+⚠️ `RC_TECHPERP=TIMEOUT` 代表该 job 还没跑完、**不代表它没数据**，按取数失败处理。
 
 **守则，缺一不可：**
 

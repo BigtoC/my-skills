@@ -72,7 +72,7 @@ payload                  # 逐项定义，见 §6
 | `attempted[].http` | 实测到的 HTTP 码要照填。403 / 418 / 451 这些是本仓库已知陷阱清单上的常客，父级要能在第 8 部分列出来 | `known-traps.md:57-70`、`output-format.md:103` |
 | `as_of` + `as_of_granularity` | 两个都必填。粒度不是装饰：信号 11 必须报**月份**、信号 27 必须报**季度**、信号 31 必须报**是哪一个周五那期 FactSet**。粒度丢了，滞后就算不出来 | `signals-b-positioning.md:54`、`signals-e-cycle-valuation.md:51-61`、`signals-f-monday.md:14` |
 | `caliber` | 口径标签**跟着数字走**，不是注释。Equity vs Total、8h vs 4h vs 1h、USA Overall Market vs openinsider、百万 vs 十亿 | `signals-b-positioning.md:45`、`signals-c-crypto.md:55-67`、`signals-b-positioning.md:64-73` |
-| `staleness` | **每一个 `status: missing` 都必须有**，没有例外 | `known-traps.md:15`「**没有滞后周数的「数据暂缺」是不合格的输出**」 |
+| `staleness` | **只要 `last_known` 有值就必须有**——没有滞后周数的「数据暂缺」是不合格输出。**唯一的例外是 `last_known` 本身为 `null`**（首跑、或该项从来没有过基准）：此时滞后**在数学上算不出来**，`staleness` 记 `null`，并在 payload 写死 `signals-a-macro.md:41` 那句「**无历史基准，本项完全不可判定**」。**绝不允许为了满足本栏而编一个周数**——那是红线一，而且 §8 已说明这些字段是仓位输入。 | `known-traps.md:15` ＋ `signals-a-macro.md:41` |
 | `last_known` | `{value, date}`；查不到写 `null`，并在 payload 里说明「无历史基准，本项完全不可判定」 | `signals-a-macro.md:40-41` |
 | `attempted[]` 长度 | 检索不重试超过 2 次 | `data-cadence.md:21` |
 
@@ -392,8 +392,9 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
   接到 exit 3 就走 `web_search "coinglass liquidations 24h"`，报告要写全三件事（`SKILL.md:140`）：
   24h 总清算金额（>$500M = 杠杆洗盘｜>$1B = 重大事件）、
   **多头 vs 空头哪一方被清算更多**、以及「上次已知读数 X @ YYYY-MM-DD，已滞后 N 周」。
-  ⚠️ **搜不到也照样要报滞后周数，不得写成「未触发」**——所以本项即使 `status: missing`，
-  `staleness` 也必填。>$1B 单独就会把告警拉到 🔴（`decision-framework.md:18`）。
+  ⚠️ **搜不到也不得写成「未触发」**——本项即使 `status: missing` 也要照 §2 报滞后周数；
+  但**首跑没有 `last_known` 时算不出滞后**，那时 `staleness` 记 `null` 并写「无历史基准，本项完全不可判定」，
+  **不要为了填满这一栏而编一个周数**。>$1B 单独就会把告警拉到 🔴（`decision-framework.md:18`）。
 - **信号 16**：**不派发，禁止检索。**
   正文（`:100-103`）写的「搜 "BTC dominance" 或 web_fetch coingecko / tradingview」
   **已被该文件开头的编者注收紧**（`signals-c-crypto.md:5-11`）：
@@ -446,7 +447,9 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
 
 - [ ] 文件里的项数 = 派发清单里该组的项数（组 C 是 2 项，信号 16 不产生单元）
 - [ ] 每一项都有 `attempted[]`，**成功的项也有**，且第一条是该项写死的第一级来源
-- [ ] 每一个 `status: missing` 都有 `staleness`，单位写明；有 `last_known` 或明确的 `null`
+- [ ] 每一个 `status: missing`：**有 `last_known` 就必须有 `staleness`**（单位写明）；
+      `last_known` 为 `null`（首跑／从无基准）时 `staleness` 一并记 `null`，payload 写「无历史基准，本项完全不可判定」。
+      **两者都不许靠编数字来填满**
 - [ ] 每一项都有 `as_of` **与** `as_of_granularity`
 - [ ] 每一项都有 `caliber`，且口径陷阱项（10、11、12、14、27、30）的 `caliber` 与阈值口径一致
 - [ ] `threshold_comparable.value = false` 的项，`counts_toward` 是 `{false, false}`，且 `reason` 可直接抄进报告
