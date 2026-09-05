@@ -37,6 +37,12 @@
     baseline.py diff <new_table.md>                    先校验新表，通过才逐行对比输出评级变动 + 其他字段漂移（不写文件）
     baseline.py write <new_table.md> --date YYYY-MM-DD 先 validate，通过才原子覆写 baseline.md
 
+validate / diff / write 均可加 `--json`：stdout 换成机器可读结果，stderr 的诊断照旧。
+调用方据此**按字段**判断，不必只靠 exit code：ok / degraded / degraded_reasons 是每份
+输出的固定信封，文本分支里的每一句拒绝语、提示与口径提醒都有对应字段。
+其中 diff 的 `result` 在任何拒绝路径上都是 null（配 summary_produced=false），
+所以「没对出摘要」永远不会被读成「本周无变动」。
+
 纯标准库实现，无第三方依赖；所有路径以 __file__ 为锚，任意 cwd 下均可运行。
 """
 
@@ -162,6 +168,57 @@ def err(msg: str = "") -> None:
     print(msg, file=sys.stderr)
 
 
+# ------------------------------------------------------------ 机器可读输出（--json）
+#
+# 为什么要有这一层：validate 的编号错误表、diff 的拒绝语、write 的口径提醒原先只在
+# stderr 与 exit code 里。任何「只读 stdout」的窄读、跨步骤交接或并发调用都看不见它们，
+# 于是「没对出摘要」会被读成「本周无变动」。--json 让调用方按**字段**判断，不靠退出码。
+#
+# JSON_MODE / COMMAND 之所以是全局：load_universe / load_table 在子命令函数拿到控制权
+# **之前**就可能 exit 1（清单不合法、文件读不出来），那些路径没有别的地方能产出 JSON。
+
+JSON_MODE = False
+COMMAND = ""
+
+
+def envelope(command: str, ok: bool, reasons: list[str], **fields) -> dict:
+    """统一信封。ok 永远是算出来的、不是字面量；任一自检失败即 degraded。
+
+    diff / write 的几个默认值刻意放在这里，好让**每一条**失败路径（含 fatal() 那些
+    在子命令函数之前就退出的）都带着它们：
+      * diff  → summary_produced=False / result=None：没对出摘要时，JSON 里压根不存在
+        一个「长得像 diff 结果」的对象，调用方不可能把它误读成「本周无变动」；
+      * write → written=False / baseline_modified=False：拒写路径必须自己说清楚没碰基准表。
+    """
+    payload: dict = {
+        "command": command,
+        "ok": ok,
+        "degraded": (not ok) or bool(reasons),
+        "degraded_reasons": list(reasons),
+    }
+    if command == "diff":
+        payload["summary_produced"] = False
+        payload["refusal"] = None
+        payload["result"] = None
+    elif command == "write":
+        payload["written"] = False
+        payload["baseline_modified"] = False
+    payload.update(fields)
+    return payload
+
+
+def emit_json(payload: dict) -> None:
+    """机器可读结果只走 stdout。--json 不等于静音：该进 stderr 的人类文本一条不少。"""
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def fatal(reason: str, **fields) -> None:
+    """子命令函数之前就发生的致命错误：stderr 的人类文本已打完，这里补一份 JSON 再 exit 1。"""
+    if JSON_MODE:
+        emit_json(envelope(COMMAND, ok=False, reasons=[reason], **fields))
+    sys.exit(1)
+
+
 def render_row(cells: list[str]) -> str:
     """把单元格渲染成紧凑表格行：`| a | b | c |`。
 
@@ -248,27 +305,27 @@ def load_universe() -> dict:
     where = rel_path(UNIVERSE_PATH)
     if not UNIVERSE_PATH.exists():
         err(f"错误：找不到标的清单 {where}")
-        sys.exit(1)
+        fatal(f"找不到标的清单 {where}", manifest=where, manifest_errors=None)
     try:
         data = json.loads(read_text(UNIVERSE_PATH))
     except json.JSONDecodeError as exc:
         err(f"错误：{where} 不是合法 JSON：{exc}")
-        sys.exit(1)
+        fatal(f"{where} 不是合法 JSON：{exc}", manifest=where, manifest_errors=None)
     if not isinstance(data, dict):
         err(f"错误：{where} 顶层应是一个 JSON 对象。")
-        sys.exit(1)
+        fatal(f"{where} 顶层应是一个 JSON 对象", manifest=where, manifest_errors=None)
     columns = data.get("columns")
     tickers = data.get("tickers")
     ratings = data.get("ratings")
     if not isinstance(columns, list) or not columns:
         err(f"错误：{where} 缺少 columns 列表")
-        sys.exit(1)
+        fatal(f"{where} 缺少 columns 列表", manifest=where, manifest_errors=None)
     if not isinstance(tickers, list) or not tickers:
         err(f"错误：{where} 缺少 tickers 列表")
-        sys.exit(1)
+        fatal(f"{where} 缺少 tickers 列表", manifest=where, manifest_errors=None)
     if not isinstance(ratings, list) or not ratings:
         err(f"错误：{where} 缺少 ratings 列表")
-        sys.exit(1)
+        fatal(f"{where} 缺少 ratings 列表", manifest=where, manifest_errors=None)
 
     # ---- tickers 逐条体检：ticker 必填、非空、唯一；order 若写了则必须是唯一整数
     problems: list[str] = []
@@ -313,7 +370,18 @@ def load_universe() -> dict:
         err("")
         err(f"请修改 {where}（**不是**产业表）：每条标的的 ticker 必填、非空、不得重复；")
         err("order 若填写也不得重复。清单修好之前，产业表怎么改都过不了校验。")
-        sys.exit(1)
+        # 「改的是清单、不是产业表」这条指路必须进 JSON：只看 stdout 的调用方
+        # 拿着一串「行数不符」的错误去改产业表，正是 load_universe 要防的死循环。
+        fatal(
+            f"标的清单 {where} 自身不合法（{len(problems)} 处）",
+            manifest=where,
+            manifest_errors=problems,
+            manifest_error_count=len(problems),
+            manifest_notice=(
+                f"请修改 {where}（**不是**产业表）：每条标的的 ticker 必填、非空、不得重复；"
+                "order 若填写也不得重复。清单修好之前，产业表怎么改都过不了校验。"
+            ),
+        )
 
     return data
 
@@ -362,15 +430,22 @@ class Table:
 
 
 def load_table(path: Path) -> Table:
+    # JSON 里一律只回显文件名（rel_path 对技能外的路径就退成 .name）：
+    # 新表多半是 /tmp 或 home 下的临时文件，结构化结果同样会被贴进正文与 Slack。
     if not path.exists():
         err(f"错误：找不到文件 {path}")
-        sys.exit(1)
+        fatal(f"找不到新表文件 {rel_path(path)}", source=rel_path(path))
     lines = extract_table_lines(read_text(path))
     if not lines:
         err(f"错误：{path} 里没有任何以 `|` 开头的表格行。")
         err("提示：把运行结果正文（含 <<<产业表开始>>>/<<<产业表结束>>> 标记也无妨）整块存成文件即可，"
             "本脚本会自动忽略非表格内容。")
-        sys.exit(1)
+        fatal(
+            f"{rel_path(path)} 里没有任何以 `|` 开头的表格行",
+            source=rel_path(path),
+            hint="把运行结果正文（含 <<<产业表开始>>>/<<<产业表结束>>> 标记也无妨）整块存成文件即可，"
+                 "本脚本会自动忽略非表格内容。",
+        )
     return Table(path, lines)
 
 
@@ -533,6 +608,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     universe = load_universe()
     table = load_table(Path(args.new_table).expanduser())
     errors = validate_table(table, universe)
+    source = rel_path(Path(table.source))  # JSON 里只回显文件名，见 load_table 的注释
     if errors:
         err(f"校验未通过：{table.source}")
         err(f"共 {len(errors)} 条问题：")
@@ -540,7 +616,36 @@ def cmd_validate(args: argparse.Namespace) -> int:
             err(f"  {i}. {e}")
         err("")
         err("基准表未被修改。请修正上述问题后重跑。")
+        if args.json:
+            emit_json(envelope(
+                "validate",
+                ok=False,
+                reasons=[f"新表校验未通过（{len(errors)} 条问题）"],
+                source=source,
+                error_count=len(errors),
+                errors=errors,
+                baseline=rel_path(BASELINE_PATH),
+                baseline_modified=False,
+                notice="基准表未被修改。请修正上述问题后重跑。",
+            ))
         return 1
+    if args.json:
+        emit_json(envelope(
+            "validate",
+            ok=True,
+            reasons=[],
+            source=source,
+            error_count=0,
+            errors=[],
+            header_columns=len(table.header),
+            row_count=len(table.rows),
+            expected_row_count=len(expected_tickers(universe)),
+            row_order_matches_universe=True,
+            baseline=rel_path(BASELINE_PATH),
+            baseline_modified=False,  # validate 永远不写文件
+            notice=None,
+        ))
+        return 0
     print(f"校验通过：{table.source}")
     print(f"表头 {len(table.header)} 列、数据 {len(table.rows)} 行，行序与 universe.json 完全一致。")
     return 0
@@ -616,6 +721,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
     # （漏行会报成「移除 XXX」，错位会把论点当评级报成「MU 🟢→HBM三巨头之一」），
     # 而它下一步就会被抄进运行结果正文。宁可一个字不出，也不出错摘要。
     errors = validate_table(new_table, universe)
+    source = rel_path(Path(new_table.source))  # JSON 里只回显文件名，见 load_table 的注释
     if errors:
         err(f"校验未通过，拒绝对比：{new_table.source}")
         err(f"共 {len(errors)} 条问题：")
@@ -624,11 +730,35 @@ def cmd_diff(args: argparse.Namespace) -> int:
         err("")
         err("本次**没有**产出任何变动摘要：结构不对的表对出来的结论一定是错的，不得贴进正文。")
         err("请按上面逐条修好新表后重跑 diff。")
+        # 拒绝对比时 result 保持 None（见 envelope）：JSON 里不存在任何长得像
+        # 变动摘要的东西，拒绝语本身也是字段，只读 stdout 的调用方一样看得见。
+        if args.json:
+            emit_json(envelope(
+                "diff",
+                ok=False,
+                reasons=[f"新表校验未通过（{len(errors)} 条问题），拒绝对比"],
+                refusal="本次**没有**产出任何变动摘要：结构不对的表对出来的结论一定是错的，不得贴进正文。",
+                source=source,
+                error_count=len(errors),
+                errors=errors,
+                baseline=rel_path(BASELINE_PATH),
+                next_step="请按上面逐条修好新表后重跑 diff。",
+            ))
         return 1
 
     if not BASELINE_PATH.exists():
         err(f"错误：基准表不存在：{rel_path(BASELINE_PATH)}")
         err("首次建立基准请直接跑 `baseline.py write <new_table.md> --date YYYY-MM-DD`。")
+        if args.json:
+            emit_json(envelope(
+                "diff",
+                ok=False,
+                reasons=[f"基准表不存在：{rel_path(BASELINE_PATH)}"],
+                source=source,
+                baseline=rel_path(BASELINE_PATH),
+                baseline_exists=False,
+                next_step="首次建立基准请直接跑 `baseline.py write <new_table.md> --date YYYY-MM-DD`。",
+            ))
         return 1
     base_table = Table(BASELINE_PATH, extract_table_lines(read_text(BASELINE_PATH)))
     base_errors = structure_errors(base_table, universe)
@@ -640,6 +770,23 @@ def cmd_diff(args: argparse.Namespace) -> int:
         err("基准表由 `baseline.py write` 自动写入，出现这种情况通常是被手工改过。")
         err("· 在 git 仓库里：git checkout <commit> -- assets/baseline.md 回滚后重跑。")
         err("· 非 git 目录：没有上一版可恢复，请用本周新表跑一次 `write` 覆盖修复。")
+        # 回滚指引照抄文本分支：基准表坏掉时，恢复办法本身就是最要紧的那条信息。
+        if args.json:
+            emit_json(envelope(
+                "diff",
+                ok=False,
+                reasons=[f"基准表 {rel_path(BASELINE_PATH)} 结构已损坏（{len(base_errors)} 处），无法用于对比"],
+                source=source,
+                baseline=rel_path(BASELINE_PATH),
+                baseline_exists=True,
+                baseline_error_count=len(base_errors),
+                baseline_errors=base_errors,
+                recovery=[
+                    "基准表由 `baseline.py write` 自动写入，出现这种情况通常是被手工改过。",
+                    "· 在 git 仓库里：git checkout <commit> -- assets/baseline.md 回滚后重跑。",
+                    "· 非 git 目录：没有上一版可恢复，请用本周新表跑一次 `write` 覆盖修复。",
+                ],
+            ))
         return 1
 
     def to_map(t: Table) -> tuple[dict[str, list[str]], list[str]]:
@@ -656,46 +803,32 @@ def cmd_diff(args: argparse.Namespace) -> int:
     new_map, new_order = to_map(new_table)
 
     base_meta = baseline_meta()
-    print(f"基准：{BASELINE_PATH.name}（数据日期 {base_meta['date'] or '未知'}，{len(base_order)} 行）")
-    # diff 的 stdout 会被抄进「本周变动摘要」并推 Slack：只回显文件名，
-    # 不带用户传进来的目录路径（临时文件常落在 home 或仓库下）。
-    print(f"新表：{Path(new_table.source).name}（{len(new_order)} 行）")
-    print()
 
     # ---- 标的集合变化
     added = [c for c in new_order if c not in base_map]
     removed = [c for c in base_order if c not in new_map]
-    if added or removed:
-        print("## 标的集合变化")
-        for c in added:
-            print(f"  + 新增 {c}（基准表中无此标的，本周无可比基准）")
-        for c in removed:
-            print(f"  - 移除 {c}（基准表中有，新表中缺失）")
-        print()
 
     common = [c for c in new_order if c in base_map]
 
     # ---- 评级变动
     rating_changes: list[str] = []
+    rating_records: list[dict] = []
     for code in common:
         old_cells, new_cells = base_map[code], new_map[code]
         # 结构校验已保证两侧都有完整列数，直接取值；不再「取不到就静默跳过」
         if old_cells[rating_idx] != new_cells[rating_idx]:
             rating_changes.append(f"  {code} {old_cells[rating_idx]}→{new_cells[rating_idx]}")
-
-    print("## 评级变动")
-    if rating_changes:
-        for line in rating_changes:
-            print(line)
-    else:
-        print("  本周评级无变动")
-    print()
+            rating_records.append(
+                {"ticker": code, "from": old_cells[rating_idx], "to": new_cells[rating_idx]}
+            )
 
     # ---- 其他字段漂移
     drift_blocks: list[str] = []
+    drift_records: list[dict] = []
     for code in common:
         old_cells, new_cells = base_map[code], new_map[code]
         changed: list[str] = []
+        fields: list[dict] = []
         for ci, col in enumerate(columns):
             if ci == code_idx or ci == rating_idx:
                 continue
@@ -705,10 +838,72 @@ def cmd_diff(args: argparse.Namespace) -> int:
             if col in long_cols:
                 o_brief, n_brief = _brief_change(old_v, new_v)
                 changed.append(f"    {col}：已变更\n      旧 {o_brief}\n      新 {n_brief}")
+                # JSON 不受宽度限制，长文本给全文；brief 只是文本分支那份摘录的等价物。
+                fields.append({"column": col, "old": old_v, "new": new_v,
+                               "abbreviated": True, "old_brief": o_brief, "new_brief": n_brief})
             else:
                 changed.append(f"    {col}：{old_v} → {new_v}")
+                fields.append({"column": col, "old": old_v, "new": new_v,
+                               "abbreviated": False, "old_brief": None, "new_brief": None})
         if changed:
             drift_blocks.append(f"  {code}\n" + "\n".join(changed))
+            drift_records.append({"ticker": code, "fields": fields})
+
+    identical = not rating_changes and not drift_blocks and not added and not removed
+
+    if args.json:
+        emit_json(envelope(
+            "diff",
+            ok=True,
+            reasons=[],
+            summary_produced=True,
+            source=source,
+            baseline=rel_path(BASELINE_PATH),
+            result={
+                "baseline": {
+                    "file": BASELINE_PATH.name,
+                    "path": rel_path(BASELINE_PATH),
+                    "date": base_meta["date"],
+                    "rows": len(base_order),
+                },
+                # 与文本分支同口径：只回显文件名，不带用户传进来的目录路径。
+                "new_table": {"file": Path(new_table.source).name, "rows": len(new_order)},
+                "universe_changes": {
+                    "added": [
+                        {"ticker": c, "note": "基准表中无此标的，本周无可比基准"} for c in added
+                    ],
+                    "removed": [
+                        {"ticker": c, "note": "基准表中有，新表中缺失"} for c in removed
+                    ],
+                },
+                "rating_changes": rating_records,
+                "drift": drift_records,
+                "identical": identical,
+            },
+        ))
+        return 0
+
+    print(f"基准：{BASELINE_PATH.name}（数据日期 {base_meta['date'] or '未知'}，{len(base_order)} 行）")
+    # diff 的 stdout 会被抄进「本周变动摘要」并推 Slack：只回显文件名，
+    # 不带用户传进来的目录路径（临时文件常落在 home 或仓库下）。
+    print(f"新表：{Path(new_table.source).name}（{len(new_order)} 行）")
+    print()
+
+    if added or removed:
+        print("## 标的集合变化")
+        for c in added:
+            print(f"  + 新增 {c}（基准表中无此标的，本周无可比基准）")
+        for c in removed:
+            print(f"  - 移除 {c}（基准表中有，新表中缺失）")
+        print()
+
+    print("## 评级变动")
+    if rating_changes:
+        for line in rating_changes:
+            print(line)
+    else:
+        print("  本周评级无变动")
+    print()
 
     print("## 其他字段漂移")
     if drift_blocks:
@@ -717,7 +912,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
     else:
         print("  无")
 
-    if not rating_changes and not drift_blocks and not added and not removed:
+    if identical:
         print()
         print("新表与基准表逐行完全一致。")
     return 0
@@ -798,15 +993,35 @@ def cmd_write(args: argparse.Namespace) -> int:
     date = args.date.strip()
     if not DATE_RE.match(date):
         err(f"错误：--date 必须是 YYYY-MM-DD 格式，实际「{args.date}」。基准表未被修改。")
+        # written / baseline_modified 的 False 由 envelope 兜底给出（见其 docstring）
+        if args.json:
+            emit_json(envelope(
+                "write",
+                ok=False,
+                reasons=[f"--date 必须是 YYYY-MM-DD 格式，实际「{args.date}」"],
+                date_input=args.date,
+                baseline=rel_path(BASELINE_PATH),
+                notice="基准表未被修改。",
+            ))
         return 1
     try:
         datetime.strptime(date, "%Y-%m-%d")
     except ValueError:
         err(f"错误：--date「{date}」不是合法日期。基准表未被修改。")
+        if args.json:
+            emit_json(envelope(
+                "write",
+                ok=False,
+                reasons=[f"--date「{date}」不是合法日期"],
+                date_input=args.date,
+                baseline=rel_path(BASELINE_PATH),
+                notice="基准表未被修改。",
+            ))
         return 1
 
     universe = load_universe()
     table = load_table(Path(args.new_table).expanduser())
+    source = rel_path(Path(table.source))  # JSON 里只回显文件名，见 load_table 的注释
 
     errors = validate_table(table, universe)
     if errors:
@@ -816,6 +1031,18 @@ def cmd_write(args: argparse.Namespace) -> int:
             err(f"  {i}. {e}")
         err("")
         err(f"基准表 {rel_path(BASELINE_PATH)} 未被修改（一个字节都没动）。")
+        if args.json:
+            emit_json(envelope(
+                "write",
+                ok=False,
+                reasons=[f"新表校验未通过（{len(errors)} 条问题），拒绝写入"],
+                source=source,
+                date_input=args.date,
+                error_count=len(errors),
+                errors=errors,
+                baseline=rel_path(BASELINE_PATH),
+                notice=f"基准表 {rel_path(BASELINE_PATH)} 未被修改（一个字节都没动）。",
+            ))
         return 1
 
     old_meta = baseline_meta()
@@ -837,13 +1064,36 @@ def cmd_write(args: argparse.Namespace) -> int:
     atomic_write(BASELINE_PATH, content)
 
     new_meta = baseline_meta()
+    caliber = next(
+        (ln for ln in preamble if ln.strip().startswith("口径")), None
+    )
+    if args.json:
+        # 口径提醒是本命令唯一的告警，必须有字段等价物：
+        # 它说的是「这行口径没跟着新数据走，过期了得人工改」，只写在 stdout 文本里就等于没写。
+        emit_json(envelope(
+            "write",
+            ok=True,
+            reasons=[],
+            written=True,
+            baseline_modified=True,
+            source=source,
+            path=rel_path(BASELINE_PATH),
+            rows=len(table.rows),
+            date_before=old_meta["date"],
+            date_after=new_meta["date"],
+            updated_at=new_meta["updated_at"],
+            caliber_line_present=bool(caliber),
+            caliber_line=caliber.strip() if caliber else None,
+            caliber_notice=(
+                "注意：口径说明行按原样保留，如已过期请手动更新 assets/baseline.md 的这一行："
+                if caliber else None
+            ),
+        ))
+        return 0
     print(
         f"已写入 {rel_path(BASELINE_PATH)}：{len(table.rows)} 行数据；"
         f"数据日期 {old_meta['date'] or '（无）'} → {new_meta['date']}；"
         f"更新时间 {new_meta['updated_at']}"
-    )
-    caliber = next(
-        (ln for ln in preamble if ln.strip().startswith("口径")), None
     )
     if caliber:
         print(f"注意：口径说明行按原样保留，如已过期请手动更新 assets/baseline.md 的这一行：\n  {caliber.strip()}")
@@ -870,25 +1120,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_meta = sub.add_parser("meta", help="打印 JSON: {date, updated_at, count, path}")
     p_meta.set_defaults(func=cmd_meta)
 
+    # --json 的口径（三个子命令一致）：stdout 换成机器可读结果，stderr 原样不动。
+    # 拒绝路径同样出 JSON —— 调用方本来只能靠 exit code 猜，这正是要修的。
+    json_help = ("stdout 改出机器可读 JSON（含 ok / degraded / degraded_reasons 及全部拒绝语与提示）；"
+                 "stderr 的诊断信息照旧输出")
+
     p_val = sub.add_parser("validate", help="只校验不写；通过 exit 0，失败 exit 1 并逐条列错")
     p_val.add_argument("new_table", metavar="new_table.md", help="待校验的新表文件")
+    p_val.add_argument("--json", action="store_true", help=json_help)
     p_val.set_defaults(func=cmd_validate)
 
     p_diff = sub.add_parser("diff", help="与当前基准表逐行对比，输出评级变动与其他字段漂移（不写文件）")
     p_diff.add_argument("new_table", metavar="new_table.md", help="待对比的新表文件")
+    p_diff.add_argument("--json", action="store_true", help=json_help)
     p_diff.set_defaults(func=cmd_diff)
 
     p_write = sub.add_parser("write", help="先 validate，通过才原子覆写 baseline.md")
     p_write.add_argument("new_table", metavar="new_table.md", help="要写入的新表文件")
     p_write.add_argument("--date", required=True, metavar="YYYY-MM-DD", help="本次数据日期")
+    p_write.add_argument("--json", action="store_true", help=json_help)
     p_write.set_defaults(func=cmd_write)
 
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    global JSON_MODE, COMMAND
     _configure_streams()
     args = build_parser().parse_args(argv)
+    # show / meta 没有 --json（meta 本来就只出 JSON），所以这里用 getattr 取默认值
+    JSON_MODE = bool(getattr(args, "json", False))
+    COMMAND = args.command
     return args.func(args)
 
 

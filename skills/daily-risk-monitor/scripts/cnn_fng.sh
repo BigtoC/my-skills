@@ -165,27 +165,80 @@ yesno() { if [ "$1" -eq 1 ]; then echo "✅ 触发"; else echo "❌ 未触发"; 
 
 T_GREED=0;  awk -v s="$SCORE" 'BEGIN{ exit (s>75)?0:1 }' && T_GREED=1
 T_FEAR=0;   awk -v s="$SCORE" 'BEGIN{ exit (s<25)?0:1 }' && T_FEAR=1
+
+# 硬阈值第 4 项要回看历史序列，端点没回序列时只能是「⚪️ 无法判定」——不是「❌ 未触发」。
+# 文字分支一直分得清楚（⚪️ vs ❌），JSON 也必须分得清楚：**null ≠ false**。
+# decision-framework.md：⚪️ 项不计入触发数，**也不计入分母**（N = 7 − M）；
+# 只读 triggers.* 的调用方若把 false 当「查过了，没触发」，等于把「不知道」静默记成「安全」，
+# 而这一格直接进 7 项硬阈值计数、计数又定战略仓位基准。
 T_BURST=0
+T_BURST_JSON=null       # 三态：null（无法判定）/ true / false
+T_BURST_REASON=""       # 只有无法判定时才有值；措辞照抄文字分支那一行
 if [ "$PEAK" != "NA" ]; then
   awk -v p="$PEAK" -v s="$SCORE" 'BEGIN{ exit (p>75 && s<50)?0:1 }' && T_BURST=1
+  T_BURST_JSON="$([ "$T_BURST" -eq 1 ] && echo true || echo false)"
+else
+  T_BURST_REASON="⚪️ 无法判定（端点未回历史序列）—— 不计入触发数，也不计入分母（N = 7 − M），不得当成「❌ 未触发」。"
 fi
 
+# ── 自检与降级台帐 ──
+# CLAUDE.md「JSON equivalence」：ok 不是字面量（自检没过就得是 false）；
+# 每一个降级除了 stderr 一行，还必须是结构化字段（degraded / degraded_reasons）。
+# 理由字串会进 JSON，只放中文与数字，不放引号/反斜线/换行。
+SANITY_OK=1
+awk -v s="$SCORE" 'BEGIN{ exit (s>=0 && s<=100)?0:1 }' || SANITY_OK=0
+
+OK="$SANITY_OK"
+DEGRADED=0
+DEG_REASONS=""
+add_degraded() {  # $1=简短理由（一行）
+  DEGRADED=1
+  DEG_REASONS="${DEG_REASONS}$1
+"
+}
+
+# 四个对照读数是端点自己给的，改版时可能整栏消失。空字串喂给 jq --argjson 会让整份 JSON
+# 产不出来（连 ⚪️ 都印不出），所以缺就是 null —— 记 N/A，不估算也不补 0。
+jnum() { case "$1" in ''|null) echo null ;; *) echo "$1" ;; esac; }
+PREV_J="$(jnum "$PREV")"; W1_J="$(jnum "$W1")"; M1_J="$(jnum "$M1")"; Y1_J="$(jnum "$Y1")"
+
+[ "$SANITY_OK" -eq 1 ] || add_degraded "量级自检未通过：score ${SCORE} 落在 0–100 之外，端点结构可能已变更，数字不可引用"
+[ "$PEAK" != "NA" ]    || add_degraded "硬阈值第 4 项无法判定：端点未回历史序列（回看 ${PEAK_WINDOW} 日窗口为空），记 ⚪️ 并从分母扣除"
+[ "$PREV_J" != null ]  || add_degraded "前收盘读数缺失，记 N/A（不估算）"
+[ "$W1_J" != null ]    || add_degraded "1 週前读数缺失，记 N/A（不估算）"
+[ "$M1_J" != null ]    || add_degraded "1 月前读数缺失，记 N/A（不估算）"
+[ "$Y1_J" != null ]    || add_degraded "1 年前读数缺失，记 N/A（不估算）"
+
 if [ "$JSON" -eq 1 ]; then
+  # --json 的 stdout 是给机器读的，stderr 才是给人看的那条通道，所以降级要在这里吼一声。
+  # 文字分支不吼：它已经把 ⚪️ 那行印在 stdout 上了，再吼一次只是重复。
+  if [ "$DEGRADED" -eq 1 ]; then
+    warn "⚠️ 本次取数有降级（JSON 已带 degraded=true / degraded_reasons）："
+    printf '%s' "$DEG_REASONS" | sed 's/^/   · /' >&2
+  fi
   HIST="$(jq -c --argjson n "$PEAK_WINDOW" "${DEDUP}"' | .[-$n:]' "$WORK/fng.json")"
+  DEG_JSON="$(printf '%s' "$DEG_REASONS" | jq -R -s 'split("\n") | map(select(length > 0))')"
   jq -n \
     --arg source "$ENDPOINT" \
     --argjson score "$SCORE" --arg rating "$RATING" --arg rating_zh "$(zh_rating "$RATING")" \
     --arg asof "$ASOF" \
-    --argjson prev "$PREV" --argjson w1 "$W1" --argjson m1 "$M1" --argjson y1 "$Y1" \
+    --argjson prev "$PREV_J" --argjson w1 "$W1_J" --argjson m1 "$M1_J" --argjson y1 "$Y1_J" \
     --arg peak "$PEAK" --arg peak_date "$PEAK_DATE" --argjson peak_window "$PEAK_WINDOW" \
-    --argjson t_greed "$T_GREED" --argjson t_fear "$T_FEAR" --argjson t_burst "$T_BURST" \
+    --argjson t_greed "$T_GREED" --argjson t_fear "$T_FEAR" \
+    --argjson t_burst "$T_BURST_JSON" --arg t_burst_reason "$T_BURST_REASON" \
+    --argjson ok "$OK" --argjson sanity "$SANITY_OK" \
+    --argjson degraded "$DEGRADED" --argjson degraded_reasons "$DEG_JSON" \
     --argjson history "$HIST" \
-    '{ok:true, signal:9, name:"CNN Fear & Greed Index", source:$source,
+    '{ok:($ok==1), degraded:($degraded==1), degraded_reasons:$degraded_reasons,
+      signal:9, name:"CNN Fear & Greed Index", source:$source,
       score:$score, rating:$rating, rating_zh:$rating_zh, asof:$asof,
       previous_close:$prev, previous_1_week:$w1, previous_1_month:$m1, previous_1_year:$y1,
       peak:{window_days:$peak_window, value:(if $peak=="NA" then null else ($peak|tonumber) end), date:(if $peak=="NA" then null else $peak_date end)},
+      caliber:"阈值判定严格按数值，不加软化语言；分档字串直接采用 CNN 回传的 rating，不自行改判。",
+      sanity:{score_range:[0,100], pass:($sanity==1)},
       triggers:{extreme_greed_gt75:($t_greed==1), extreme_fear_lt25:($t_fear==1),
-                hard_threshold_4_greed_burst:($t_burst==1)},
+                hard_threshold_4_greed_burst:$t_burst,
+                hard_threshold_4_greed_burst_reason:(if $t_burst_reason=="" then null else $t_burst_reason end)},
       history:$history}'
   exit 0
 fi

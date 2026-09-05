@@ -159,6 +159,22 @@ awk -v v="$CUR" -v lo="$CAPE_MIN" -v hi="$CAPE_MAX" 'BEGIN{ exit (v>=lo && v<=hi
 TRIGGERED=0
 awk -v v="$CUR" -v t="$CAPE_TRIGGER" 'BEGIN{ exit (v>t)?0:1 }' && TRIGGERED=1
 
+# ── 降级台帐 ──
+# CLAUDE.md「JSON equivalence」第 4 条：每一个降级都要同时是 JSON 字段。
+# stderr 与退出码是**冗余**通道，不是唯一通道——只读 stdout 的调用方看不到它们。
+# 理由字串会直接内插进 JSON，所以只放中文与数字，不放引号/反斜线。
+DEGRADED=0
+DEG_JSON=""
+add_degraded() {  # $1=简短理由
+  DEGRADED=1
+  DEG_JSON="${DEG_JSON}${DEG_JSON:+,}\"$1\""
+}
+
+[ "$SANITY_OK" -eq 1 ]     || add_degraded "量级自检未通过：CAPE ${CUR} 落在 ${CAPE_MIN}–${CAPE_MAX} 之外"
+[ -n "$TS" ]               || add_degraded "页面时间戳未提供"
+[ "$MIN_DATE" != "未提供" ] || add_degraded "历史最低年月未提供（页面未给出，不得推断）"
+[ "$MAX_DATE" != "未提供" ] || add_degraded "历史最高年月未提供（页面未给出，不得推断）"
+
 # 文字用带正负号的写法读起来清楚；JSON 不能有前导「+」（不是合法 JSON 数字），
 # 所以两种格式各算一份，不要图省事共用一个变数。
 VS_MAX="$(awk -v c="$CUR" -v m="$MAX" 'BEGIN{ printf "%+.2f", c - m }')"
@@ -167,13 +183,25 @@ VS_MAX_J="$(awk -v c="$CUR" -v m="$MAX" 'BEGIN{ printf "%.2f", c - m }')"
 VS_MEAN_J="$(awk -v c="$CUR" -v m="$MEAN" 'BEGIN{ printf "%.1f", (c/m - 1) * 100 }')"
 
 if [ "$JSON" -eq 1 ]; then
-  printf '{"ok":true,"signal":28,"name":"Shiller CAPE / PE10","source":"%s",' "$URL"
+  # ok 不是字面量：量级自检没过就是 false（写死 true 而 sanity.pass 是 false，
+  # 等于让最显眼的字段说谎，真相却藏在最不显眼的那个）。
+  printf '{"ok":%s,"signal":28,"name":"Shiller CAPE / PE10","source":"%s",' \
+    "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)" "$URL"
   printf '"asof_page_timestamp":"%s",' "$TS"
   printf '"current":%s,"mean":%s,"median":%s,' "$CUR" "$MEAN" "$MEDIAN"
   printf '"min":{"value":%s,"when":"%s"},"max":{"value":%s,"when":"%s"},' "$MIN" "$MIN_DATE" "$MAX" "$MAX_DATE"
   printf '"vs_max_abs":%s,"vs_mean_pct":%s,' "$VS_MAX_J" "$VS_MEAN_J"
   printf '"threshold":%s,"triggered":%s,' "$CAPE_TRIGGER" "$([ "$TRIGGERED" -eq 1 ] && echo true || echo false)"
-  printf '"sanity":{"range":[%s,%s],"pass":%s}}\n' "$CAPE_MIN" "$CAPE_MAX" "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)"
+  printf '"sanity":{"range":[%s,%s],"pass":%s},' "$CAPE_MIN" "$CAPE_MAX" "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)"
+  # 禁令也要是字段：下面这段文字与 exit 4 前的 stderr 告警逐字同源。
+  if [ "$SANITY_OK" -eq 1 ]; then
+    printf '"do_not_quote":null,'
+  else
+    printf '"do_not_quote":{"reason":"量级自检未通过：CAPE %s 落在 %s–%s 之外。行为准则第 6 条：算出来量级不对，先怀疑解析，不要直接报出来。最可能的原因：multpl.com 版型变更，抓到的不是 Shiller PE 那一栏。请先人工核对 %s 再引用这个数字。","observed":%s,"expected_range":[%s,%s]},' \
+      "$CUR" "$CAPE_MIN" "$CAPE_MAX" "$URL" "$CUR" "$CAPE_MIN" "$CAPE_MAX"
+  fi
+  printf '"degraded":%s,"degraded_reasons":[%s]}\n' \
+    "$([ "$DEGRADED" -eq 1 ] && echo true || echo false)" "$DEG_JSON"
 else
   echo "【信号 28】Shiller CAPE / PE10　来源：${URL}"
   printf '  页面时间戳     %s\n' "${TS:-未提供}"

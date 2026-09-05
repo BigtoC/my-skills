@@ -925,11 +925,21 @@ case "$CMD" in
     do_dominance;    [ "$JSON" -eq 1 ] || echo
     do_stablecoins
     if [ "$JSON" -eq 1 ]; then
+      # ok 不是字面量：与下面 exit 3 同一个判据（四个 block 全灭才算失败）。
+      # missing 非空 ⇒ degraded：暂缺项必须标 ⚪️ 并报滞后周数，这条要求
+      # 以前只存在于文本分支，机读侧看不到，故一并落成字段（行为准则第 1 条）。
       jq -n --slurpfile f "$WORK/out_funding.json" --slurpfile l "$WORK/out_liq.json" \
             --slurpfile d "$WORK/out_dom.json" --slurpfile s "$WORK/out_stable.json" \
-            --arg missing "$MISSING" \
-        '{ok:true, funding:$f[0], liquidations:$l[0], dominance:$d[0], stablecoins:$s[0],
-          missing:(if $missing == "" then [] else ($missing | split("、")) end)}'
+            --arg missing "$MISSING" --argjson okcount "$OKCOUNT" \
+        '{ok:($okcount > 0), funding:$f[0], liquidations:$l[0], dominance:$d[0], stablecoins:$s[0],
+          missing:(if $missing == "" then [] else ($missing | split("、")) end)}
+         | .degraded = ((.missing | length) > 0 or (.ok | not))
+         | .degraded_reasons = (
+             (if (.missing | length) > 0
+              then ["本次数据暂缺项：" + ($missing)
+                    + "。每一项都必须在报告中标 ⚪️、列出已尝试来源、并写出「上次已知读数 X @ YYYY-MM-DD，已滞后 N 周」；没有滞后周数的「数据暂缺」是不合格输出（行为准则第 1 条）。"]
+              else [] end)
+             + (if (.ok | not) then ["四个 block 全部取数失败（OKCOUNT=0）"] else [] end))'
     else
       echo
       if [ -n "$MISSING" ]; then

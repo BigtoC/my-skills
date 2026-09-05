@@ -203,6 +203,50 @@ issuer's own sheet. Alpha Vantage is convenient, not authoritative — so the
 issuer sheet must still be pulled on its own schedule, otherwise "official wins
 on conflict" can never fire, because nothing is ever there to conflict with.
 
+## JSON equivalence — the rule
+
+A script's `--json` must carry everything its human output carries. Every
+warning, prohibition, verdict and caliber declaration that the text branch
+prints must exist as a **field**. Exit codes and stderr are *redundant*
+channels, never the only one: any narrow read, any handoff between steps, and
+any concurrent run sees stdout alone.
+
+This was audited across all 16 scripts (2026-09-05) and 9 of them failed. The
+defects came in two shapes, and the first is the dangerous one because it looks
+fine:
+
+- **Self-contradictory** — the obvious field lies while the truth sits in a
+  less obvious one. `cnn_fng.sh` emitted
+  `triggers.hard_threshold_4_greed_burst: false` when it could not evaluate the
+  trigger at all (only `peak.value: null` gave it away) — and that is *hard
+  threshold #4*, where ⚪️ must be deducted from the denominator (`N = 7 − M`)
+  and `false` is not. `fred.sh`, `cape.sh` and `stock_perp.sh` all hardcoded
+  `"ok":true` while a conditional `sanity.pass` said otherwise.
+- **Genuinely absent** — no field at all. `neocloud_credit_monitor.py` popped
+  the `cfg` key its own "no live CDS data (this layer's biggest blind spot)"
+  line derives from; `snapshot.py show --json` dumped raw state and skipped
+  every derived banner, making `--json` strictly *less* than `show`.
+
+Four rules follow:
+
+1. **`ok` is never a literal.** It is false whenever a self-check failed.
+2. **A trigger that could not be evaluated is `null`, never `false`.** `false`
+   means "checked, did not fire". Pair it with a reason string. This is the
+   JSON form of the ⚪️ / ❌ distinction the reference docs already insist on.
+3. **Every prohibition in the text branch is also a field.** If the human
+   output says "do not divide these two", the JSON says so too.
+4. **`--quiet` means "no human-readable rendering on stdout". It never means
+   "no warnings".** stderr stays live, and every degradation is additionally a
+   structured field plus a top-level `degraded: bool` / `degraded_reasons[]`.
+
+Rule 4 matters most under concurrency, which is exactly what provokes
+throttling: if `--quiet` silenced the ⚠ lines and a caller read only a summary
+field, a throttled run would become a silently normalised one — the failure
+mode fallback-rule 6 and the ⚪️ accounting exist to prevent, triggered by the
+change meant to make things faster.
+
+Design record: `docs/superpowers/specs/2026-09-05-skill-handoff-and-concurrency-design.md`.
+
 ## ai-industry-weekly architecture
 
 A weekly re-rating of an AI-compute supply-chain quality table. Three files

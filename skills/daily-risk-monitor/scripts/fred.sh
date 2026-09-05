@@ -193,6 +193,17 @@ if [ "$NETLIQ" -eq 1 ] && [ "$BUFFETT" -eq 1 ]; then
   die "--net-liquidity 与 --buffett 是两个不同的组合模式，一次只能给一个。" 1
 fi
 
+# ── 降级台帐（三个模式共用）──
+# CLAUDE.md「JSON equivalence」第 4 条：每一个降级都要同时是 JSON 字段。
+# stderr 与退出码是**冗余**通道，不是唯一通道——只读 stdout 的调用方看不到它们。
+# 理由字串会直接内插进 JSON，所以只放中文与数字，不放引号/反斜线。
+DEGRADED=0
+DEG_JSON=""
+add_degraded() {  # $1=简短理由
+  DEGRADED=1
+  DEG_JSON="${DEG_JSON}${DEG_JSON:+,}\"$1\""
+}
+
 # ═══════════════════════════ 净流动性模式 ═══════════════════════════
 if [ "$NETLIQ" -eq 1 ]; then
   [ -z "$IDS" ] || die "--net-liquidity 与序列 ID 不能同时给（组合的三个序列是固定的）。" 1
@@ -245,17 +256,35 @@ if [ "$NETLIQ" -eq 1 ]; then
 
   SANITY_OK=1
   if awk -v v="$LAST_NET" -v lo="$NL_MIN_BN" -v hi="$NL_MAX_BN" 'BEGIN{ exit (v>=lo && v<=hi) ? 0 : 1 }'; then :; else SANITY_OK=0; fi
+  [ "$SANITY_OK" -eq 1 ] || add_degraded "量级自检未通过：净流动性 ${LAST_NET} 十亿，落在 ${NL_MIN_BN}–${NL_MAX_BN} 十亿之外"
 
   if [ "$JSON" -eq 1 ]; then
+    NL_RANGE_TN="$(awk -v a="$NL_MIN_BN" -v b="$NL_MAX_BN" 'BEGIN{printf "%g–%g", a/1000, b/1000}')"
     {
-      printf '{"ok":true,"mode":"net_liquidity","unit":"十亿美元","source":"FRED fredgraph.csv",'
+      # ok 不是字面量：量级自检没过就是 false（写死 true 而 sanity.pass 是 false，
+      # 等于让最显眼的字段说谎，真相却藏在最不显眼的那个）。
+      printf '{"ok":%s,"mode":"net_liquidity","unit":"十亿美元","source":"FRED fredgraph.csv",' \
+        "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)"
       printf '"formula":"WALCL/1000 - WTREGEN/1000 - RRPONTSYD","points":['
       awk -F'|' '{
         if (NR>1) printf ","
         printf "{\"date\":\"%s\",\"walcl_bn\":%s,\"tga_bn\":%s,\"tga_date\":\"%s\",\"rrp_bn\":%s,\"rrp_date\":\"%s\",\"net_bn\":%s}", $1,$2,$3,$4,$5,$6,$7
       }' "$WORK/nl.txt"
       printf '],"latest":{"date":"%s","net_bn":%s,"lag_days":%s},' "$LAST_DATE" "$LAST_NET" "$LAG"
-      printf '"sanity":{"range_bn":[%s,%s],"pass":%s}}\n' "$NL_MIN_BN" "$NL_MAX_BN" "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)"
+      # 文字分支印的「本脚本不判 SPX」也必须是字段：没判过的触发是 null，不是 false
+      # （false = 判过了、没触发）。理由字串与文字分支那行同源。
+      printf '"trigger":{"signal":5,"rule":"连续 4 周下降且 SPX 同期上涨","fired":null,'
+      printf '"reason":"环比栏连 4 个负值才算，本脚本不判 SPX。"},'
+      printf '"sanity":{"range_bn":[%s,%s],"pass":%s},' "$NL_MIN_BN" "$NL_MAX_BN" "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)"
+      # 禁令也要是字段：下面这段文字与 exit 4 前的 stderr 告警逐字同源。
+      if [ "$SANITY_OK" -eq 1 ]; then
+        printf '"do_not_quote":null,'
+      else
+        printf '"do_not_quote":{"reason":"量级自检未通过：净流动性 %s 十亿，落在 %s–%s 十亿（%s 兆美元）之外。行为准则第 6 条：算出来量级不对，先怀疑单位，不要直接报出来。最可能的原因：FRED 改了某个序列的单位（WALCL/WTREGEN 百万、RRPONTSYD 十亿）。请先人工核对再引用这个数字。","observed_bn":%s,"expected_range_bn":[%s,%s]},' \
+          "$LAST_NET" "$NL_MIN_BN" "$NL_MAX_BN" "$NL_RANGE_TN" "$LAST_NET" "$NL_MIN_BN" "$NL_MAX_BN"
+      fi
+      printf '"degraded":%s,"degraded_reasons":[%s]}\n' \
+        "$([ "$DEGRADED" -eq 1 ] && echo true || echo false)" "$DEG_JSON"
     }
   else
     echo "净流动性 = WALCL − WTREGEN − RRPONTSYD（单位：十亿美元；WALCL/WTREGEN 已 ÷1000 由百万转十亿）"
@@ -344,15 +373,32 @@ if [ "$BUFFETT" -eq 1 ]; then
 
   SANITY_OK=1
   if awk -v v="$LAST_BI" -v lo="$BI_MIN_PCT" -v hi="$BI_MAX_PCT" 'BEGIN{ exit (v>=lo && v<=hi) ? 0 : 1 }'; then :; else SANITY_OK=0; fi
+  [ "$SANITY_OK" -eq 1 ] || add_degraded "量级自检未通过：Buffett Indicator ${LAST_BI}%，落在 ${BI_MIN_PCT}–${BI_MAX_PCT}% 之外"
 
   FIRED=false
   if awk -v v="$LAST_BI" -v t="$BI_TRIGGER_PCT" 'BEGIN{ exit (v>t) ? 0 : 1 }'; then FIRED=true; fi
 
+  # 两序列末行是否同季：文字分支据此印那句「**不要**改用各取各的末行相除」，
+  # JSON 过去只给两个日期、把禁令丢了——已知陷阱 #6 只在人类输出里防守。
+  if [ "$EQ_LAST_DATE" != "$GDP_LAST_DATE" ]; then
+    LAST_OBS_DIFFER=true
+    ALIGN_NOTE="⚠️ 两者末行不同季 —— 这正是 known-traps 记录的陷阱。上面的数字已用同季对齐算出，**不要**改用各取各的末行相除。"
+  else
+    LAST_OBS_DIFFER=false
+    ALIGN_NOTE="（本次两者末行恰好同季；仍以对齐后的结果为准。）"
+  fi
+
   if [ "$JSON" -eq 1 ]; then
     {
-      printf '{"ok":true,"mode":"buffett_indicator","signal":27,"unit":"%%","source":"FRED fredgraph.csv",'
+      # ok 不是字面量：量级自检没过就是 false（写死 true 而 sanity.pass 是 false，
+      # 等于让最显眼的字段说谎，真相却藏在最不显眼的那个）。
+      printf '{"ok":%s,"mode":"buffett_indicator","signal":27,"unit":"%%","source":"FRED fredgraph.csv",' \
+        "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)"
       printf '"formula":"NCBEILQ027S/1000/GDP*100","aligned_on":"date（内连接，只取两序列都有观测的季度）",'
       printf '"series_last_obs":{"NCBEILQ027S":"%s","GDP":"%s"},' "$EQ_LAST_DATE" "$GDP_LAST_DATE"
+      # 对齐口径与禁令都要是字段：措辞与文字分支逐字同源。
+      printf '"alignment":{"method":"两序列按 date 内连接（同季对齐）后取末行","series_last_obs_differ":%s,' "$LAST_OBS_DIFFER"
+      printf '"prohibition":"**不要**改用各取各的末行相除。","note":"%s"},' "$ALIGN_NOTE"
       printf '"points":['
       awk -F'|' '{
         if (NR>1) printf ","
@@ -360,7 +406,16 @@ if [ "$BUFFETT" -eq 1 ]; then
       }' "$WORK/bi.txt"
       printf '],"latest":{"date":"%s","buffett_pct":%s,"lag_days":%s},' "$LAST_DATE" "$LAST_BI" "$LAG"
       printf '"trigger":{"threshold_pct":%s,"fired":%s},' "$BI_TRIGGER_PCT" "$FIRED"
-      printf '"sanity":{"range_pct":[%s,%s],"pass":%s}}\n' "$BI_MIN_PCT" "$BI_MAX_PCT" "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)"
+      printf '"sanity":{"range_pct":[%s,%s],"pass":%s},' "$BI_MIN_PCT" "$BI_MAX_PCT" "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)"
+      # 禁令也要是字段：下面这段文字与 exit 4 前的 stderr 告警逐字同源。
+      if [ "$SANITY_OK" -eq 1 ]; then
+        printf '"do_not_quote":null,'
+      else
+        printf '"do_not_quote":{"reason":"量级自检未通过：Buffett Indicator %s%%，落在 %s–%s%% 之外。行为准则第 6 条：算出来量级不对，先怀疑单位，不要直接报出来。最可能的原因：FRED 改了 NCBEILQ027S（百万）或 GDP（十亿）的单位。请先人工核对再引用这个数字。","observed_pct":%s,"expected_range_pct":[%s,%s]},' \
+          "$LAST_BI" "$BI_MIN_PCT" "$BI_MAX_PCT" "$LAST_BI" "$BI_MIN_PCT" "$BI_MAX_PCT"
+      fi
+      printf '"degraded":%s,"degraded_reasons":[%s]}\n' \
+        "$([ "$DEGRADED" -eq 1 ] && echo true || echo false)" "$DEG_JSON"
     }
   else
     echo "Buffett Indicator = NCBEILQ027S ÷ 1000 ÷ GDP × 100（单位：%；NCBEILQ027S 已由百万转十亿）"
@@ -411,6 +466,7 @@ JSON_PARTS=""
 for id in $IDS; do
   if ! fetch_series "$id" "$DEF_START" "$WORK/$id.csv"; then
     ANY_FAIL=1
+    add_degraded "${id}：取数失败（已尝试来源：FRED fredgraph.csv）"
     if [ "$JSON" -eq 1 ]; then
       JSON_PARTS="${JSON_PARTS}${JSON_PARTS:+,}{\"id\":\"${id}\",\"ok\":false,\"error\":\"取数失败\",\"observations\":[]}"
     else
@@ -423,6 +479,7 @@ for id in $IDS; do
 
   if [ ! -s "$WORK/$id.rows" ]; then
     ANY_FAIL=1
+    add_degraded "${id}：回看区间（自 ${DEF_START}）内全是 FRED 缺值符号「.」"
     if [ "$JSON" -eq 1 ]; then
       JSON_PARTS="${JSON_PARTS}${JSON_PARTS:+,}{\"id\":\"${id}\",\"ok\":false,\"error\":\"回看区间内全是缺值(.)\",\"observations\":[]}"
     else
@@ -449,8 +506,11 @@ for id in $IDS; do
 done
 
 if [ "$JSON" -eq 1 ]; then
-  printf '{"ok":%s,"source":"FRED fredgraph.csv","start":"%s","days":%s,"series":[%s]}\n' \
+  # series 阵列的顺序 = 人类分支逐行印出的顺序 = 命令列上 $IDS 的顺序，三者必须一致。
+  printf '{"ok":%s,"source":"FRED fredgraph.csv","start":"%s","days":%s,"series":[%s],' \
     "$([ "$ANY_FAIL" -eq 0 ] && echo true || echo false)" "$DEF_START" "$DAYS" "$JSON_PARTS"
+  printf '"degraded":%s,"degraded_reasons":[%s]}\n' \
+    "$([ "$DEGRADED" -eq 1 ] && echo true || echo false)" "$DEG_JSON"
 fi
 
 [ "$ANY_FAIL" -eq 0 ] || exit 3

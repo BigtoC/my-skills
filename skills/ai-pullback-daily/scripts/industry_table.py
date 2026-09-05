@@ -9,13 +9,16 @@
   1. 定位姊妹技能目录；
   2. 拿到表格与元数据（数据日期 / 更新时间 / 标的数）；
   3. **检查基准表是否陈旧**——超过 STALE_DAYS 天就醒目告警；数据日期若在未来则单独告警
-     （那种情况下陈旧闸门本身失效，见 future_banner 的注释）；
+     （那种情况下陈旧闸门本身失效，见 future_alert 的注释）；
   4. **与 assets/universe.json 交叉校验**——基准表行数 ≠ 清单标的数就醒目告警，
-     那说明周更改了标的清单却还没重跑 `baseline.py write`（见 universe_banner 的注释）；
+     那说明周更改了标的清单却还没重跑 `baseline.py write`（见 universe_alert 的注释）；
   5. 供日更报告按标的查「评级·层级·瓶颈」。
 
 三类告警**都不阻断**（exit 仍为 0）：数据本身解析得出来，日更照常出报告；
 坏的是周更那一侧，日更对周更只读，只能提示。
+三者在 JSON 里的等价物是顶层 `alerts[]`（每条带条件、两侧数字、成因与处置原文），
+外加 `degraded` / `degraded_reasons[]`——横幅只落在人类分支/stderr 上，
+等于「窄读 JSON 的调用方看不见评级可能已过时」，那正是这些横幅存在的意义所在。
 
 为什么解析要走 subprocess
 -------------------------
@@ -38,6 +41,8 @@ baseline.md，并在 stderr 注明走了回退路径。
     industry_table.py --json          打印完整 JSON（含论点、估值性格与元数据）
     industry_table.py --ticker NVDA   单只摘要，评级·层级·瓶颈 形如 🟢·L1·🔥①②③
     industry_table.py --check         只验证能否定位并解析，exit 0/1（SKILL.md 第零步前置检查）
+    industry_table.py --check --json  同上，但输出机读 JSON（checks[] / alerts[] / degraded）；
+                                      退出码语义完全不变，阻断性失败也会给一份 ok:false 的 JSON
 
 姊妹技能定位顺序由共享模块 `_weekly.py` 统一（三个脚本同一套顺序、同一套探针、
 同一套环境变量语义），见该模块的文档字符串。
@@ -339,7 +344,7 @@ def staleness(meta_date: str | None, today: date | None = None) -> dict:
     age = (today - parsed).days
     info["age_days"] = age
     # 未来日期先判：负的 age 永远不可能 > STALE_DAYS，早先只往 info["reason"] 塞一句话
-    # 却没有任何标志位，于是 stale_banner() 返回空、--check 照打「OK：在新鲜期内」，
+    # 却没有任何标志位，于是 stale_alert() 返回 None、--check 照打「OK：在新鲜期内」，
     # 同一屏里同时出现「距今 -120 天」和「OK」——那句 reason 是纯死代码。
     if age < 0:
         info["future"] = True
@@ -350,45 +355,86 @@ def staleness(meta_date: str | None, today: date | None = None) -> dict:
     return info
 
 
-def stale_banner(info: dict) -> list[str]:
-    """陈旧告警横幅。返回空列表表示无需告警。"""
+def stale_alert(info: dict) -> dict | None:
+    """陈旧告警记录。返回 None 表示无需告警。
+
+    横幅文字与 JSON 字段出自**同一条**记录：`lines` 就是文本分支逐字打印的内容，
+    其余键是同一段话的结构化形态（条件、两侧数字、成因、后果、处置）。
+    两边各写一份，早晚会出现「JSON 说没事、横幅说已过期」——而窄读 JSON 的调用方
+    只会看见前者。
+    """
     if not info.get("stale"):
-        return []
+        return None
     reason = info.get("reason") or "基准表已过期"
-    return [
-        "=" * 68,
-        "⚠️⚠️  基本面参考表已陈旧 —— 本日评级可能过时  ⚠️⚠️",
-        f"  {reason}",
-        f"  周更技能 {WEEKLY_SKILL_NAME} 的定位是每周跑一次；超过 {STALE_DAYS} 天说明这一轮没跑。",
-        "  评级（🟢/🔵/🟡/🔴）是分桶规则里优先级最高的质量闸门，过期评级会直接影响买入桶。",
-        "  处理：先跑一轮周更技能刷新 assets/baseline.md，或在日更报告里显式注明本表已过期。",
-        "=" * 68,
-    ]
+    cause = f"周更技能 {WEEKLY_SKILL_NAME} 的定位是每周跑一次；超过 {STALE_DAYS} 天说明这一轮没跑。"
+    consequence = "评级（🟢/🔵/🟡/🔴）是分桶规则里优先级最高的质量闸门，过期评级会直接影响买入桶。"
+    remedy = "先跑一轮周更技能刷新 assets/baseline.md，或在日更报告里显式注明本表已过期。"
+    return {
+        "id": "baseline_stale",
+        "headline": "基本面参考表已陈旧 —— 本日评级可能过时",
+        "condition": f"基准表「数据日期」距今 > {STALE_DAYS} 天，或该日期缺失/无法解析",
+        "blocking": False,
+        "summary": reason,
+        "baseline_date": info.get("date"),
+        "age_days": info.get("age_days"),
+        "threshold_days": STALE_DAYS,
+        "cause": cause,
+        "consequence": consequence,
+        "remedy": remedy,
+        "lines": [
+            "=" * 68,
+            "⚠️⚠️  基本面参考表已陈旧 —— 本日评级可能过时  ⚠️⚠️",
+            f"  {reason}",
+            f"  {cause}",
+            f"  {consequence}",
+            f"  处理：{remedy}",
+            "=" * 68,
+        ],
+    }
 
 
-def future_banner(info: dict) -> list[str]:
-    """基准表日期在未来时的告警。与陈旧告警互斥，但同样不阻断。
+def future_alert(info: dict) -> dict | None:
+    """基准表日期在未来时的告警记录。与陈旧告警互斥，但同样不阻断。
 
     未来日期意味着「距今 N 天」这个量本身没意义，陈旧闸门跟着一起失效：
     表可能其实很旧，只是日期被写成了未来，于是永远不会触发陈旧告警。
     """
     if not info.get("future"):
-        return []
+        return None
     reason = info.get("reason") or "基准表数据日期在未来"
-    return [
-        "=" * 68,
-        "⚠️⚠️  基准表数据日期在未来 —— 新鲜度判定整体失效  ⚠️⚠️",
-        f"  {reason}，即比本机今天还晚。",
-        "  多半是 baseline.md 的「数据日期」被手改错了，或本机系统日期不对。",
-        f"  后果：{STALE_DAYS} 天陈旧闸门在此情形下永远不会触发——表可能其实很旧，",
-        "  只是日期写成了未来，于是「新鲜」这个结论完全不可信，本日评级是否最新无法判断。",
-        "  处理：先核对本机日期；若确是表里日期写错，回到周更技能重跑 `baseline.py write` 覆写。",
-        "=" * 68,
-    ]
+    cause = "多半是 baseline.md 的「数据日期」被手改错了，或本机系统日期不对。"
+    # 后果原文在横幅里折成两行，这里保留同样的两段，拼起来即 JSON 里的整句，
+    # 不另写一份措辞——重写一遍就是给同一件事留两个版本。
+    conseq_a = f"{STALE_DAYS} 天陈旧闸门在此情形下永远不会触发——表可能其实很旧，"
+    conseq_b = "只是日期写成了未来，于是「新鲜」这个结论完全不可信，本日评级是否最新无法判断。"
+    remedy = "先核对本机日期；若确是表里日期写错，回到周更技能重跑 `baseline.py write` 覆写。"
+    return {
+        "id": "baseline_date_in_future",
+        "headline": "基准表数据日期在未来 —— 新鲜度判定整体失效",
+        "condition": "基准表「数据日期」晚于本机今天（age_days < 0）",
+        "blocking": False,
+        "summary": reason,
+        "baseline_date": info.get("date"),
+        "age_days": info.get("age_days"),
+        "threshold_days": STALE_DAYS,
+        "cause": cause,
+        "consequence": conseq_a + conseq_b,
+        "remedy": remedy,
+        "lines": [
+            "=" * 68,
+            "⚠️⚠️  基准表数据日期在未来 —— 新鲜度判定整体失效  ⚠️⚠️",
+            f"  {reason}，即比本机今天还晚。",
+            f"  {cause}",
+            f"  后果：{conseq_a}",
+            f"  {conseq_b}",
+            f"  处理：{remedy}",
+            "=" * 68,
+        ],
+    }
 
 
-def universe_banner(data: dict) -> list[str]:
-    """基准表行数 ≠ universe.json 标的数 时的告警（跨文件交叉校验）。
+def universe_alert(data: dict) -> dict | None:
+    """基准表行数 ≠ universe.json 标的数 时的告警记录（跨文件交叉校验）。
 
     为什么需要这一条：--check 早先只比对「表头里自称的标的数」与「实际数据行数」，
     两个数来自 baseline.md **同一个文件**，周更自己写的时候就是配平的，几乎不会分歧。
@@ -403,37 +449,102 @@ def universe_banner(data: dict) -> list[str]:
     count = uni.get("count")
     rows = (data.get("meta") or {}).get("row_count")
     if not isinstance(count, int) or not isinstance(rows, int) or count == rows:
-        return []
-    return [
-        "=" * 68,
-        "⚠️⚠️  基准表与标的清单对不上 —— 日报第一步与第二步会自相矛盾  ⚠️⚠️",
-        f"  标的清单 {uni.get('path') or 'assets/universe.json'}：{count} 个标的",
-        f"  基准表   {data.get('baseline_path') or 'assets/baseline.md'}：{rows} 行数据",
-        "  这说明周更技能改过 universe.json（增删了标的），但还没重跑 `baseline.py write`",
-        "  把基准表重新生成——两个文件停在了不同的标的清单上。",
-        f"  后果：日更第一步（产业质量表，读 baseline.md）报 {rows} 档，",
-        f"  第二步（technicals.py / perp_quotes.py，读 universe.json）报 {count} 档，同一份日报对不上。",
-        f"  日更对周更只读、无法自行修复：请先到 {WEEKLY_SKILL_NAME} 跑",
-        "  `python3 scripts/baseline.py write` 让两个文件对齐，再跑日更。",
-        "=" * 68,
-    ]
+        return None
+    uni_path = uni.get("path") or "assets/universe.json"
+    base_path = data.get("baseline_path") or "assets/baseline.md"
+    cause_a = "这说明周更技能改过 universe.json（增删了标的），但还没重跑 `baseline.py write`"
+    cause_b = "把基准表重新生成——两个文件停在了不同的标的清单上。"
+    conseq_a = f"日更第一步（产业质量表，读 baseline.md）报 {rows} 档，"
+    conseq_b = (f"第二步（technicals.py / perp_quotes.py，读 universe.json）报 {count} 档，"
+                "同一份日报对不上。")
+    remedy_a = f"日更对周更只读、无法自行修复：请先到 {WEEKLY_SKILL_NAME} 跑"
+    remedy_b = "`python3 scripts/baseline.py write` 让两个文件对齐，再跑日更。"
+    return {
+        "id": "universe_row_count_mismatch",
+        "headline": "基准表与标的清单对不上 —— 日报第一步与第二步会自相矛盾",
+        "condition": "基准表数据行数 ≠ universe.json 的 tickers 条数",
+        "blocking": False,
+        "summary": f"标的清单 {count} 个标的 ≠ 基准表 {rows} 行数据",
+        "universe_path": uni_path,
+        "universe_count": count,
+        "baseline_path": base_path,
+        "baseline_row_count": rows,
+        # cause / remedy 在横幅里断在反引号处，拼成整句时补一个空格；
+        # consequence 断在中文逗号后，补空格反而是错的。
+        "cause": f"{cause_a} {cause_b}",
+        "consequence": conseq_a + conseq_b,
+        "remedy": f"{remedy_a} {remedy_b}",
+        "lines": [
+            "=" * 68,
+            "⚠️⚠️  基准表与标的清单对不上 —— 日报第一步与第二步会自相矛盾  ⚠️⚠️",
+            f"  标的清单 {uni_path}：{count} 个标的",
+            f"  基准表   {base_path}：{rows} 行数据",
+            f"  {cause_a}",
+            f"  {cause_b}",
+            f"  后果：{conseq_a}",
+            f"  {conseq_b}",
+            f"  {remedy_a}",
+            f"  {remedy_b}",
+            "=" * 68,
+        ],
+    }
+
+
+def alerts(data: dict) -> list[dict]:
+    """本次运行触发的全部告警记录（未来日期 / 陈旧 / 清单不一致），顺序即打印顺序。
+
+    三者**都不阻断**（每条记录的 `blocking` 恒为 False，--check 仍 exit 0）：
+    数据本身解析得出来，日更照常出报告；但它们指向的都是「周更那边出了事」，
+    日更对周更只读，只能提示，所以必须同时出现在人类看得见的地方（横幅）
+    与机器看得见的地方（JSON 的 alerts[]）。
+    """
+    fresh = data.get("freshness") or {}
+    recs = (future_alert(fresh), stale_alert(fresh), universe_alert(data))
+    return [rec for rec in recs if rec]
+
+
+def banner_lines(recs: list[dict]) -> list[str]:
+    """把告警记录渲染成醒目横幅，空行分隔。文本分支的字全部取自记录的 `lines`。"""
+    out: list[str] = []
+    for rec in recs:
+        if out:
+            out.append("")
+        out.extend(rec["lines"])
+    return out
 
 
 def alert_banners(data: dict) -> list[str]:
-    """本次运行要打的全部醒目横幅（未来日期 / 陈旧 / 清单不一致），空行分隔。
+    """本次运行要打的全部醒目横幅（未来日期 / 陈旧 / 清单不一致），空行分隔。"""
+    return banner_lines(alerts(data))
 
-    三者**都不阻断**：数据本身解析得出来，日更照常出报告；但它们指向的都是
-    「周更那边出了事」，日更只能提示，所以必须打在读者一定看得见的地方。
+
+def degraded_reasons(data: dict, recs: list[dict]) -> list[str]:
+    """本次运行的全部降级原因（短句）。空列表 == 未降级。
+
+    口径与仓库其它脚本一致：自检未通过、回退档触发、源不可达、
+    或任何字段因缺数记 N/A，都算降级。三类告警各自也是一条降级原因——
+    它们不阻断，但「本日评级可能过时」「两个文件停在不同的标的清单上」正是
+    调用方在动笔写报告之前必须先看到的东西，只落在 stderr 上等于没说。
     """
-    fresh = data.get("freshness") or {}
-    out: list[str] = []
-    for block in (future_banner(fresh), stale_banner(fresh), universe_banner(data)):
-        if not block:
-            continue
-        if out:
-            out.append("")
-        out.extend(block)
-    return out
+    reasons = [rec["summary"] for rec in recs]
+
+    src = data.get("source") or {}
+    if src.get("table") != "baseline.py show":
+        reasons.append(f"表格取数回退档：{src.get('table')}（baseline.py show 不可用）")
+    if src.get("meta") != "baseline.py meta":
+        reasons.append(f"元数据取数回退档：{src.get('meta')}（baseline.py meta 不可用）")
+
+    meta = data.get("meta") or {}
+    declared = meta.get("declared_count")
+    if isinstance(declared, int) and declared != meta.get("row_count"):
+        reasons.append(f"元数据声明「标的数: {declared}」，实际数据行 {meta.get('row_count')} 行，"
+                       "两者不一致（同一文件内）")
+
+    uni = data.get("universe") or {}
+    if uni.get("error"):
+        # 交叉校验做不成 → universe.count 记 N/A（None），这属于「因缺数记 N/A」。
+        reasons.append(f"无法与标的清单交叉校验——{uni.get('path')} {uni['error']}，标的数记 N/A")
+    return reasons
 
 
 # ---------------------------------------------------------------- 加载入口
@@ -544,12 +655,19 @@ def cmd_table(data: dict) -> int:
 
 
 def cmd_json(data: dict) -> int:
-    for line in alert_banners(data):
+    recs = alerts(data)
+    for line in banner_lines(recs):
         err(line)
     payload = dict(data)
     payload["rows"] = [
         dict(r, summary=rating_layer_bottleneck(r)) for r in data["rows"]
     ]
+    # 横幅同时进 JSON：stderr 是冗余通道，不能是唯一通道——窄读 stdout 的调用方
+    # 拿到的必须与人类看到的是同一批告警。
+    reasons = degraded_reasons(data, recs)
+    payload["alerts"] = recs
+    payload["degraded"] = bool(reasons)
+    payload["degraded_reasons"] = reasons
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
@@ -568,9 +686,13 @@ def cmd_ticker(data: dict, ticker: str, as_json: bool) -> int:
         return 1
 
     if as_json:
-        for line in alert_banners(data):
+        recs = alerts(data)
+        for line in banner_lines(recs):
             err(line)
-        print(json.dumps(dict(row, summary=rating_layer_bottleneck(row)),
+        reasons = degraded_reasons(data, recs)
+        print(json.dumps(dict(row, summary=rating_layer_bottleneck(row),
+                              alerts=recs, degraded=bool(reasons),
+                              degraded_reasons=reasons),
                          ensure_ascii=False, indent=2))
         return 0
 
@@ -587,36 +709,127 @@ def cmd_ticker(data: dict, ticker: str, as_json: bool) -> int:
     return 0
 
 
-def cmd_check(data: dict) -> int:
-    """只验证「能否定位 + 能否解析」。陈旧只告警、不算失败（数据本身是可用的）。"""
+def check_items(data: dict) -> list[dict]:
+    """--check 的逐条自检结论。文本分支逐行打 `message`，--json 原样带走同一批记录。
+
+    `ok=False` 的条目是「查了、没过」，但**都不阻断**：真正 exit 1 的三类
+    （定位不到姊妹技能 / 基准表解析不了 / 基准表不是合法 UTF-8）在 load_all()
+    就抛出来了，根本走不到这里。
+    """
     meta = data["meta"]
-    print(f"OK：已定位姊妹技能 {data['weekly_dir']}")
-    print(f"OK：已解析 {data['baseline_path']}（{data['source']['table']}），"
-          f"{meta['row_count']} 个标的、{len(data['columns'])} 列")
+    items: list[dict] = [
+        {"id": "locate_weekly_skill", "ok": True,
+         "message": f"OK：已定位姊妹技能 {data['weekly_dir']}"},
+        {"id": "parse_baseline", "ok": True,
+         "message": f"OK：已解析 {data['baseline_path']}（{data['source']['table']}），"
+                    f"{meta['row_count']} 个标的、{len(data['columns'])} 列"},
+    ]
     declared = meta.get("declared_count")
     if isinstance(declared, int) and declared != meta["row_count"]:
         # 表内自洽性：两个数都来自 baseline.md，周更写表时本来就配平，很少分歧。
         # 真正的分歧在下面那条跨文件校验里。
-        print(f"注意：元数据声明「标的数: {declared}」，实际数据行 {meta['row_count']} 行，两者不一致（同一文件内）。")
+        items.append({
+            "id": "declared_vs_rows", "ok": False,
+            "message": f"注意：元数据声明「标的数: {declared}」，实际数据行 {meta['row_count']} 行，两者不一致（同一文件内）。",
+        })
 
     uni = data.get("universe") or {}
     if isinstance(uni.get("count"), int):
         if uni["count"] == meta["row_count"]:
-            print(f"OK：标的清单 {uni['path']} 的 {uni['count']} 个标的与基准表 {meta['row_count']} 行一致。")
-        # 不一致由下面的横幅统一报，这里不重复
+            items.append({
+                "id": "universe_cross_check", "ok": True,
+                "message": f"OK：标的清单 {uni['path']} 的 {uni['count']} 个标的与基准表 {meta['row_count']} 行一致。",
+            })
+        # 不一致由横幅（alerts 里的 universe_row_count_mismatch）统一报，这里不重复
     elif uni.get("error"):
-        print(f"注意：无法与标的清单交叉校验——{uni.get('path')} {uni['error']}。"
-              "本次只能确认基准表自身可解析，无法确认它与第二步用的标的清单是同一份。")
+        items.append({
+            "id": "universe_cross_check", "ok": False,
+            "message": f"注意：无法与标的清单交叉校验——{uni.get('path')} {uni['error']}。"
+                       "本次只能确认基准表自身可解析，无法确认它与第二步用的标的清单是同一份。",
+        })
 
     fresh = data["freshness"]
-    print(f"OK：基本面表最近更新 {meta['date'] or '未知'}"
-          + (f"（距今 {fresh['age_days']} 天）"
-             if fresh.get("age_days") is not None else ""))
+    items.append({
+        "id": "baseline_date", "ok": True,
+        "message": f"OK：基本面表最近更新 {meta['date'] or '未知'}"
+                   + (f"（距今 {fresh['age_days']} 天）"
+                      if fresh.get("age_days") is not None else ""),
+    })
     if not fresh.get("stale") and not fresh.get("future"):
-        print(f"OK：基准表在 {STALE_DAYS} 天新鲜期内。")
+        items.append({
+            "id": "freshness", "ok": True,
+            "message": f"OK：基准表在 {STALE_DAYS} 天新鲜期内。",
+        })
+    return items
+
+
+def check_payload(data: dict, items: list[dict], recs: list[dict]) -> dict:
+    """--check --json 的载荷。exit 码语义与文本分支**完全一致**：这里恒为 0。
+
+    `ok` 描述的是「所有自检是否全过」（含三类告警），**不是**「要不要停线」——
+    后者看 `blocking` / `exit_code`。两者刻意分开：三类告警都指向周更那一侧，
+    日更只读、修不了，所以照常出报告；但把 ok 写死成 true 就成了「查过了、没事」，
+    正是这次要修的那种谎。
+    """
+    reasons = degraded_reasons(data, recs)
+    return {
+        "command": "check",
+        "ok": all(item["ok"] for item in items) and not recs,
+        "blocking": False,
+        "exit_code": 0,
+        "error": None,
+        "weekly_dir": data["weekly_dir"],
+        "baseline_path": data["baseline_path"],
+        "source": data["source"],
+        "meta": data["meta"],
+        "freshness": data["freshness"],
+        "universe": data["universe"],
+        "checks": items,
+        "alerts": recs,
+        "degraded": bool(reasons),
+        "degraded_reasons": reasons,
+    }
+
+
+def check_failure_payload(error_id: str, message: str) -> dict:
+    """--check --json 在阻断性失败时的载荷（exit 仍为 1，stderr 上的中文说明一字不改）。
+
+    没有这一份，唯一能出 JSON 的路径就只剩「解析成功」那条，`ok` 便退化成写死的 true。
+    """
+    # 再过一次 scrub：错误文本里可能夹着别处的家目录绝对路径（例如用户把
+    # AI_INDUSTRY_WEEKLY_DIR 指到了另一个用户名下），而 JSON 一样会被贴进日报。
+    # 正常情形下这层是恒等变换，stderr 上那份保持原样、逐字不变。
+    text = scrub(message)
+    head = (text.splitlines() or [""])[0]
+    return {
+        "command": "check",
+        "ok": False,
+        "blocking": True,
+        "exit_code": 1,
+        "error": {"id": error_id, "message": text},
+        "checks": [],
+        "alerts": [],
+        "degraded": True,
+        "degraded_reasons": [head or f"前置检查失败：{error_id}"],
+    }
+
+
+def cmd_check(data: dict, as_json: bool = False) -> int:
+    """只验证「能否定位 + 能否解析」。陈旧只告警、不算失败（数据本身是可用的）。"""
+    items = check_items(data)
+    recs = alerts(data)
+
+    if as_json:
+        # 早先 --check 分支在 --json 之前 return，于是 `--check --json` 静默打人类文本：
+        # 三条横幅（含「先跑一轮周更技能」那句处置）没有任何机读等价物。
+        print(json.dumps(check_payload(data, items, recs), ensure_ascii=False, indent=2))
+        return 0
+
+    for item in items:
+        print(item["message"])
 
     # 三类横幅都只告警不阻断：数据能解析，日更照常跑；但坏的是周更那边，日更只能提示。
-    banner = alert_banners(data)
+    banner = banner_lines(recs)
     if banner:
         print()
         for line in banner:
@@ -645,6 +858,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def fail(args, error_id: str, message: str) -> int:
+    """阻断性失败的统一出口：stderr 原样打（人类分支逐字不变），exit 恒为 1。
+
+    只有这几类才阻断（定位不到姊妹技能 / 基准表解析不了 / 基准表不是合法 UTF-8 /
+    读文件本身失败）；三类横幅告警一律不阻断，见 alerts()。
+    `--check --json` 时额外给一份 ok:false 的 JSON，否则窄读 stdout 的调用方
+    只会看到「什么都没有」，与「一切正常」无法区分。
+    """
+    err(message)
+    if args.check and args.json:
+        print(json.dumps(check_failure_payload(error_id, message),
+                         ensure_ascii=False, indent=2))
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     _configure_streams()
     args = build_parser().parse_args(argv)
@@ -652,29 +880,26 @@ def main(argv: list[str] | None = None) -> int:
     try:
         data = load_all()
     except WeeklySkillNotFound as exc:
-        err(str(exc))
-        return 1
+        return fail(args, "weekly_skill_not_found", str(exc))
     except ParseError as exc:
-        err(f"错误：产业质量参考表解析失败。\n{scrub(exc)}")
-        return 1
+        return fail(args, "baseline_unparseable", f"错误：产业质量参考表解析失败。\n{scrub(exc)}")
     except UnicodeDecodeError as exc:
         # UnicodeDecodeError 是 ValueError 的子类、**不是** OSError：早先只捕 OSError，
         # baseline.md 含非法 UTF-8 字节时会一路落到顶层兜底，打成
         # 「✗ 执行失败：UnicodeDecodeError: ...」这种没有处置建议的英文类型名。
-        err("错误：产业质量参考表不是合法的 UTF-8 文本，无法读取。\n"
-            f"  文件：{WEEKLY_SKILL_NAME}/{NEED_BASELINE}\n"
-            f"  解码失败：{scrub(exc)}\n"
-            "  基准表由 `baseline.py write` 以 UTF-8 覆写，出现非法字节多半是被别的工具"
-            "以非 UTF-8 编码手改过、或文件损坏。\n"
-            "  处理：回到周更技能重跑一轮 `baseline.py write` 覆写，或 "
-            "`git checkout -- assets/baseline.md` 回滚。")
-        return 1
+        return fail(args, "baseline_not_utf8",
+                    "错误：产业质量参考表不是合法的 UTF-8 文本，无法读取。\n"
+                    f"  文件：{WEEKLY_SKILL_NAME}/{NEED_BASELINE}\n"
+                    f"  解码失败：{scrub(exc)}\n"
+                    "  基准表由 `baseline.py write` 以 UTF-8 覆写，出现非法字节多半是被别的工具"
+                    "以非 UTF-8 编码手改过、或文件损坏。\n"
+                    "  处理：回到周更技能重跑一轮 `baseline.py write` 覆写，或 "
+                    "`git checkout -- assets/baseline.md` 回滚。")
     except OSError as exc:
-        err(f"错误：读取产业质量参考表失败：{scrub(exc)}")
-        return 1
+        return fail(args, "baseline_read_failed", f"错误：读取产业质量参考表失败：{scrub(exc)}")
 
     if args.check:
-        return cmd_check(data)
+        return cmd_check(data, args.json)
     if args.ticker:
         return cmd_ticker(data, args.ticker, args.json)
     if args.json:

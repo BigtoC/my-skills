@@ -114,6 +114,7 @@ SPX_SRC="未提供"
 NDX_SRC="未提供"
 CLOSES_FILE=""
 FROM_FRED=0
+FRED_FAILED=0                   # --from-fred 两个序列都没取到 → 降级原因之一
 JSON=0
 
 is_num() { echo "$1" | grep -qE '^-?[0-9]+(\.[0-9]+)?$'; }
@@ -184,6 +185,7 @@ if [ "$FROM_FRED" -eq 1 ]; then
     if [ -n "$L" ]; then NDX_CLOSE="${L%%	*}"; NDX_CLOSE_DATE="${L##*	}"; NDX_SRC="FRED NASDAQ100"; fi
   fi
   if [ -z "$SPX_CLOSE" ] && [ -z "$NDX_CLOSE" ]; then
+    FRED_FAILED=1
     warn "⚠️ --from-fred 两个序列都没取到（FRED SP500 / NASDAQ100）。隐含跳空将标 ⚪️ 无法判定。"
   fi
 fi
@@ -275,13 +277,51 @@ if [ "$SPX_GAP" != "NA" ] && [ "$NDX_GAP" != "NA" ] && [ "$WRONG_SEEN" -eq 0 ]; 
 fi
 
 if [ "$JSON" -eq 1 ]; then
-  jq -n --rawfile tsv "$WORK/rows.tsv" \
+  # ── --json 不等于「不报警」：文字分支印的每一条告警与禁令，这里都要有一个栏位 ──
+  # 收盘价滞后天数。文字分支在下面用同一个 lag_days 自己再算一次，两边规则必须一致。
+  : > "$WORK/lags.tsv"
+  while IFS="$(printf '\t')" read -r _n _i _c _m _p _f _f8 _fa _oi _no _v _l _g _w CDT _s; do
+    printf '%s\t%s\n' "$_n" "$(lag_days "$CDT")" >> "$WORK/lags.tsv"
+  done < "$WORK/rows.tsv"
+
+  # 降级原因：措辞照抄文字分支，一行一条，且一定点名是哪个市场。
+  : > "$WORK/degraded.txt"
+  awk -F'\t' -v oimin="$OI_MIN_USD" -v wrongp="$WRONG_MARKET_PCT" '{
+    if ($14 == "YES")
+      printf "%s 🔴 与 %s 收盘差 %+.2f%%（>%.0f%%）→ 判定取错市场，本市场整笔作废，不得写进报告\n", $1, $2, $13, wrongp
+    if ($12 != "YES")
+      printf "%s 名义 OI $%.1fM < $%.0fM 门槛 → 标「不适用」，池子可能在迁移，报价不可信\n", $1, $10/1e6, oimin/1e6
+    if ($13 == "NA")
+      printf "%s ⚪️ 未提供 %s 收盘价 → 隐含跳空无法判定，>%.0f%% 撞名检查也做不了\n", $1, $2, wrongp
+  }' "$WORK/rows.tsv" >> "$WORK/degraded.txt"
+  awk -F'\t' 'NR==FNR { lag[$1] = $2 + 0; next }
+              ($15 != "NA" && lag[$1] > 1) {
+    printf "%s 的收盘价观测日 %s 已滞后 %d 天——隐含跳空是拿 perp 现价对旧收盘算的，不是「对上一收盘」；报告里必须写明这个滞后，或改传当日实际收盘\n", $1, $15, lag[$1]
+  }' "$WORK/lags.tsv" "$WORK/rows.tsv" >> "$WORK/degraded.txt"
+  if [ "$FRED_FAILED" -eq 1 ]; then
+    printf '%s\n' "--from-fred 两个序列都没取到（FRED SP500 / NASDAQ100）；隐含跳空标 ⚪️ 无法判定" \
+      >> "$WORK/degraded.txt"
+  fi
+
+  # 相对强弱为 null 时必须配一句理由，否则读的人分不清「没算」与「算出 0」。
+  RELSTR_NA_REASON=""
+  if [ "$RELSTR" = "NA" ]; then
+    if [ "$WRONG_SEEN" -gt 0 ]; then RELSTR_NA_REASON="有市场被撞名检查判定取错，两边偏离不可比"
+    else                             RELSTR_NA_REASON="两个指数收盘价须都提供"; fi
+  fi
+
+  jq -n --rawfile tsv "$WORK/rows.tsv" --rawfile lagtsv "$WORK/lags.tsv" \
+        --rawfile degr "$WORK/degraded.txt" \
         --arg api "$API" --arg dex "$DEX" --arg relstr "$RELSTR" \
+        --arg relna "$RELSTR_NA_REASON" --argjson wrongany "$WRONG_ANY" \
         --argjson oimin "$OI_MIN_USD" --argjson gap2 "$GAP_TIER2_PCT" \
         --argjson gap1 "$GAP_MENTION_PCT" --argjson rel "$RELSTR_PCT" \
         --argjson fhot "$FUND_HOT_ANNUAL" --argjson fcold "$FUND_COLD_ANNUAL" \
         --argjson wrongp "$WRONG_MARKET_PCT" '
-    ($tsv | rtrimstr("\n") | split("\n") | map(select(length>0) | split("\t") |
+    ($lagtsv | rtrimstr("\n") | split("\n") | map(select(length>0) | split("\t")
+      | {key:.[0], value:(.[1]|tonumber)}) | from_entries) as $lag
+    | ($degr | rtrimstr("\n") | split("\n") | map(select(length>0))) as $dreasons
+    | ($tsv | rtrimstr("\n") | split("\n") | map(select(length>0) | split("\t") |
       {market:.[0], index:.[1],
        cash_close:(if .[2]=="NA" then null else (.[2]|tonumber) end),
        mark:(.[3]|tonumber), prev_day_px:(.[4]|tonumber),
@@ -292,20 +332,39 @@ if [ "$JSON" -eq 1 ]; then
        implied_gap_pct:(if .[12]=="NA" then null else (.[12]|tonumber) end),
        wrong_market_suspected:(if .[13]=="NA" then null else (.[13]=="YES") end),
        cash_close_date:(if .[14]=="NA" then null else .[14] end),
-       cash_close_source:.[15]})) as $rows
-    | {ok:true, signal:18, name:"美股 24/7 永续", source:($api + " dex=" + $dex),
+       cash_close_source:.[15],
+       cash_close_lag_days:(if .[14]=="NA" then null
+                            else (($lag[.[0]] // -1) | if . < 0 then null else . end) end),
+       cash_close_stale:(if .[14]=="NA" then null
+                         else (($lag[.[0]] // -1) | if . < 0 then null else . > 1 end) end)})) as $rows
+    | {ok:($wrongany == 0), signal:18, name:"美股 24/7 永续", source:($api + " dex=" + $dex),
+       degraded:(($dreasons|length) > 0 or $wrongany != 0),
+       degraded_reasons:$dreasons,
        thresholds:{notional_oi_min_usd:$oimin, gap_tier2_pct:$gap2, gap_mention_pct:$gap1,
                    relative_strength_pt:$rel, funding_annual_hot_pct:$fhot,
                    funding_annual_cold_pct:$fcold, wrong_market_pct:$wrongp},
        markets:$rows,
        relative_strength_pt:(if $relstr=="NA" then null else ($relstr|tonumber) end),
+       relative_strength_na_reason:(if $relna=="" then null else $relna end),
        triggers:{
          gap_tier2:[ $rows[] | select(.wrong_market_suspected != true and .implied_gap_pct != null and (.implied_gap_pct|fabs) >= $gap2) | .market ],
          gap_mention:[ $rows[] | select(.wrong_market_suspected != true and .implied_gap_pct != null and (.implied_gap_pct|fabs) >= $gap1) | .market ],
+         gap_not_evaluated:[ $rows[] | select(.wrong_market_suspected == true or .implied_gap_pct == null)
+                             | {market:.market,
+                                reason:(if .wrong_market_suspected == true
+                                        then "🔴 作废（撞名检查判定取错市场）→ 不计触发"
+                                        else "⚪️ 无法判定 —— 未提供上一美股收盘价" end)} ],
          funding_crowded_long:[ $rows[] | select(.funding_annual_pct > $fhot) | .market ],
          funding_hedging_demand:[ $rows[] | select(.funding_annual_pct < $fcold) | .market ],
          illiquid:[ $rows[] | select(.liquid == false) | .market ],
+         stale_cash_close:[ $rows[] | select(.cash_close_stale == true) | .market ],
          wrong_market:[ $rows[] | select(.wrong_market_suspected == true) | .market ]
+       },
+       notes:{
+         cash_close_fetch:"Yahoo chart 端点本机实测稳定回 HTTP 429（带 UA、带 cookie jar 都一样），stooq CSV 端点已下线 —— 两者都不可靠，本脚本不用。最准的还是呼叫方直接传 --spx / --ndx；--from-fred 免 API key 但滞后 1 个交易日。绝不自己编一个收盘价。",
+         prev_day_px:"**不要拿 prevDayPx 当收盘价**——那是 perp 自己 24 小时前的报价，不是现货收盘。",
+         wrong_market:"被判定取错市场的市场，数字整笔作废，不得写进报告。先确认传入的收盘价口径是不是指数点位（^GSPC ≈7,7xx 而非 SPY ≈77x；^NDX ≈29,xxx 而非 QQQ ≈7xx）。",
+         dex:"必须带 \"dex\":\"xyz\"：Hyperliquid 主池的 SPX 是 SPX6900 迷因币，不是标普 500。"
        }}'
   [ "$WRONG_ANY" -eq 0 ] || exit 4
   exit 0

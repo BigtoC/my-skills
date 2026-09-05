@@ -107,19 +107,22 @@ python3 "$SKILL_DIR/scripts/industry_table.py" --ticker NVDA
 ## 第二步 · 每日取数
 
 ```bash
-# ① technicals 先跑，产出 /tmp/tech.json —— 它同时是 perp_quotes 的现货基准
-python3 "$SKILL_DIR/scripts/technicals.py" --json /tmp/tech.json   # 全标的技术面
-python3 "$SKILL_DIR/scripts/technicals.py" --macro-only            # 只出宏观利率/驱动源输入
+# ① technicals 先跑，产出 /tmp/tech.json —— 它同时是 perp_quotes 的现货基准；
+#    宏观利率/驱动源输入就在这份档案的 macro 区块里，不必再跑第二次
+python3 "$SKILL_DIR/scripts/technicals.py" --json /tmp/tech.json   # 全标的技术面 + macro 区块
 # ② perp 后跑，必须把 ① 的产物作为 --spot 传进去
 python3 "$SKILL_DIR/scripts/perp_quotes.py" --spot /tmp/tech.json --json /tmp/perp.json
-python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py"            # 信用层 markdown（贴完整版）
-python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --compact  # 精简版「💳 信用④」一行
+# ③ 信用层：一次取数、两份渲染 —— 完整 markdown（贴完整版）＋ 精简一行（贴精简版）
+python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --emit both
 ```
 
 - **执行顺序是硬约束：`technicals.py --json /tmp/tech.json` 必须先跑，`perp_quotes.py` 再跑并以它为 `--spot`。** 隐含变动 = perp 价 vs 现货收盘价，现货那一半只能来自 `/tmp/tech.json`。漏了 `--spot`，脚本只打 perp 价与 OI 分档：隐含变动% 全不计算、`|≥2%|` 过滤没有输入、`≥5%` 重大异动不标记、跨 T1/T2 阈值的「预告」也不会出现——「🌙 盘后隐含」整节等于作废。而该节是**每个日历日必出**、休市日更是**当日唯一的活报价**，缺了它休市日报告就没有任何当日信息。tech.json 生成失败时，如实写「本次未取到现货基准，🌙 盘后隐含只给 perp 价与 OI 分档」，不要拿别处的价格凑数。
+- **宏观区块直接读 `/tmp/tech.json` 的 `macro`，不再跑第二次 `--macro-only`。** 全量运行与 `--macro-only` 输出的是**同一个 macro 对象**（两条路径都写 `"macro": macro` 与顶层 `"indices": macro.get("indices", {})`），字段一致是结构上的，不需要逐字段核对。再跑一次只是把 8 个指数代码重新下载一遍，且那是**另一个时点**的报价——同一份日报的宏观数字会因此与个股区对不上。
+- **`--macro-only` 保留为降级日兜底**：只有 ① 整轮取数失败（或只想单看宏观）时才跑 `python3 "$SKILL_DIR/scripts/technicals.py" --macro-only`。**若 `/tmp/tech.json` 里没有 `macro` 区块，必须在报告里明写「本次未取到宏观区块」并改跑 `--macro-only` 兜底；绝不拿一个缺失的字段拼出一节宏观。**
+- **信用层一次取数、两份渲染**：`--emit both` 的完整 markdown 与精简一行出自**同一次取数、同一个判定对象**，结构上不可能对引爆点④ 各说各话。**不要再分两次调用**（旧写法是 `neocloud_credit_monitor.py` 与 `--compact` 各跑一次）：那是两轮网络取数，还会**同日写两次历史档**——明天的⑩跨档变化比对到的是第二次取数，而报告引用的是第一次。要把精简一行另存成档案时用 `--compact-also FILE`（stdout 内容不变）。`--emit` 与 `--json` / `--compact` 指定不同形式时脚本会响亮拒绝，不做静默裁决。
 - **技术面取数口径、完整交易日判定、港股/韩股各自的数据日期、字段可得性分层** —— 读 `references/data-acquisition.md`。港股价格必须走姊妹技能的 `hk_quote.py`（`technicals.py` 已自动路由），**不得**用 WebSearch/yfinance 复权价；港股/韩股与美股允许**不同数据日期**，须在报告头逐一注明。
 - **📝 编者注 · 取数优先级相对原文已翻转**：`references/data-acquisition.md` 原文写的是「**WebSearch 为主、yfinance 补缺**」（当时 yfinance 只是一段参考代码骨架）。本技能把该骨架实现成了 `scripts/technicals.py`，故实际执行改为「**脚本优先、WebSearch 补脚本取不到的字段**」——脚本一次算全标的、口径统一且可复现，比逐标的搜索更不易前后矛盾。**这是有意的演进，不是对原文的忽略**；原文的数据源优先级（Finviz > Yahoo Finance > TradingView > StockAnalysis.com）在需要 WebSearch 补数时仍然适用，港股仍必须走 `hk_quote.py`。同一字段脚本与 WebSearch 冲突时以脚本为准，并在完整版注明差异。
-- **`--macro-only` 的字段边界（别高估它）**：脚本只产出 **10Y(^TNX) 收盘/日变动/近5日变动、DXY、QQQ/SMH/SOXX/^VIX、大盘现货指数 ^GSPC（标普500）与 ^NDX（纳斯达克100）的收盘/日涨跌%、SMH−QQQ 板块相对强弱、折现率信号**（^GSPC/^NDX 同时是 `perp_quotes.py` 算大盘隐含跳空的现货分母，见 `references/perp-overnight.md` 的「大盘层」）。**2Y 与 2s10s 期限利差脚本不产出**，`references/data-acquisition.md`「宏观利率背景」却要求逐日取这两项（政策预期代理）——**必须用 WebSearch 补**，取不到记 ⚪，**不得拿 10Y 反推、不得省略这两行**。同节要求的联邦基金目标区间、距下次 FOMC 交易日数、CME FedWatch 隐含概率、HY 基准利差，同样由 WebSearch 取，脚本不产出。
+- **`macro` 区块的字段边界（别高估它；`--macro-only` 兜底时同此边界）**：脚本只产出 **10Y(^TNX) 收盘/日变动/近5日变动、DXY、QQQ/SMH/SOXX/^VIX、大盘现货指数 ^GSPC（标普500）与 ^NDX（纳斯达克100）的收盘/日涨跌%、SMH−QQQ 板块相对强弱、折现率信号**（^GSPC/^NDX 同时是 `perp_quotes.py` 算大盘隐含跳空的现货分母，见 `references/perp-overnight.md` 的「大盘层」）。**2Y 与 2s10s 期限利差脚本不产出**，`references/data-acquisition.md`「宏观利率背景」却要求逐日取这两项（政策预期代理）——**必须用 WebSearch 补**，取不到记 ⚪，**不得拿 10Y 反推、不得省略这两行**。同节要求的联邦基金目标区间、距下次 FOMC 交易日数、CME FedWatch 隐含概率、HY 基准利差，同样由 WebSearch 取，脚本不产出。
 - **📝 编者注 · 港股 asof 的已知口径差异（可能滞后，不必然滞后）**：`technicals.py` 对港股把 `asof` 覆写为 `hk_quote.py` 的当日报价日，而该行的 **MA/RSI/20日高/20日回撤来自 yfinance 最近一根已落地的未复权日线**。yfinance 的港股日 K 当日**有时**尚未落地，此时派生指标会**落后一根日线**；但也常常当日即落地、两者同日（2026-09-02 实测 0700.HK / 1810.HK / 0941.HK：`hk_quote` 报价日与 yfinance 最新日线同为 09-02，全行同日）。**所以不得无条件写成「MA/RSI 是前一交易日」**——那在同日的日子里就是谎报。以**脚本当次输出为准**：看该行的 `asof` 与 `notes`（`notes` 里出现「数据滞后」即确证滞后）。确实滞后时才在港股行注明（如「价格为 HKT 当日收盘，MA/RSI/20日高为 yfinance 上一交易日」）；同日则如实写同日。这不是 bug，是两个数据源的更新节奏差。
 - **24/7 永续** —— 读 `references/perp-overnight.md`。**纯观察节点，绝不改变 T1/T2/T3 触发与分桶**；跨阈值只能写成「若明日以此价开盘将触及 XX（预告，非已触发）」。
 - **Neocloud 信用层** —— 读 `references/neocloud-credit.md`。脚本输出的十个区块**整段贴入完整版，不删节、不改写数字**；「⑧ 数据缺口」与已知局限声明须保留。债券报价没有免费 API：由你 WebSearch 取到后喂进 `assets/neocloud_bonds.json` 的 `quote.price / quote.as_of / quote.source`，脚本自己反解 YTM 与利差。脚本失败 → 该节写「本次未取到信用层数据，引爆点④ 沿用上次状态并标⚪」，**不臆测利差**、不影响其余部分。
@@ -137,7 +140,7 @@ python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --compact  # 精简版�
 
 ## 第四步 · 回调驱动源判定
 
-**读 `references/drawdown-driver.md`**，按四分法给出结论：① 折现率驱动 / ② AI论点驱动 / ③ 双杀 / ④ 个股事件（取不到 10Y 或 FOMC 日历时写 ⚪ 未判定，按原三分法执行，**不臆测**）。输入来自 `technicals.py --macro-only`（**10Y/DXY 日变动、SMH−QQQ 板块相对强弱、折现率信号**）＋ **WebSearch 补 2Y 与 2s10s 期限利差、FOMC 日历与隐含概率**（脚本不产出这几项，见第二步的字段边界）＋ 第三步的引爆点计数。
+**读 `references/drawdown-driver.md`**，按四分法给出结论：① 折现率驱动 / ② AI论点驱动 / ③ 双杀 / ④ 个股事件（取不到 10Y 或 FOMC 日历时写 ⚪ 未判定，按原三分法执行，**不臆测**）。输入来自 `/tmp/tech.json` 的 `macro` 区块（**10Y/DXY 日变动、SMH−QQQ 板块相对强弱、折现率信号**；该区块缺失时才跑 `technicals.py --macro-only` 兜底，见第二步）＋ **WebSearch 补 2Y 与 2s10s 期限利差、FOMC 日历与隐含概率**（脚本不产出这几项，见第二步的字段边界）＋ 第三步的引爆点计数。
 
 **只描述状态，严禁预测利率路径**——只写市场隐含概率与官方日历，不写「我认为会降息/加息」。
 

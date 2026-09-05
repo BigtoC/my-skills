@@ -52,6 +52,7 @@ import subprocess
 import sys
 import unicodedata
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 SCRIPT_NAME = Path(__file__).name
@@ -100,6 +101,15 @@ LOOKBACK_20D = 20
 T1_RATIO = 0.85             # T1触发价 = 52周高 * 0.85
 T2_RATIO = 0.92             # T2触发价 = 20日高 * 0.92
 T3_RSI = 35.0               # T3: RSI14 <= 35
+
+# 财报日（⚠EARN 标签）预取并发度。串行时它是整轮的绝对大头：46 档里 41 只非 ETF
+# 各一次 get_earnings_dates() 往返 ≈ 39s / 全程 ≈ 45s。上限刻意压在个位数——再高就是
+# 往 Yahoo 限流上撞，而限流的表现正是「整片查不到」，比慢危险得多。
+EARNINGS_MAX_WORKERS = 6
+# 无结果占比超过这条线就当限流嫌疑处理。样本 < MIN_N 时不判：--tickers 调子集时
+# 「1/3 只查不到」多半只是那只票本来就没有财报日历，报限流是噪声不是信号。
+EARNINGS_THROTTLE_RATIO = 1 / 3
+EARNINGS_THROTTLE_MIN_N = 5
 
 TNX_TICKER = "^TNX"
 DXY_TICKER = "DX-Y.NYB"
@@ -427,12 +437,13 @@ def ma_position(close, ma50, ma200):
     return ",".join(parts)
 
 
-def next_earnings(yf, ticker, asof_date):
-    """下次财报日；取不到就 None（N/A，不估算）。"""
-    try:
-        ed = yf.Ticker(ticker).get_earnings_dates()
-    except Exception:
-        return None
+def pick_next_earnings(ed, asof_date):
+    """从已取回的财报日历里挑「该标的自己的数据日当天或之后」最近的一个。
+
+    口径与并发化之前逐字一致：只是把「拉」和「挑」拆开——拉是网络往返（可以并发），
+    挑依赖该标的**自己**的最后一根 K 线日期（只有 compute_row 里才知道），所以留在串行。
+    取不到 / 没有未来日期一律 None（N/A，不估算）。
+    """
     if ed is None or len(ed) == 0:
         return None
     try:
@@ -443,6 +454,82 @@ def next_earnings(yf, ticker, asof_date):
     except Exception:
         return None
     return future[0].isoformat() if future else None
+
+
+def prefetch_earnings(yf, tickers):
+    """并发预取各标的的财报日历，返回 ({ticker: 日历或 None}, 统计 dict)。
+
+    为什么可以并发：yfinance 的 YfData 是**进程级单例**（metaclass 上带 threading.Lock，
+    crumb/cookie 由 _cookie_lock 守着，一个 session 一份 cookie 由所有线程共用），
+    `_set_session(None)` 是显式 no-op，所以这里不存在 crumb 竞态；而且这条调用**不传
+    session**，走 curl_cffi 的浏览器指纹 TLS，不是被 Yahoo 掐得最狠的裸 requests.Session。
+    并发只做财报日这一件事：港股 hk_quote.py 的 subprocess 路由绝不并发。
+
+    单只失败只把这一只降级成 N/A（不估算），绝不掀掉整轮、也绝不把异常漏到顶层；
+    但**必须计数**——线程池整片失败正是 Yahoo 限流的样子，静默吞掉就等于把「不知道」
+    记成「查过了，没有」。计数结果进 degraded / degraded_reasons 与 asof_notes。
+    """
+    cals = {}
+    stats = {"attempted": len(tickers), "ok": 0, "empty": 0, "failed": 0, "errors": []}
+    if not tickers:
+        return cals, stats
+    workers = max(1, min(EARNINGS_MAX_WORKERS, len(tickers)))
+
+    def one(t):
+        try:
+            return t, yf.Ticker(t).get_earnings_dates(), None
+        except Exception as exc:  # noqa: BLE001 - 单只失败只降级这一只，异常绝不外泄
+            return t, None, f"{type(exc).__name__}: {scrub(exc)}"
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        # pool.map 按入参顺序回吐结果；本函数只往字典里填，行序仍由 selected 决定，
+        # 并发不参与任何排序。
+        for t, cal, exc_text in pool.map(one, tickers):
+            cals[t] = cal
+            if exc_text is not None:
+                stats["failed"] += 1
+                stats["errors"].append(f"{t}: {exc_text}")
+            elif cal is None or len(cal) == 0:
+                stats["empty"] += 1
+            else:
+                stats["ok"] += 1
+    return cals, stats
+
+
+def earnings_block(stats, requested):
+    """把预取统计整理成 --json 的 earnings 块 + 需要出声的告警文案。"""
+    attempted = stats["attempted"]
+    missing = stats["failed"] + stats["empty"]
+    throttle = (attempted >= EARNINGS_THROTTLE_MIN_N
+                and missing >= attempted * EARNINGS_THROTTLE_RATIO)
+    warnings = []
+    if stats["failed"]:
+        warnings.append(
+            f"⚠ 下次财报日并发查询有 {stats['failed']}/{attempted} 只异常失败"
+            f"（记 N/A，不估算）"
+        )
+    if throttle:
+        warnings.append(
+            f"⚠ 下次财报日有 {missing}/{attempted} 只查不到结果，疑似 Yahoo 限流"
+            f"（并发 {EARNINGS_MAX_WORKERS}）；这些标的的下次财报记 N/A，不估算"
+        )
+    block = {
+        "requested": bool(requested),
+        "concurrent": bool(requested and attempted),
+        "max_workers": EARNINGS_MAX_WORKERS,
+        "attempted": attempted,
+        "ok": stats["ok"],
+        "empty": stats["empty"],
+        "failed": stats["failed"],
+        "missing": missing,
+        "errors": stats["errors"],
+        "throttle_suspected": bool(throttle),
+        "note": ("--no-earnings：本轮跳过下次财报日查询，全部记 N/A（不估算）"
+                 if not requested else
+                 "下次财报日取不到即 N/A，不估算；ETF 与指数代码本就不查"),
+        "warnings": warnings,
+    }
+    return block, warnings
 
 
 # ---------------------------------------------------------------- 港股覆写
@@ -504,8 +591,12 @@ def usable_hk(item) -> bool:
 # ---------------------------------------------------------------- 单标的计算
 
 
-def compute_row(meta, frame, asof, market, yf, want_earnings):
-    """在该标的自己的取数日期上算全部指标。缺失一律 None（= N/A）。"""
+def compute_row(meta, frame, asof, market, earnings_cals, want_earnings):
+    """在该标的自己的取数日期上算全部指标。缺失一律 None（= N/A）。
+
+    earnings_cals 是 run() 里并发预取好的 {ticker: 财报日历}；本函数只负责在该标的
+    自己的数据日上挑下一个财报日，不再自己发网络请求。
+    """
     ticker = meta["ticker"]
     row = {
         "ticker": ticker,
@@ -586,7 +677,7 @@ def compute_row(meta, frame, asof, market, yf, want_earnings):
         row["notes"].append(f"52周高仅由 {len(hi52_win)} 根 K 线算得（不足 {LOOKBACK_52W}）")
 
     if want_earnings and not meta.get("etf") and not ticker.startswith("^"):
-        row["next_earnings"] = next_earnings(yf, ticker, d.date())
+        row["next_earnings"] = pick_next_earnings((earnings_cals or {}).get(ticker), d.date())
     else:
         row["next_earnings"] = None
     return row
@@ -709,12 +800,19 @@ def build_macro(frames, asof_us):
                     tnx_block["chg5_bp"] = rnd((float(y.iloc[-1]) - float(y.iloc[-6])) * 100, 2)
                 tnx_block["asof"] = s.index[-1].date().isoformat()
     tnx_block["signal"] = rate_signal(tnx_block["chg_bp"], tnx_block["chg5_bp"])
+    # 人读分支把这条口径打在「折现率信号：」那行后面，--json 必须同样带上。
+    # 负号用 U+2212（−）而不是 ASCII '-'，与人读那一行逐字一致。
+    tnx_block["signal_definition"] = (
+        f"日≥+{RATE_UP_1D_BP:.0f}bp 或 5日≥+{RATE_UP_5D_BP:.0f}bp → 🔺；"
+        f"日≤−{abs(RATE_DN_1D_BP):.0f}bp 或 5日≤−{abs(RATE_DN_5D_BP):.0f}bp → 🔻；其余 ➖；缺数据 ⚪"
+    )
     macro["us10y"] = tnx_block
 
     # --- DXY
     dxy_cur, dxy_prev = series_at(frames.get(DXY_TICKER), asof_us)
     macro["dxy"] = {"ticker": DXY_TICKER, "close": rnd(dxy_cur, 4),
-                    "chg_pct": rnd(pct_from(dxy_cur, dxy_prev), 3)}
+                    "chg_pct": rnd(pct_from(dxy_cur, dxy_prev), 3),
+                    "note": "美元指数（影响非美计价标的）"}
 
     # --- 大盘背景 + 板块相对强弱
     backdrop = {}
@@ -752,6 +850,7 @@ def build_macro(frames, asof_us):
     macro["sector_rel_strength_pt"] = rel
     macro["sector_rel_strength_label"] = rel_label
     macro["definition"] = "板块相对强弱(pt) = SMH 日涨跌幅% − QQQ 日涨跌幅%"
+    macro["sector_rel_strength_bands"] = "≥+1.5pt 显著强 / ≤−1.5pt 显著弱"
     macro["disclaimer"] = "宏观利率仅供回调驱动源判定，不参与 T1/T2/T3 触发与分桶；不预测利率路径。"
     return macro
 
@@ -768,17 +867,18 @@ def print_macro(macro):
         ["10Y 美债(^TNX)", fnum(y["close_pct"], 3, "%"), fsign(y["chg_bp"], 1, "bp"),
          fsign(y["chg5_bp"], 1, "bp"), y["unit_note"]],
         ["DXY(DX-Y.NYB)", fnum(macro["dxy"]["close"], 3), fsign(macro["dxy"]["chg_pct"], 2, "%"),
-         "—", "美元指数（影响非美计价标的）"],
+         "—", macro["dxy"]["note"]],
     ]
     print_table(["指标", "收盘/当前", "日变动", "近5日变动", "说明"], rows)
-    print(f"折现率信号：{y['signal']}"
-          f"（口径：日≥+10bp 或 5日≥+25bp → 🔺；日≤−10bp 或 5日≤−25bp → 🔻；其余 ➖；缺数据 ⚪）")
+    # 口径文案只在 build_macro 里写一份：人读这行与 --json 的字段必须逐字同源，
+    # 两处各写一份就会在改阈值时静默分叉。
+    print(f"折现率信号：{y['signal']}（口径：{y['signal_definition']}）")
     print()
     b = macro["backdrop"]
     rows = [[t, fnum(b[t]["close"], 2), fsign(b[t]["chg_pct"], 2, "%")] for t in BACKDROP_TICKERS]
     print_table(["标的", "收盘", "日涨跌%"], rows)
     print(f"板块相对强弱 = SMH − QQQ = {fsign(macro['sector_rel_strength_pt'], 2, 'pt')}"
-          f"（{macro['sector_rel_strength_label']}；≥+1.5pt 显著强 / ≤−1.5pt 显著弱）")
+          f"（{macro['sector_rel_strength_label']}；{macro['sector_rel_strength_bands']}）")
     print(macro["disclaimer"])
     print()
 
@@ -872,6 +972,62 @@ def print_report(result):
     print("所有 yfinance 派生字段标注「yfinance 本地计算」；港股价格字段以 hk_quote.py 为准。")
 
 
+# ---------------------------------------------------------------- 降级汇总
+
+
+def apply_degraded(result):
+    """汇总本轮的降级理由，写进顶层 degraded / degraded_reasons。
+
+    口径与 ⚪️ 记账一致：只要有自检没过、有回退触发、有源取不到、或有字段因缺数记
+    N/A，就必须 degraded=true。「不知道」绝不能被记成「查过了、没问题」——那正是
+    --quiet 场景下最容易被下游读成正常的一种谎。
+    """
+    reasons = []
+
+    for mkt in ("US", "HK", "KR"):
+        if mkt in (result.get("asof") or {}) and result["asof"][mkt] is None:
+            reasons.append(f"{MARKETS[mkt]['label']}无法确定完整交易日（记 N/A）")
+
+    for n in result.get("asof_notes") or []:
+        # ⚠ 开头的是回退/取数告警；yfinance 缺票那条是「源没给数据」，两类都算降级。
+        if n.startswith("⚠") or n.startswith("yfinance 未返回数据的标的"):
+            reasons.append(n)
+
+    macro = result.get("macro") or {}
+    y = macro.get("us10y") or {}
+    if y.get("close_pct") is None:
+        reasons.append(f"10Y 美债(^TNX) 无有效读数：{y.get('unit_note') or 'N/A'}")
+    if (macro.get("dxy") or {}).get("close") is None:
+        reasons.append("DXY(DX-Y.NYB) 无有效读数（记 N/A）")
+    if macro.get("sector_rel_strength_pt") is None:
+        reasons.append("板块相对强弱(SMH−QQQ) ⚪数据不足")
+    for t, blk in (macro.get("indices") or {}).items():
+        if blk.get("close") is None:
+            reasons.append(f"现货指数 {t} 收盘缺失，perp_quotes.py 的隔夜隐含跳空将无从对照")
+
+    rows = result.get("tickers") or []
+    fallback = [r["ticker"] for r in rows if any("回退" in n for n in (r.get("notes") or []))]
+    if fallback:
+        reasons.append("港股价格回退 yfinance 未复权日线（口径次优）：" + ", ".join(fallback))
+    ins = result.get("insufficient_history") or []
+    if ins:
+        reasons.append(f"历史不足、不参与技术面判定 {len(ins)} 档：" + ", ".join(ins))
+    # 触发位为 null＝「数据不足暂不判定」，与 false＝「判过了、没触发」是两回事。
+    undecided = [r["ticker"] for r in rows
+                 if not r.get("insufficient_history")
+                 and any(r.get(k) is None for k in ("t1", "t2", "t3"))]
+    if undecided:
+        reasons.append(f"T1/T2/T3 中有触发位因数据不足暂不判定（null，非 false）"
+                       f" {len(undecided)} 档：" + ", ".join(undecided))
+
+    e = result.get("earnings") or {}
+    reasons.extend(e.get("warnings") or [])
+
+    result["degraded_reasons"] = list(dict.fromkeys(reasons))
+    result["degraded"] = bool(result["degraded_reasons"])
+    return result
+
+
 # ---------------------------------------------------------------- 主流程
 
 
@@ -943,15 +1099,32 @@ def run(args):
             "indices": macro.get("indices", {}),
             "sources": {"prices": "yfinance 本地计算（auto_adjust=False）"},
         }
-        return result, True
+        return apply_degraded(result), True
+
+    # ---- 财报日预取（并发，整轮只此一处并发）
+    # ⚠EARN 标签要保留，所以不是砍掉这一步，而是把 N 次串行往返整体提到逐标的循环之前
+    # 并发跑：串行时 41 只非 ETF ≈ 39s，占整轮 ≈ 45s 的绝大头。
+    # 命中集合只按「元数据 + 有没有日线」筛（与 compute_row 里的 etf/^ 判定同口径），
+    # 「数据日是哪天」仍只在 compute_row 里算一次——绝不为了并发再写第二份日期规则。
+    want_earn = not args.no_earnings
+    earn_targets = []
+    if want_earn:
+        earn_targets = list(dict.fromkeys(
+            m["ticker"] for m in selected
+            if not m.get("etf") and not m["ticker"].startswith("^")
+            and frames.get(m["ticker"]) is not None
+        ))
+    earnings_cals, earn_stats = prefetch_earnings(yf, earn_targets)
+    earnings, earn_warnings = earnings_block(earn_stats, want_earn)
+    asof_notes.extend(earn_warnings)
 
     # ---- 逐标的计算
     rows = []
     for meta in selected:
         t = meta["ticker"]
         mkt = market_of(t)
-        rows.append(compute_row(meta, frames.get(t), asof.get(mkt + "_ts"), mkt, yf,
-                                want_earnings=not args.no_earnings))
+        rows.append(compute_row(meta, frames.get(t), asof.get(mkt + "_ts"), mkt,
+                                earnings_cals, want_earnings=want_earn))
 
     # ---- 港股覆写（hk_quote.py 为准）
     hk_codes = [m["ticker"] for m in selected if m.get("hk_quote") or market_of(m["ticker"]) == "HK"]
@@ -987,6 +1160,7 @@ def run(args):
         # 顶层 indices：perp_quotes.py --spot 只展开顶层容器键，^GSPC/^NDX 必须放这一层
         "indices": macro.get("indices", {}),
         "tickers": rows,
+        "earnings": earnings,
         "triggered": triggered,
         "untriggered": untriggered,
         "insufficient_history": insufficient,
@@ -1009,8 +1183,16 @@ def run(args):
             "hk_quote": rel_path(weekly / "scripts" / "hk_quote.py"),
             "prices": "yfinance 本地计算（auto_adjust=False，原始未复权）",
         },
+        # 人读分支打出来的每一条口径/禁令都必须同时是字段（--json 不得少于正文）
+        "disclaimers": [
+            "口径：T1触发价=52周高×0.85；T2触发价=20日高×0.92；RSI14 即 T3 当前值（≤35 触发）。"
+            "✅=已触发，—=未触发，N/A=数据不足暂不判定。",
+            "补充观察 · 短中期均线（不改变 T1/T2/T3 与分桶）",
+            f"判定口径：可用日线 < {MIN_HISTORY_BARS} 根（约半年）即自动排除，不硬编码代码名单。",
+            "所有 yfinance 派生字段标注「yfinance 本地计算」；港股价格字段以 hk_quote.py 为准。",
+        ],
     }
-    return result, False
+    return apply_degraded(result), False
 
 
 def main():
