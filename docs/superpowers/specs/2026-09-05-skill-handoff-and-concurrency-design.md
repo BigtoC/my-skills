@@ -127,7 +127,14 @@
 
 **前提：B1 全部落地之后才能做。** JSON 尚不自足时窄读，等于主动丢掉 stderr 与 exit code —— 会把潜在缺陷变成实际缺陷。
 
-1. 重脚本一律 `--json OUT.json --quiet`，正文只读回需要的字段。
+1. 重脚本一律**只让 JSON 上 stdout**，正文只读回需要的字段。
+   **⚠️ 更正（2026-09-07 实测）：`--quiet` 在 `daily-risk-monitor` 的七支脚本上一支都不需要**——
+   它们的 `--json` 本来就与人类分支**互斥**（每个人类 `printf` 都在 `if JSON` 的 `else` 臂里）。
+   实测 `cape.sh` / `cnn_fng.sh` / `fred.sh` / `stock_perp.sh` / `market.py` 的 `--json` stdout
+   都是**纯 JSON**（整份 `json.loads` 通得过、后面 0 字节）。所以窄读只需 `--json > 档` ＋ `jq`，
+   **本步从来没有被 `--quiet` 卡住**。加一个不改变任何行为的 flag 只会多一条要维护的谎。
+   `perp_quotes.py`（ai-pullback-daily）是唯一真的需要它的脚本：它的 `render()` 无条件先印。
+   `snapshot.py` 的两个子命令加了还会**有害**。
 2. 只需要少数字段的步骤用 `jq` 点读。已确认的一处：`daily-risk-monitor` 第 4 步只需要 `market.py` JSON 的 `above_200dma` / `slope_positive` / `above_200dma_streak` 三个字段。
 3. **豁免名单 —— 这些绝不窄读**，写进各自 SKILL.md，不靠记忆：
    - `neocloud_credit_monitor.py` / `neocloud_credit_lite.py` 的 markdown（`ai-pullback-daily/references/output-format.md:63`：「整段贴入完整版，不删节、不改写数字」）；
@@ -265,7 +272,9 @@ t=?   逐 PID wait，读回各自的 JSON
 
 **守则**（缺一不可）：
 
-- 每个单元 `--json /tmp/run/<unit>.json --quiet`，**没有两个 job 共享 stdout**（依赖 B1）。
+- 每个单元把 JSON 重定向到自己的档，**没有两个 job 共享 stdout**（依赖 B1）。
+  这七支脚本**不要传 `--quiet`**——它们没有这个 flag，`--json` 已经保证 stdout 只有 JSON；
+  `cape.sh --quiet` 之类会以 exit 1「未知参数」**响亮失败**（这是好事，不是 bug）。
 - **有序边留在 job 内部，不跨 job**：`technicals → perp_quotes` 是**一个**顺序 job，不是两个。
 - **逐 PID 收退出码**（`wait $pid` 每一个），不能裸 `wait` —— `crypto.sh` 的 exit 3 是设计出来的、有意义的。
 - join 步骤对**缺文件**必须响亮失败：缺一个单元绝不能被读成「该单元无数据」。
@@ -366,7 +375,7 @@ t=?   逐 PID wait，读回各自的 JSON
 
 依赖是硬的，顺序不可换。
 
-1. **B1 JSON 等价律** —— 写进 CLAUDE.md；修甲类 5 处、乙类 4 处；补丙类 4 处缺 JSON；补 `perp_quotes.py --quiet`；钉死 `--quiet` 语义（5.8）。
+1. **B1 JSON 等价律** —— 写进 CLAUDE.md；修甲类 5 处、乙类 4 处；补丙类 4 处缺 JSON；补 `perp_quotes.py --quiet`（**实测：全仓库只有这一支需要**，见 B2 更正）；钉死 `--quiet` 语义（5.8）。
 2. **三个非并发修复** —— 信用监控一次取数两次渲染（含双写 bug）；去掉 `--macro-only` 重复下载；`technicals.py` earnings 池化（保留 ⚠️EARN）。
 3. **调度层** —— 5.4 的后台并发 + 与 A 的检索重叠。零脚本改动，吃掉大部分收益。
 4. **B2 窄读** + **A 检索传输层**（契约文档 ×2 → SKILL.md 中立措辞 → `.claude/agents/` 可选定义 → README / CLAUDE.md 注记）。
