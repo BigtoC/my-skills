@@ -1059,8 +1059,14 @@ def run(args):
     raw = yf.download(dl, period="2y", interval="1d", progress=False,
                       auto_adjust=False, group_by="ticker", threads=True)
     if raw is None or len(raw) == 0:
-        err("错误：yfinance 未返回任何日线数据（检查网络或标的代码）。")
-        sys.exit(1)
+        # 取数失败 = 退出码 3（本仓库保留：1 参数错误｜2 依赖缺失｜3 取数失败｜4 量级自检未通过）。
+        # 这一支最常见的成因是 Yahoo 对本环境全面 429 限流——那是取数失败，不是参数错误。
+        # 回 1 会让调度层（SKILL.md 第二步逐单元收 .rc）把一次限流读成「命令写错了」。
+        err("错误：yfinance 未返回任何日线数据（全部标的皆空）。"
+            "最常见成因是 Yahoo 对本环境限流（429）；也可能是断网或代码全错。")
+        err("     本次不写 tech.json——下游 perp_quotes.py 的 --spot 因此拿不到现货基准，"
+            "🌙 盘后隐含只能标 ⚪️，**不得拿别处价格凑数**。")
+        sys.exit(3)
 
     frames = {t: frame_for(raw, t) for t in dl}
     missing = [t for t, f in frames.items() if f is None]
@@ -1082,8 +1088,10 @@ def run(args):
         asof[mkt + "_ts"] = d
         asof_notes.extend(notes)
     if asof.get("US") is None:
-        err(f"错误：无法确定美股完整交易日（基准 {US_REF_TICKER} 无数据）。")
-        sys.exit(1)
+        # 同上：基准标的取不到日线是**取数失败**，不是参数错误 → 3。
+        err(f"错误：无法确定美股完整交易日（基准 {US_REF_TICKER} 无数据）——"
+            f"取数失败，常见于 Yahoo 限流。")
+        sys.exit(3)
     if missing:
         asof_notes.append("yfinance 未返回数据的标的（记 N/A，不估算）：" + ", ".join(missing))
 
@@ -1210,8 +1218,10 @@ def main():
     args = ap.parse_args()
 
     if args.macro_only and args.tickers:
+        # 参数错误 = 1。原本回 2，而 2 在本仓库保留给「依赖缺失」——
+        # 旗标写冲突会被报成「yfinance 没装」。
         err("错误：--macro-only 与 --tickers 互斥。")
-        sys.exit(2)
+        sys.exit(1)
 
     result, macro_only = run(args)
 

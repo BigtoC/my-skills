@@ -230,9 +230,10 @@ def load_deps():
         import yfinance as _yf
     except ImportError as exc:
         missing = getattr(exc, "name", None) or "yfinance / pandas / numpy / requests 之一"
+        # 依赖缺失 = 2（本仓库保留：1 参数错误｜2 依赖缺失｜3 取数失败｜4 量级自检未通过）。
         err(f"错误：缺少依赖 {missing}（{scrub(exc)}）。"
             f"请先 `pip install yfinance pandas numpy requests`。")
-        sys.exit(1)
+        sys.exit(2)
     try:
         import logging
 
@@ -1003,7 +1004,7 @@ def parse_signals(raw: str | None) -> list[int]:
         # 显式给了空的 --signals 就报错，不要静默当成「全部」：
         # 那会让一次本想只跑子集的调用悄悄跑满，多打十次 Yahoo 请求。
         err("错误：--signals 为空。省略该参数才是「跑全部」。")
-        sys.exit(2)
+        sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
     out: list[int] = []
     for chunk in re.split(r"[,\s，、]+", raw.strip()):
         if not chunk:
@@ -1011,21 +1012,21 @@ def parse_signals(raw: str | None) -> list[int]:
         if not chunk.isdigit():
             err(f"错误：--signals 只接受信号编号，实际「{chunk}」。"
                 f"本脚本支持：{','.join(str(i) for i in sorted(SIGNAL_SPECS))}。")
-            sys.exit(2)
+            sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
         n = int(chunk)
         if n in ELSEWHERE:
             err(f"错误：{ELSEWHERE[n]}")
-            sys.exit(2)
+            sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
         if n not in SIGNAL_SPECS:
             err(f"错误：信号 {n} 不由本脚本负责。"
                 f"本脚本支持：{','.join(str(i) for i in sorted(SIGNAL_SPECS))}"
                 f"（其余信号见 scripts/fred.sh 等取数脚本与 references/）。")
-            sys.exit(2)
+            sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
         if n not in out:
             out.append(n)
     if not out:
         err("错误：--signals 为空。")
-        sys.exit(2)
+        sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
     return sorted(out)
 
 
@@ -1044,7 +1045,8 @@ def run(signals: list[int], period: str) -> dict:
             err(f"  yfinance 报告：{line}")
         err("  若是 Too Many Requests（限流），等几分钟再跑；"
             "仍失败则这几项在报告里写「⚪️ 数据暂缺」+ 尝试过的来源 + 滞后周数。")
-        sys.exit(1)
+        # 取数失败 = 3。限流是取数失败，回 1 会让调度层读成「参数写错了」。
+        sys.exit(3)
 
     missing = [t for t in tickers if series_of(closes, t) is None]
 

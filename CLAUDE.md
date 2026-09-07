@@ -236,17 +236,27 @@ shared helpers are still copy-pasted, and that is the current state of the code,
 not an oversight waiting to be discovered:
 
 - **`scrub()`** (folds `$HOME`-ish absolute paths out of error text) is defined
-  **five times** — once in each of `industry_table.py`, `technicals.py`,
-  `perp_quotes.py`, `neocloud_credit_monitor.py`, `neocloud_credit_lite.py`.
-- **`rel_display()`** exists in **three** copies: the shared one in `_weekly.py`
-  (imported by the three scripts that need the weekly install) plus private
-  definitions in `neocloud_credit_monitor.py` and `neocloud_credit_lite.py`,
-  which do not import `_weekly` at all — the credit scripts read only this
-  skill's own `assets/`, so they have no reason to depend on the weekly lookup.
+  **ten times** (measured 2026-09-07, not a remembered number — re-run the grep):
+  `industry_table.py`, `technicals.py`, `perp_quotes.py`,
+  `neocloud_credit_monitor.py`, `neocloud_credit_lite.py`, `etf_holdings.py`,
+  `market.py`, `snapshot.py`, `crypto.py`, `stock_perp.py`.
+- **`rel_display()`** exists in **five** copies: the shared one in `_weekly.py`
+  (imported by the scripts that need the weekly install) plus private
+  definitions in `neocloud_credit_monitor.py`, `neocloud_credit_lite.py`,
+  `market.py` and `snapshot.py`. The credit scripts do not import `_weekly` at
+  all — they read only this skill's own `assets/`, so they have no reason to
+  depend on the weekly lookup.
 
-Treat these as five and three separate implementations: a fix to path scrubbing
+Treat these as ten and five separate implementations: a fix to path scrubbing
 (the public-repo leak rule below) is an N-place edit, and grepping for
-`_HOMEISH_RE` finds every copy. Converging them is fine, but `neocloud_credit_lite.py`
+`_HOMEISH_RE` finds every copy.
+
+⚠️ **Count the grep, do not trust this list.** It said five and three until
+2026-09-07, by which point the real numbers were ten and five — the two Python
+ports and three earlier scripts had been added without updating it. Path
+scrubbing is the public-repo leak rule, so a missed copy publishes a home
+directory into a Slack-pushed report; a stale count here is the most expensive
+kind of documentation rot in this file. Converging them is fine, but `neocloud_credit_lite.py`
 is the standard-library cloud variant and must not gain an import that ties it
 to the rest of the script directory.
 
@@ -447,7 +457,13 @@ the rolled baseline.
 - `diff` also validates before comparing. This is not redundant: an unvalidated
   diff silently emitted a plausible-but-wrong change summary (a dropped row read
   as a deliberate delisting) that would be published one step before `write`
-  caught it. Malformed input exits 1 with **zero bytes on stdout**.
+  caught it. Malformed input exits 1 with **zero bytes on stdout** — with one
+  deliberate exception added 2026-09-07: `diff --json` on malformed input exits
+  1 and writes an error object carrying `ok: false` / `summary_produced: false`
+  / `result: null`. That is not a diff result and cannot be mistaken for one,
+  and it exists because a caller narrow-reading stdout could not otherwise tell
+  "refused" from "ran and found nothing". The plain (non-`--json`) branch is
+  still byte-for-byte silent.
 - Validation covers header, row count, ticker set *and order* against
   `universe.json`, rating vocabulary, empty cells, and lazy placeholders like
   「见 Slack thread」.
@@ -560,7 +576,8 @@ python3 $S/scripts/baseline.py show > /tmp/t.md
 python3 $S/scripts/baseline.py validate /tmp/t.md     # expect exit 0
 python3 $S/scripts/baseline.py diff /tmp/t.md         # expect "本周评级无变动"
 
-# every malformed shape must be refused with empty stdout
+# every malformed shape must be refused with empty stdout (plain branch;
+# `--json` returns an error object with summary_produced:false instead)
 grep -v '^| ASML ' /tmp/t.md > /tmp/bad.md
 python3 $S/scripts/baseline.py diff /tmp/bad.md       # expect exit 1, 0 bytes on stdout
 ```

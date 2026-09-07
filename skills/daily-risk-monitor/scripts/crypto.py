@@ -1794,7 +1794,17 @@ class Dominance(object):
         if dom == "" or src == "":
             out.w("⚠️ 本次 dominance 读数缺 dominance_pct / source_key，跳过历史累积。")
             return
-        dom_history_append(out, today, dom, src, ts)
+        # ⚠️ fixture 回放**绝不落盘**。FIXTURE_DIR 只闸住传输层，历史档的写入
+        # 原本不受它管，於是一次离线回放会把**冻结的 fixture 读数**当成当日真读数
+        # append 进 assets/dominance_history.jsonl——那档未被 git 跟踪、无法还原，
+        # 且满 DOM_HISTORY_MAX 后会淘汰真纪录。回放写进去的那笔与真数据长得一模一样
+        # （连 source 都写 coingecko），日後分辨不出来，7d 腿的基准就被污染了。
+        # 实测：RISK_FIXTURE_DIR=… crypto.py dominance 会让真实历史档由 2 笔变 3 笔。
+        if FIXTURE_DIR:
+            out.w("↩︎ fixture 回放模式：**不写** %s（回放读数不得进真实历史档）；"
+                  "本次 7d 腿仅依现有历史计算。" % DOM_HISTORY_REL)
+        else:
+            dom_history_append(out, today, dom, src, ts)
         try:
             self.seven = dom_seven_day(today, dom, src)
         except Exception as e:
