@@ -826,7 +826,7 @@ def evaluate(fred, bonds, equities, cfg, history, today, max_quote_age=5):
         ev["verdict_line"] = "🔴 主题崩坏风险：项目层或上游已确认受损，回调不是机会"
         ev["verdict_tag"] = "🔴主题崩坏"
     elif t4 == RED:
-        ev["verdict_line"] = "🔴 个体融资链告警：走论点闸门，全体买入桶降级观察"
+        ev["verdict_line"] = "🔴 个体融资链告警（融资侧）：论点侧未破 → **不走论点闸门、不改分桶**，只减半节奏"
         ev["verdict_tag"] = "🔴融资链告警"
     elif financing in (AMBER, RED):
         # ⚪ 不得读成好消息：论点侧缺数据时只能说「未能确认」，不能说「未破」
