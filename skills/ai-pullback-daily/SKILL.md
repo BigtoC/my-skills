@@ -48,7 +48,7 @@ metadata:
 | `references/tripwires.md`              | 引爆点 5 项定义、状态口径、Fed 传导校准、汇总裁决 |
 | `references/data-acquisition.md`       | 任务时点、完整交易日判定、取数口径与指标定义      |
 | `references/perp-overnight.md`         | 24/7 永续盘后/休市隐含变动细则                    |
-| `references/drawdown-driver.md`        | 回调驱动源四分法（折现率 vs AI论点）              |
+| `references/drawdown-driver.md`        | 回调驱动源**五分法**（折现率 vs AI论点 + 预警未确认） |
 | `references/neocloud-credit.md`        | Neocloud 信用层 L1–L4 阈值与判定                  |
 | `references/buckets.md`                | 触发条件、四步分桶、风险标签、操作建议映射        |
 | `references/output-format.md`          | 双层报告结构、全局规则、Slack 推送、静默条件      |
@@ -315,7 +315,7 @@ python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --emit both
 
 ## 第四步 · 回调驱动源判定
 
-**读 `references/drawdown-driver.md`**，按四分法给出结论：① 折现率驱动 / ② AI论点驱动 / ③ 双杀 / ④ 个股事件（取不到 10Y 或 FOMC 日历时写 ⚪ 未判定，按原三分法执行，**不臆测**）。输入来自 `/tmp/tech.json` 的 `macro` 区块（**10Y/DXY 日变动、SMH−QQQ 板块相对强弱、折现率信号**；该区块缺失时才跑 `technicals.py --macro-only` 兜底，见第二步）＋ **WebSearch 补 2Y 与 2s10s 期限利差、FOMC 日历与隐含概率**（脚本不产出这几项，见第二步的字段边界）＋ 第三步的引爆点计数。
+**读 `references/drawdown-driver.md`**，按**五分法**给出结论：① 折现率驱动 / ② AI论点驱动 / ③ 双杀 / ④ 个股事件 / **⑤ 论点预警·价格未确认**（第 ⑤ 行是 2026-09-07 补的：四行条件都是合取，存在全不命中的组合，实测当天就落进去了——引爆点已报警而相对强弱反而是正的。**这种情况绝不可归成 ①**，那会激活一条两个前提都不成立的红线；详见该文件的编者注）（取不到 10Y 或 FOMC 日历时写 ⚪ 未判定，按原三分法执行，**不臆测**）。输入来自 `/tmp/tech.json` 的 `macro` 区块（**10Y/DXY 日变动、SMH−QQQ 板块相对强弱、折现率信号**；该区块缺失时才跑 `technicals.py --macro-only` 兜底，见第二步）＋ **WebSearch 补 2Y 与 2s10s 期限利差、FOMC 日历与隐含概率**（脚本不产出这几项，见第二步的字段边界）＋ 第三步的引爆点计数。
 
 **只描述状态，严禁预测利率路径**——只写市场隐含概率与官方日历，不写「我认为会降息/加息」。
 
