@@ -23,9 +23,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 88.49,
-        "as_of": "2026-09-02",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；按抓取当日 2026-09-03 的最近一个完整美股交易日 2026-09-02 记录，口径存疑但方向已由 2026-08-03 Octus/TechTimes「CoreWeave 贷款利差走阔 125bp」与 8 月下旬 CDS 走阔报导交叉印证）"
+        "price": 86.31,
+        "as_of": "2026-09-04",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取当日 2026-09-04 为完整美股交易日，按当日记录。同页并列显示 YTM：9.75%→12.44%、9.625%→12.39%、9.00%→12.08%、8.50%EUR→11.27%，与本地反解可交叉核对）"
       }
     },
     {
@@ -43,9 +43,9 @@
       "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
       "is_l1_benchmark": true,
       "quote": {
-        "price": 89.12,
-        "as_of": "2026-09-02",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；按抓取当日 2026-09-03 的最近一个完整美股交易日 2026-09-02 记录，口径存疑但方向已由 2026-08-03 Octus/TechTimes「CoreWeave 贷款利差走阔 125bp」与 8 月下旬 CDS 走阔报导交叉印证）"
+        "price": 89.74,
+        "as_of": "2026-09-04",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取当日 2026-09-04 为完整美股交易日，按当日记录。同页并列显示 YTM：9.75%→12.44%、9.625%→12.39%、9.00%→12.08%、8.50%EUR→11.27%，与本地反解可交叉核对）"
       }
     },
     {
@@ -62,9 +62,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 89.44,
-        "as_of": "2026-09-02",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；按抓取当日 2026-09-03 的最近一个完整美股交易日 2026-09-02 记录，口径存疑但方向已由 2026-08-03 Octus/TechTimes「CoreWeave 贷款利差走阔 125bp」与 8 月下旬 CDS 走阔报导交叉印证）"
+        "price": 88.14,
+        "as_of": "2026-09-04",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取当日 2026-09-04 为完整美股交易日，按当日记录。同页并列显示 YTM：9.75%→12.44%、9.625%→12.39%、9.00%→12.08%、8.50%EUR→11.27%，与本地反解可交叉核对）"
       }
     },
     {
@@ -82,9 +82,9 @@
       "rating_cohort": "single_b",
       "note": "欧元计价，不与美债曲线比；只对 EUR HY 指数(BAMLHE00EHYIOAS)做相对比较",
       "quote": {
-        "price": 87.83,
-        "as_of": "2026-09-02",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；按抓取当日 2026-09-03 的最近一个完整美股交易日 2026-09-02 记录，口径存疑但方向已由 2026-08-03 Octus/TechTimes「CoreWeave 贷款利差走阔 125bp」与 8 月下旬 CDS 走阔报导交叉印证）"
+        "price": 87.32,
+        "as_of": "2026-09-04",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取当日 2026-09-04 为完整美股交易日，按当日记录。同页并列显示 YTM：9.75%→12.44%、9.625%→12.39%、9.00%→12.08%、8.50%EUR→11.27%，与本地反解可交叉核对）"
       }
     },
     {
