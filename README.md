@@ -126,7 +126,7 @@ they keep runtime state that changes on every run:
   is only the fallback for when this file is missing, so deleting it costs a day
   of tier-to-tier comparison, not the report itself.
 - **BTC dominance history.** `skills/daily-risk-monitor/assets/dominance_history.jsonl`
-  also **does not ship with the skill**. `scripts/crypto.sh dominance` appends one
+  also **does not ship with the skill**. `scripts/crypto.py dominance` appends one
   record per day (a same-day rerun overwrites its own record, and the file is
   capped at 90 records), because signal 16's "7d drop > 3%" leg has no free
   same-caliber source: what the free tier lacks is the market-cap *history
@@ -141,7 +141,7 @@ they keep runtime state that changes on every run:
   denominators. Seeing the file modified in `git status` is normal, and
   committing it is what preserves the history the 7d leg depends on —
   `git checkout`-ing it away costs seven days of re-accumulation.
-  `scripts/crypto.sh dominance --history` prints what has accumulated (no
+  `scripts/crypto.py dominance --history` prints what has accumulated (no
   network) when you need to check.
 - **Cross-skill dependency.** `ai-pullback-daily` does not carry its own quality
   table. It reads the industry ratings from

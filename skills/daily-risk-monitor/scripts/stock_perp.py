@@ -40,8 +40,13 @@
 依赖：python3 + requests（stdlib urllib 在本机对 FRED 一律 CERTIFICATE_VERIFY_FAILED）。
 退出码：0 正常｜1 参数错误｜2 依赖缺失｜3 取数失败（数据暂缺）｜4 判定取错市场
 
-—— 本档是 stock_perp.sh 的 Python 埠。行为以该 shell 版为规格，
-   逐位元组比对由 oracle（RISK_FIXTURE_DIR 回放）把关。
+—— 本档是信号 18 取数的**唯一实现**。它原本是 stock_perp.sh 的 Python 版，行为
+   以该 shell 版为规格，逐位元组比对由 oracle（RISK_FIXTURE_DIR 回放）把关；
+   **`stock_perp.sh` 已於 2026-09-07 切换後删除**（回滚靠 git）。下文提到 shell 版
+   的地方都是与那支已删除前身的差别记录，不是还存在的另一份实作。
+   ⚠️ oracle 只走 fixture 路径，**证不出真网传输层**：迁移期间 `http_request` 成功时
+   回 `False`（契约是「fail_reason 非 None 即失败」），fixture 路径回 None 所以 oracle
+   119/130 全绿，真网却 100% 失败。改传输层後必须跑一次真网比对，不能只看 oracle。
 
 ════════════════════ 三个刻意的决定，改埠前先读完 ════════════════════════
 
@@ -624,7 +629,12 @@ def http_request(method, url, body=None):
             else:
                 r = requests.post(url, headers=headers,
                                   data=(body or "").encode("utf-8"), timeout=TIMEOUT)
-            return str(r.status_code), r.content, [], False
+            # fail_reason 的契约是「**非 None 即失败**」（见本函式上方注解）。
+            # 这里回 False 会让 `fail_reason is not None` 成立 → 每一次**成功**的
+            # 请求都被读成传输层失败，并把 False 当成失败原因印出来。
+            # fixture 路径回的是 None，所以 oracle 全绿而真网 100% 坏 ——
+            # 回放模式根本不走这一行。成功一律 None。
+            return str(r.status_code), r.content, [], None
         except Exception as exc:              # 传输层任何失败（DNS／TLS／逾时／断线）
             # 以前这里是 `pass`，於是「为什么连不上」被整个吞掉，操作者只看得到
             # 一句「连线失败」，得自己重打一次 curl 才知道是逾时还是 TLS。

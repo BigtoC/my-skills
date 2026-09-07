@@ -28,7 +28,7 @@
 ## 1. 范围：18 项，按 governing reference 分 5 组
 
 契约只覆盖**靠检索取数**的项。脚本能取的（FRED、market.py、cape.sh、cnn_fng.sh、
-crypto.sh 的 14/16/17、stock_perp）不进契约，照 `SKILL.md` 第 1 步原样跑。
+crypto.py 的 14/16/17、stock_perp）不进契约，照 `SKILL.md` 第 1 步原样跑。
 
 | 组 | 加载的参考文件 | 项数 | 检索项 |
 |----|----------------|------|--------|
@@ -280,7 +280,7 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
 | `drm-sig12-insider-buy-sell` | 12 内部人 | B | 纯方向 / 标量 | **第 7 项** | GuruFocus 403 是已知实测结果 |
 | `drm-sig13-ipo-issuance` | 13 IPO | B | 记录表 | — | 两个口径分别报 |
 | `drm-sig14-funding-websearch-tier3` | 14 资金费率 | C | 标量 | — | **仅第三级兜底**（Binance → Hyperliquid → 本项） |
-| `drm-sig15-liquidations` | 15 24h 清算 | C | 多值 | — | `crypto.sh liquidations` **一定 exit 3**，那是正常结局 |
+| `drm-sig15-liquidations` | 15 24h 清算 | C | 多值 | — | `crypto.py liquidations` **一定 exit 3**，那是正常结局 |
 | `drm-sig16-dominance-antisearch` | 16 BTC Dominance | C | — | — | **不派发。禁止检索，见 §9.C** |
 | `drm-sig25-conference-board-lei` | 25 LEI | E | 标量 | — | 要的是 6 个月年化变化率 |
 | `drm-sig27-buffett-crosscheck` | 27 Buffett | E | 标量 | — | **仅对照**，不得替代 FRED 计算 |
@@ -385,13 +385,13 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
 
 - **信号 14**：兜底顺序是写死的
   `Binance` → `Hyperliquid` → `web_search coinglass` → 标注「数据暂缺」（`:90-92`）。
-  **本契约只覆盖第三级**；前两级由 `crypto.sh` 走完再说。
+  **本契约只覆盖第三级**；前两级由 `crypto.py` 走完再说。
   第二级的触发时机是 Binance 回 `451` / `403`、超时、或字段缺失。
   拿到第三级的数必须**先换算再比阈值**（`:55-67`）：阈值 0.05% 是 **8 小时口径**，
   Binance 默认 8h 直接用、部分币种 4h **× 2**、Hyperliquid **1 小时 × 8**；
   报告里**同时给出 8h 费率和年化**（`年化% = 8h费率 × 3 × 365`）。
   跨所不可直接跨日比较——「不同交易所费率可以差一倍」，所以 `caliber` 与 `source_label` 都必填。
-- **信号 15**：`crypto.sh liquidations` **一定 exit 3**（`scripts/crypto.sh:1007`），
+- **信号 15**：`crypto.py liquidations` **一定 exit 3**（`scripts/crypto.py:1392` `do_liquidations`），
   这是它的正常结局，不是故障——本项没有任何免费公开源（Coinglass v4 需 API key）。
   脚本会实测并印出每个来源的 HTTP 码，那份清单**直接充当 `attempted[]`**。
   接到 exit 3 就走 `web_search "coinglass liquidations 24h"`，报告要写全三件事（`SKILL.md:140`）：
@@ -405,11 +405,11 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
   **已被该文件开头的编者注收紧**（`signals-c-crypto.md:5-11`）：
   CoinGecko 免费层无全市场市值历史序列（`/global/market_cap_chart` 实测 HTTP 401），
   **换到别家会引入第三套分母口径**——CoinGecko 与 CoinPaprika 实测同日 59.1% vs 56.9%，
-  差约 2pt，**而阈值只有 2%**。因此 `crypto.sh` 改为按天累积同源本地历史
+  差约 2pt，**而阈值只有 2%**。因此 `crypto.py` 改为按天累积同源本地历史
   `assets/dominance_history.jsonl` 自答 7d 腿，并强制校验基准笔与今日**同源**，异源一律拒绝比较记 ⚪️。
   原文的话是：**「不要为了补这条腿去换数据源 —— 缺的是历史序列，不是当日值。」**
-  ⚠️ `crypto.sh` 在两家全灭时确实会印一句 `web_fetch coingecko / tradingview BTC.D` 的 next_step
-  （`scripts/crypto.sh:964`）——那是**当日值**的兜底，**不是**给 7d 腿开的口子。
+  ⚠️ `crypto.py` 在两家全灭时确实会印一句 `web_fetch coingecko / tradingview BTC.D` 的 next_step
+  （`scripts/crypto.py:1969`）——那是**当日值**的兜底，**不是**给 7d 腿开的口子。
   三种 ⚪️（历史不足 / 历史断层 / 来源不同）的措辞要照抄脚本，
   且**绝不能因为「其余条件都正常」就推断这条腿安全**（`SKILL.md:141`）。
 

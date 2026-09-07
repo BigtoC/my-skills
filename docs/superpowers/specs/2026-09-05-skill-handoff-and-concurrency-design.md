@@ -3,6 +3,7 @@
 - 日期：2026-09-05
 - 分支：`feat/script-output-contract`（原名 `feat/subagent-architecture`，因设计否决了 subagent 拆分而改名）
 - 状态：设计已确认，待实施
+- **後注（2026-09-07）**：本文是 2026-09-05 当日的设计快照，**不再更新**。文中所有 `crypto.sh` / `stock_perp.sh` 的档名与实测秒数都是**当时**对 shell 版量到的；那两支已於 2026-09-07 切换成 `crypto.py` / `stock_perp.py` 并删除（回滚靠 git）。这里刻意保留旧档名——改掉就会把当时的实测数据挂到一份没量过的实作上。现况看 `skills/daily-risk-monitor/SKILL.md` 与根目录 `CLAUDE.md`。
 - 触发问题：①「可以把这些 skills 改成 subagent 吗，获取数据的是一个 agent，分析数据的是一个 agent，避免上下文过长与污染」②「整个流程太慢了，能不能并发获取数据」
 
 ---

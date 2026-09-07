@@ -81,11 +81,11 @@ Three things about it are load-bearing and easy to erode:
   | host | rule | evidence |
   |---|---|---|
   | FRED | **never** send a browser User-Agent | Chrome UA → 25–30s ReadTimeout, from curl *and* `requests`. curl-like or `requests`' default UA → HTTP 200 in ~0.5s |
-  | Yahoo | **always** send one | a bare `requests.Session` gets throttled (`market.py:303`); `stock_perp.sh:28` records a stable 429 from the chart endpoint |
+  | Yahoo | **always** send one | a bare `requests.Session` gets throttled (`market.py:303`); `stock_perp.py:29` records a stable 429 from the chart endpoint |
   | CNN F&G | needs full browser UA **+ Referer + Origin** | otherwise HTTP 418 「I'm a teapot. You're a bot.」 |
 
   These do **not** conflict at the language level — only per-host, which one
-  program handles with per-host headers. `stock_perp.sh` already straddles both
+  program handles with per-host headers. `stock_perp.py` already straddles both
   (Hyperliquid JSON + FRED CSV).
 
   > An earlier version of this bullet claimed **"FRED must use curl (python
@@ -120,12 +120,23 @@ Three things about it are load-bearing and easy to erode:
 It shares no code with `ai-pullback-daily` even though both read Hyperliquid's
 `xyz` pool — each keeps its own fetcher, and they must not be merged.
 
-### The crypto / stock_perp Python ports — a bounded parallel period
+### crypto / stock_perp are Python now — the shell versions are gone
 
-`scripts/crypto.py` and `scripts/stock_perp.py` are committed **alongside**
-`crypto.sh` and `stock_perp.sh`, not in place of them. `SKILL.md` still invokes
-the `.sh`; nothing is switched over. The ports drop `jq` and `awk` entirely and
-need `python3` + `requests`.
+`scripts/crypto.py` and `scripts/stock_perp.py` are the **only** implementations
+of signals 14–18. `scripts/crypto.sh` and `scripts/stock_perp.sh` were deleted
+on 2026-09-07 when `SKILL.md` step 1.1 switched its two `bg` lines to
+`python3 "$SKILL_DIR/scripts/crypto.py" all --json` and
+`python3 "$SKILL_DIR/scripts/stock_perp.py" --from-fred --json`. **Rollback is
+git alone** — the deleted files are in history; do not restore them into the
+tree. Two implementations silently disagreeing about the same verdict is the
+worst failure this skill family has (see the neocloud credit twins, whose two
+`TH` dicts make every recalibration a two-place edit), and a second copy of
+`crypto` / `stock_perp` would be that trap over signals 14–18.
+
+The switch moved `jq` off the critical path: **`cnn_fng.sh` is now the only
+script that needs it** (measured: 10 invocations; `fred.sh` and `cape.sh` have
+zero — their sources are CSV and HTML). `crypto.py` / `stock_perp.py` need
+`python3` + `requests` and no `jq` / `awk` / `curl`.
 
 Where the language split falls, and why — settled, not to be re-litigated:
 
@@ -137,34 +148,38 @@ Where the language split falls, and why — settled, not to be re-litigated:
   `-w '%{url_effective} %{http_code}'` keeps **per-URL status attribution**, so
   the ⚪️ per-series accounting and `fred.sh`'s ordering invariant survive in
   shell.
-- **What Python uniquely buys is two things curl cannot express.**
+- **What Python uniquely bought is two things curl cannot express.**
   *Heterogeneous-block parallelism*: `crypto.py` fires its four blocks at four
   different hosts, fences each future separately, and reduces `OKCOUNT` /
   `MISSING` in fixed submission order — one bad field can no longer discard
-  three good blocks. And *named fields* replacing `stock_perp.sh`'s positional
-  TSV, whose one row is addressed under **three incompatible index bases**
-  (awk `$1…$16`, jq `.[0]…[15]`, and a `read -r` variable list).
+  three good blocks. And *named fields* replacing the old positional TSV, whose
+  one row was addressed under **three incompatible index bases** (awk
+  `$1…$16`, jq `.[0]…[15]`, and a `read -r` variable list).
 
-**The parallel period is bounded and ends in deleting the `.sh`.** Two
-implementations silently disagreeing about the same verdict is the worst failure
-this skill family has — named above for the neocloud credit twins, whose two
-`TH` dicts make every recalibration a two-place edit. A permanent second copy of
-`crypto` / `stock_perp` is that same trap, over signals 14–18. Do not settle
-into keeping both.
+The divergence that made lingering untenable is now closed. When Hyperliquid's
+`assetCtxs` array is shorter than `universe`, the shell version let `jq`'s
+`transpose` pad with null, the empty fields survived into the `--json` branch's
+`tonumber`, and `set -euo pipefail` propagated jq's exit **5** — a code this
+repo does not reserve — with unparseable JSON on stdout. `stock_perp.py` records
+that market as `MissingMarket` with a reason, keeps both markets in the output,
+and exits **3**. That defect is therefore gone rather than fixed; the record of
+it stays in `skills/daily-risk-monitor/references/known-traps.md`, marked
+resolved-by-migration, because it documents a failure that really happened.
 
-One divergence already exists, and it argues against lingering: when
-Hyperliquid's `assetCtxs` array is shorter than `universe`, `jq`'s `transpose`
-pads with null, the empty fields survive into the `--json` branch's `tonumber`,
-and `set -euo pipefail` propagates jq's exit **5** — a code this repo does not
-reserve — with unparseable JSON on stdout. `stock_perp.py` instead records that
-market as `MissingMarket` with a reason, keeps both markets in the output, and
-exits **3**. The shell defect is still present.
-
-**The migration oracle is what decides when the `.sh` can go**: frozen upstream
-payloads plus a golden stdout / stderr / exit code per case, replayed offline
-through the `RISK_FIXTURE_DIR` / `RISK_FIXTURE_NOW` hook both versions already
-carry. It **currently lives outside the repo, in scratch space** — no fixture or
-golden file is checked in, so a fresh clone cannot replay it.
+**A migration oracle is not sufficient evidence to switch. Run a live
+interleaved comparison first.** The oracle — frozen upstream payloads plus a
+golden stdout / stderr / exit code per case, replayed offline through the
+`RISK_FIXTURE_DIR` / `RISK_FIXTURE_NOW` hook both versions carry — reached
+119/130 green while `stock_perp.py` was **100% broken against the real
+network**: its `http_request` returned `False` on success, but the contract is
+"a non-`None` `fail_reason` means failure", so every successful fetch was read
+as a transport-layer failure. The fixture path returned `None` there, so the
+oracle never exercised it. The oracle covers *parsing and rendering*; it cannot
+cover the transport layer it replaces. So for any future port: alternate
+`sh → py → sh → py` against live upstreams and diff every decision-relevant
+field before deleting anything. The oracle still **currently lives outside the
+repo, in scratch space** — no fixture or golden file is checked in, so a fresh
+clone cannot replay it.
 
 ### How the two AI-compute skills couple
 
@@ -292,8 +307,9 @@ fine:
   `triggers.hard_threshold_4_greed_burst: false` when it could not evaluate the
   trigger at all (only `peak.value: null` gave it away) — and that is *hard
   threshold #4*, where ⚪️ must be deducted from the denominator (`N = 7 − M`)
-  and `false` is not. `fred.sh`, `cape.sh` and `stock_perp.sh` all hardcoded
-  `"ok":true` while a conditional `sanity.pass` said otherwise.
+  and `false` is not. `fred.sh`, `cape.sh` and `stock_perp.sh` (the since-deleted
+  shell version — this bullet is the 2026-09-05 audit record, kept as written)
+  all hardcoded `"ok":true` while a conditional `sanity.pass` said otherwise.
 - **Genuinely absent** — no field at all. `neocloud_credit_monitor.py` popped
   the `cfg` key its own "no live CDS data (this layer's biggest blind spot)"
   line derives from; `snapshot.py show --json` dumped raw state and skipped
