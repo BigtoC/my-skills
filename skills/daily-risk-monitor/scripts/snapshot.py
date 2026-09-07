@@ -419,7 +419,12 @@ def hard_summary(data: dict) -> dict:
     hard = as_map(data.get("hard_thresholds"))
     syms = {i: unwrap(hard.get(i), "symbol") for i in HARD_IDS}
     fired = [i for i in HARD_IDS if syms.get(i) == "✅"]
-    unknown = [i for i in HARD_IDS if syms.get(i) == "⚪️"]
+    # 判不了的不只 ⚪️：符号缺失／空／不在 HARD_SYMBOLS 里（打错、结构坏了）
+    # 一样是「不知道」。只认字面 ⚪️ 会让这些项既不进分子也不进 unknown，
+    # 於是 denominator 仍是 7、worst_case 少算、low_confidence 也不触发——
+    # 等於把「判不了」静默记成「查过了、没触发」，正是 ⚪️ 计数规则要挡的那件事。
+    unknown = [i for i in HARD_IDS
+               if syms.get(i) == "⚪️" or (syms.get(i) or "") not in HARD_SYMBOLS]
     n = len(HARD_IDS) - len(unknown)
     return {
         "symbols": syms,
@@ -470,7 +475,8 @@ def hard_rows(h: dict) -> list[dict]:
             "meaning": HARD_MEANING.get(sym) if valid else None,
             "valid": valid,
             "fired": fired,
-            "counted_in_denominator": sym != "⚪️",
+            # 与 hard_summary 同一口径：⚪️ 与「不合法/缺失」都不计入分母
+            "counted_in_denominator": sym in HARD_SYMBOLS and sym != "⚪️",
         })
     return rows
 

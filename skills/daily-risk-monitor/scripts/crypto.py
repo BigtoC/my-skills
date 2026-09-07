@@ -449,7 +449,10 @@ def fx_serve(slug, out):
         code_path = os.path.join(FIXTURE_DIR, slug + ".code")
         if os.path.isfile(code_path):
             with open(code_path, "r", encoding="utf-8") as f:
-                code = f.read()
+                code = f.read().strip()   # ⚠ 必须 strip：`echo 200 > x.code`
+                # 会写进结尾换行，而所有消费端比的是 `code != "200"`，
+                # 於是一个健康的回放被读成 HTTP 失败、整条回退链被触发。
+                # fixture 是这两支埠**唯一**的离线验证手段，坏在这里等於验证白做。
         else:
             code = "200"
         return code, body

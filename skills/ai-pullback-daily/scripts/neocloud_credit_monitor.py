@@ -826,8 +826,24 @@ def evaluate(fred, bonds, equities, cfg, history, today, max_quote_age=5):
         ev["verdict_line"] = "🔴 主题崩坏风险：项目层或上游已确认受损，回调不是机会"
         ev["verdict_tag"] = "🔴主题崩坏"
     elif t4 == RED:
-        ev["verdict_line"] = "🔴 个体融资链告警（融资侧）：论点侧未破 → **不走论点闸门、不改分桶**，只减半节奏"
-        ev["verdict_tag"] = "🔴融资链告警"
+        # ⚪ 不得读成好消息。worst() 刻意让 ⚪ 不参与升档（缺数据不得推高结论），
+        # 所以 thesis 会在 L2=⚪ / L4=🟢 时回 GREEN——那是「没有证据说破了」，
+        # **不是「有证据说没破」**。下面的 🟡 分支早就用 both_green 区分了这两件事，
+        # 这一支当初漏了，於是 L2 不可判定时照样印「论点侧未破」。
+        # buckets.md 的编者注写的正是这条：「L2 是 ⚪ 时不算「L2 未破」——不可判定不是安全」。
+        both_green = ev["L2"]["state"] == GREEN and ev["L4"]["state"] == GREEN
+        ev["thesis_confirmed"] = both_green
+        if both_green:
+            ev["verdict_line"] = ("🔴 个体融资链告警（融资侧）：论点侧 L2🟢/L4🟢 已确认未破 → "
+                                  "**不走论点闸门、不改分桶**，只减半节奏")
+            ev["verdict_tag"] = "🔴融资链告警（论点侧已确认）"
+        else:
+            ev["verdict_line"] = (
+                f"🔴 个体融资链告警（融资侧）：论点侧 {'、'.join(intact)} "
+                f"**数据不足、未能确认未破**（缺项不得当作未破）→ 分桶维持"
+                f"（红线：只有 L2/L4 才走论点闸门，本轮无证据说它们破了），"
+                f"但结论建立在已取到的那一层上，节奏减半并在两版报告写明缺哪一层")
+            ev["verdict_tag"] = (f"🔴融资链告警·L2{ev['L2']['state']}/L4{ev['L4']['state']}未能确认")
     elif financing in (AMBER, RED):
         # ⚪ 不得读成好消息：论点侧缺数据时只能说「未能确认」，不能说「未破」
         both_green = ev["L2"]["state"] == GREEN and ev["L4"]["state"] == GREEN
