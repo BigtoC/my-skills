@@ -624,23 +624,49 @@ def _render(out, res, a):
     # 以前它自己重算条件、漏看 L2s/L4s，于是 L2 为⚪（报价过期）时表里写⚪、
     # 同一次输出的精简版却断言「L2/L4未破」——把「数据缺失」讲成「论点侧完好」，
     # 正是本框架反复强调最贵的那个错误。
+    # 论点侧四种形态，动作不同，**不得合并**（与 monitor 同一条，见该档同处注解）：
+    # 两层皆🟢 / 任一层🟡（是读数不是缺数据） / 一层⚪另一层🟢 / 两层皆⚪（闸门不可判定）。
+    # worst() 只在全部输入为 ⚪ 时才回 ⚪，所以 thesis == GREY ⟺ L2 与 L4 同时 ⚪。
+    _th_grey  = [n for n, st_ in (("L2", L2s), ("L4", L4s)) if st_ == GREY]
+    _th_amber = [n for n, st_ in (("L2", L2s), ("L4", L4s)) if st_ == AMBER]
+    # 三个字段无条件写：JSON 等价律要求每条分支下都存在（monitor 同名同义）。
+    _th_confirmed = (thesis == GREEN and not _th_grey and not _th_amber
+                     and not L2_inc and not L4_inc)
+    _th_evaluable = (thesis != GREY)
     if thesis == RED:
         verdict = "🔴 主题崩坏风险：项目层或上游已确认受损，回调不是机会"
         tag = "🔴主题崩坏"
     elif t4 == RED:
-        # 与 monitor 同一条：⚪ 不得读成「已确认未破」（见该档同处注解）。
-        _both_green = (E2["state"] == GREEN and E4["state"] == GREEN)
-        verdict = ("🔴 个体融资链告警（融资侧）：论点侧 L2🟢/L4🟢 已确认未破 → "
-                   "**不走论点闸门、不改分桶**，只减半节奏") if _both_green else (
-                  f"🔴 个体融资链告警（融资侧）：论点侧 L2{E2['state']}/L4{E4['state']} "
-                  f"**数据不足、未能确认未破**（缺项不得当作未破）→ 分桶维持，"
-                  f"节奏减半并在报告写明缺哪一层")
-        tag = "🔴融资链告警"
+        if _th_confirmed:
+            verdict = ("🔴 个体融资链告警（融资侧）：论点侧 L2🟢/L4🟢 已确认未破 → "
+                       "**不走论点闸门、不改分桶**，只减半节奏")
+            tag = "🔴融资链告警（论点侧已确认）"
+        elif not _th_evaluable:
+            # L2 与 L4 同时 ⚪：有活着的融资侧 🔴，却无法查它是否已波及论点侧。
+            # 不写「未能确认未破」——那话预设了「还没破」；这里连判都判不了。
+            verdict = ("🔴 融资侧告警，且论点侧 L2⚪/L4⚪ **两条腿同时不可判定** → 闸门无法评估。"
+                       "按 buckets.md 第三条编者注（⚪ 且融资侧 🔴）取保守侧：**买入桶降级观察**；"
+                       "标签写「⚠️论点侧不可判定」而非「⚠️论点受损」——本轮无证据说论点破了")
+            tag = "🔴融资链告警·论点侧不可判定(L2⚪/L4⚪)"
+        elif _th_amber:
+            verdict = (f"🔴 个体融资链告警（融资侧）：论点侧 L2{L2s}/L4{L4s}——"
+                       f"{'/'.join(_th_amber)} 已转 🟡（**是读数、不是缺数据**），尚未达 🔴，"
+                       f"故不走论点闸门、分桶维持，只转保守节奏")
+            tag = f"🔴融资链告警·论点侧{'/'.join(_th_amber)}🟡转弱"
+        else:
+            verdict = (f"🔴 个体融资链告警（融资侧）：论点侧 L2{L2s}/L4{L4s} "
+                       f"**数据不足、未能确认未破**（缺项不得当作未破）→ 分桶维持，"
+                       f"节奏减半并在报告写明缺哪一层")
+            # 精简版这一行是唯一进手机的那行，不能只说「融资链告警」而不说缺在哪
+            # ——monitor 的 tag 早就点名了，这里以前没有，两版於是不同格式。
+            tag = f"🔴融资链告警·L2{L2s}/L4{L4s}未能确认"
     elif fin in (AMBER, RED):
         # ⚪ 不得读成好消息：论点侧缺数据时只能说「未能确认」，不能说「未破」
-        both_green = (L2s == GREEN and L4s == GREEN and not L2_inc and not L4_inc)
+        both_green = _th_confirmed
         side = ("未破 → 主题仍在，**不降级买入桶**" if both_green
-                else "**数据不足、未能确认**（缺项不计入升档，但也不得当作未破）→ 分桶维持、节奏转保守")
+                else (f"其中 {'/'.join(_th_amber)} 已转 🟡（**是读数、不是缺数据**）→ 分桶维持、节奏转保守"
+                      if _th_amber else
+                      "**数据不足、未能确认**（缺项不计入升档，但也不得当作未破）→ 分桶维持、节奏转保守"))
         verdict = (f"🟡 可买的回撤（限定在融资成本这条腿）：{moved} 已动，衡量的是「股东被稀释多少」；"
                    f"L2{L2s}、L4{L4s}（项目层与上游）{side}")
         tag = (f"🟡可买的回撤（{moved}动，L2/L4未破）" if both_green
@@ -663,6 +689,9 @@ def _render(out, res, a):
     res["eval"]["tripwire_4"] = {"state": t4, "why": why,
                                  "thesis_side": thesis, "financing_side": fin,
                                  "moved_layers": moved}
+    res["eval"]["thesis_confirmed"] = _th_confirmed
+    res["eval"]["thesis_evaluable"] = _th_evaluable
+    res["eval"]["thesis_grey_layers"] = list(_th_grey)
     res["eval"]["verdict_line"] = verdict
     res["eval"]["verdict_tag"] = tag
 

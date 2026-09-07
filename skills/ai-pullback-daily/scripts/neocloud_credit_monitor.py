@@ -819,6 +819,24 @@ def evaluate(fred, bonds, equities, cfg, history, today, max_quote_age=5):
     ev["tripwire_4"] = {"state": t4, "why": why,
                         "thesis_side": thesis, "financing_side": financing}
 
+    # 论点侧共四种形态，动作不同，**不得合并**：
+    #   两层皆🟢          → 已确认未破
+    #   任一层🟡          → 论点侧本身在转弱：那是**读数**，不是缺数据
+    #   一层⚪、另一层🟢  → 未能确认未破（结论只建立在有数据的那一层上）
+    #   两层皆⚪          → 闸门**不可判定**。worst() 只在全部输入为 ⚪ 时才回 ⚪，
+    #                       所以 thesis == GREY ⟺ L2 与 L4 同时 ⚪。
+    # 第四种是 2026-09-08 补的：SKILL.md 的 thesis_side 路由表原本只有 🔴 和 🟢/🟡 两行，
+    # ⚪ 无处可去，於是 2026-09-07 那轮（L2 报价 39 天前 ⚪ + L4 因 Yahoo 全面 429 断源 ⚪）
+    # 只能由报告自行裁量。buckets.md 第三条编者注现在定了：**仅当融资侧同时为 🔴**
+    # ——有活着的告警却查不到它是否越过 L2/L4——才取保守侧降桶；⚪ 单独出现不降桶。
+    _th_grey  = [lay for lay in ("L2", "L4") if ev[lay]["state"] == GREY]
+    _th_amber = [lay for lay in ("L2", "L4") if ev[lay]["state"] == AMBER]
+    # 这三个字段**无条件**写：JSON 等价律要求每条分支下都存在，否则调用方读不到
+    # 就只能自己比对两层状态——正是本次要消掉的那一步。
+    ev["thesis_confirmed"] = (thesis == GREEN and not _th_grey and not _th_amber)
+    ev["thesis_evaluable"] = (thesis != GREY)
+    ev["thesis_grey_layers"] = list(_th_grey)
+
     # 判读：可买的回撤 vs 主题崩坏（须点名实际动了哪几层，不用固定模板）
     moved = [lay for lay in ("L1", "L3") if ev[lay]["state"] in (AMBER, RED)]
     intact = [f"{lay}{ev[lay]['state']}" for lay in ("L2", "L4")]
@@ -831,12 +849,26 @@ def evaluate(fred, bonds, equities, cfg, history, today, max_quote_age=5):
         # **不是「有证据说没破」**。下面的 🟡 分支早就用 both_green 区分了这两件事，
         # 这一支当初漏了，於是 L2 不可判定时照样印「论点侧未破」。
         # buckets.md 的编者注写的正是这条：「L2 是 ⚪ 时不算「L2 未破」——不可判定不是安全」。
-        both_green = ev["L2"]["state"] == GREEN and ev["L4"]["state"] == GREEN
-        ev["thesis_confirmed"] = both_green
-        if both_green:
+        if ev["thesis_confirmed"]:
             ev["verdict_line"] = ("🔴 个体融资链告警（融资侧）：论点侧 L2🟢/L4🟢 已确认未破 → "
                                   "**不走论点闸门、不改分桶**，只减半节奏")
             ev["verdict_tag"] = "🔴融资链告警（论点侧已确认）"
+        elif not ev["thesis_evaluable"]:
+            # L2 与 L4 同时 ⚪：有一个活着的融资侧 🔴，却无法查它是否已波及论点侧。
+            # 不写「未能确认未破」——那话预设了「还没破」；这里连判都判不了。
+            # 动作归 buckets.md 第三条编者注，本行只陈述状态并指名依据。
+            ev["verdict_line"] = (
+                "🔴 融资侧告警，且论点侧 L2⚪/L4⚪ **两条腿同时不可判定** → 闸门无法评估。"
+                "按 buckets.md 第三条编者注（⚪ 且融资侧 🔴）取保守侧：**买入桶降级观察**；"
+                "标签写「⚠️论点侧不可判定」而非「⚠️论点受损」——本轮无证据说论点破了")
+            ev["verdict_tag"] = "🔴融资链告警·论点侧不可判定(L2⚪/L4⚪)"
+        elif _th_amber:
+            # 🟡 是读数不是缺数据。说「数据不足」会把一个真实的转弱读数讲成取数失败。
+            ev["verdict_line"] = (
+                f"🔴 个体融资链告警（融资侧）：论点侧 {'、'.join(intact)}——"
+                f"{'/'.join(_th_amber)} 已转 🟡（**是读数、不是缺数据**），尚未达 🔴，"
+                f"故按 thesis_side 路由表第二行**不走论点闸门、分桶维持**，只转保守节奏")
+            ev["verdict_tag"] = f"🔴融资链告警·论点侧{'/'.join(_th_amber)}🟡转弱"
         else:
             ev["verdict_line"] = (
                 f"🔴 个体融资链告警（融资侧）：论点侧 {'、'.join(intact)} "
@@ -846,9 +878,11 @@ def evaluate(fred, bonds, equities, cfg, history, today, max_quote_age=5):
             ev["verdict_tag"] = (f"🔴融资链告警·L2{ev['L2']['state']}/L4{ev['L4']['state']}未能确认")
     elif financing in (AMBER, RED):
         # ⚪ 不得读成好消息：论点侧缺数据时只能说「未能确认」，不能说「未破」
-        both_green = ev["L2"]["state"] == GREEN and ev["L4"]["state"] == GREEN
+        both_green = ev["thesis_confirmed"]
         side = ("未破 → 主题仍在" if both_green else
-                "**数据不足、未能确认**（缺项不计入升档，但也不得当作未破）→ 分桶维持、节奏转保守")
+                (f"其中 {'/'.join(_th_amber)} 已转 🟡（**是读数、不是缺数据**）→ 分桶维持、节奏转保守"
+                 if _th_amber else
+                 "**数据不足、未能确认**（缺项不计入升档，但也不得当作未破）→ 分桶维持、节奏转保守"))
         ev["verdict_line"] = (f"🟡 可买的回撤（限定在融资成本这条腿）：{'/'.join(moved)} 已动，"
                               f"衡量的是「neocloud 股东被稀释多少」；"
                               f"{'、'.join(intact)}（项目层与上游）{side}")
