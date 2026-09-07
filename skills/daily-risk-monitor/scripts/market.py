@@ -763,6 +763,47 @@ def above_200dma_streak(s, window: int = MA200_WINDOW, need: int = STREAK_NEED):
     return streak, note
 
 
+# 硬阈值第 5 项（信号 6 A/D 线顶背离）与信号 2（站上 200DMA 比例）的触发条件
+# 都是「**SPX 创新高，但 X 未同步**」——两者都被同一个布尔闸住，而在此之前
+# 本仓库没有任何脚本产出它，`references/search-contract.md` 只能写「由父级供给」。
+# 结果是硬阈值第 5 项**每一天都结构性 ⚪️**、分母恒为 6、最坏情况恒被抬高 1。
+#
+# ⚠️ 口径声明（signals-a-macro.md:76 只写「创新高」，没写窗口，故在此定死并标注）：
+#   · 窗口 = 252 个交易日（约 52 周）；
+#   · 用**收盘价**比收盘价——yfinance 的日线 Close，不是盘中最高价。所以这是
+#     「收盘创 52 周新高」，不是「触及 52 周新高」。引用时照抄这个口径。
+def spx_new_high(closes, window: int = 252) -> dict:
+    s = series_of(closes, "^GSPC")
+    if s is None or len(s) < 2:
+        return {"at_new_high": None, "caliber": "252 交易日收盘新高（收盘价对收盘价）",
+                "note": "取不到 ^GSPC 收盘序列，无法判定；信号 2 / 信号 6 的前置布尔记 ⚪️，"
+                        "**不得据此断言「未创新高」**——不知道不等于否。"}
+    s = s.dropna()
+    if len(s) < 2:
+        return {"at_new_high": None, "caliber": "252 交易日收盘新高（收盘价对收盘价）",
+                "note": "^GSPC 收盘序列有效点不足，无法判定；前置布尔记 ⚪️。"}
+    tail = s.iloc[-window:]
+    last = float(tail.iloc[-1])
+    peak = float(tail.max())
+    idx = tail.idxmax()
+    short = len(tail) < window
+    return {
+        "at_new_high": bool(last >= peak),
+        "close": last,
+        "high": peak,
+        "high_date": str(getattr(idx, "date", lambda: idx)()),
+        "pct_from_high": (last / peak - 1.0) * 100.0 if peak else None,
+        "bars_used": len(tail),
+        "window_bars": window,
+        "history_short": short,
+        "caliber": "252 交易日收盘新高（收盘价对收盘价，非盘中高点）",
+        "note": ("可用日线仅 %d 根 < %d，窗口不足 52 周，「创新高」的分母偏小、"
+                 "会**高估**创新高的可能——引用前须注明。" % (len(tail), window)) if short else
+                ("信号 2 与信号 6 的触发都以此为前置：at_new_high 为 false 时两者一律 ❌ 未触发"
+                 "（前提不成立），为 true 时才去比对 A/D 线 / 站上 200DMA 比例；为 null 时记 ⚪️。"),
+    }
+
+
 def calc_26(closes) -> dict:
     s = series_of(closes, "^GSPC")
     price = ma200 = dev = slope = None
@@ -1028,6 +1069,7 @@ def run(signals: list[int], period: str) -> dict:
             "period": period,
             "signals": signals,
             "tickers": tickers,
+            "spx_new_high": spx_new_high(closes),
             "degraded": bool(_ENGINE_NOTES or missing),
             "degraded_reasons": list(_ENGINE_NOTES)
             + ([f"以下代码取不到收盘价，记 N/A：{'、'.join(missing)}"] if missing else []),

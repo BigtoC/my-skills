@@ -188,7 +188,7 @@ payload                  # 逐项定义，见 §6
 | **标量** | 7 NAAIM、10 Put/Call、25 LEI、29 AAII 配置、30 Margin Debt/GDP、31 Forward P/E、27 Buffett（对照） | `{value, unit}` |
 | **多值** | 11 Margin Debt | `{abs, yoy_pct, mom_direction, three_month_streak[]}` |
 | **多值** | 8 AAII 多空差 | `{bull, bear, spread, weeks_above_30}` |
-| **背离裁决** | 6 A/D Line、2 200DMA 比例 | `{current, prior_peak, peak_date}` + 由**父级**供给的「SPX 是否创新高」布尔 |
+| **背离裁决** | 6 A/D Line、2 200DMA 比例 | `{current, prior_peak, peak_date}` + 「SPX 是否创新高」布尔——**已由脚本产出**：`market.py --json` 的 `meta.spx_new_high.at_new_high`（口径见同栏 `caliber`：252 交易日**收盘**新高，非盘中高点）。检索侧只取 A/D 线／比例本身，**不要自己去搜 SPX 有没有创新高** |
 | **记录表** | 13 IPO | `readings[]`（件数腿、金额腿各一）+ 集中度 + 剔除最大单后的重算 |
 | **同源对** | 4 VIX 期限结构 | `{near, far, shared_source, shared_date}` |
 | **纯方向** | 3 BofA、12 内部人 | `{direction_text}` 且 `status = missing` |
@@ -205,6 +205,11 @@ payload                  # 逐项定义，见 §6
 `weeks_above_30` 是观察到的周数，单周一个数字**不足以**说它触发。
 
 **背离裁决 · 信号 6 / 信号 2** —— 这两项的触发条件都是**条件式**的：
+⚠️ **前提为假时记 ❌，不是 ⚪️。** `at_new_high = false` 表示「创新高」这个前提不成立，
+两项触发因此**确定未触发** —— 记 ❌ 并照常进分母。只有 `at_new_high = null`（取不到 ^GSPC
+序列）才记 ⚪️、才从分母扣除。把「前提不成立」误记成 ⚪️，硬阈值第 5 项就会**每天**被扣掉，
+分母恒为 6、最坏情况恒被抬高 1 —— 那是 2026-09-05 实跑真正发生过的事。
+
 信号 6 是「**SPX 创新高，但 A/D Line 未同步创新高**」（`signals-a-macro.md:76`），
 信号 2 是「SPX 创新高但该比例 <60%」（`:26`）。
 所以搜索回来的**不是一个可判定的读数**，而是背离的一条腿。
