@@ -1791,9 +1791,13 @@ class Dominance(object):
         dom_history_append(out, today, dom, src, ts)
         try:
             self.seven = dom_seven_day(today, dom, src)
-        except Exception:
-            self.seven = _od(status="insufficient", history_days=0,
-                             history_since=None, reason="历史档读取失败")
+        except Exception as e:
+            # status 必须与 reason 说同一件事：读不动 ≠ 历史不足。
+            # 记 insufficient 会把「档案坏了/权限不对」伪装成良性的「再攒几天就好」，
+            # 而後者不需要人管、前者需要——这正是本埠新增 `unreadable` 的原因。
+            self.seven = _od(status="unreadable", history_days=None,
+                             history_since=None,
+                             reason="历史档读取失败：%s" % scrub(e))
 
     def render_text(self, out):
         d = self.data

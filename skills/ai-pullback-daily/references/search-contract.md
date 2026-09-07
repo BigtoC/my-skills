@@ -391,7 +391,14 @@ payload = { ticker, fields: {<field>: {value, url, page}}, market_asof }
 
 ---
 
-## 6. HY 基准利差：唯一被两套源同时覆盖的项
+## 6. 被两套源同时覆盖的项：HY 基准利差 与 2Y
+
+> **📝 更正（2026-09-07）**：本节原标题写「唯一」，是错的。**2Y 也被两套源覆盖**——
+> `neocloud_credit_monitor.py` 区块① 从 FRED `DGS2` 取 UST 2Y（脚本第 121 行）。
+> 因为写成「唯一」，为 HY 写的那道防线就从来没有为 2Y 写过，实测 2026-09-05 於是踩到：
+> 同一份报告同时出现 WebSearch 2Y 4.35% @09-03 与信用层 4.34% @09-03。
+> **2Y 的处置：不要检索它**，直接引用信用层脚本的 FRED 读数（同源同日、可复现）。
+> 下面对 HY 的规则同样适用于 2Y：两套源**不得并进同一行、不得互相顶替**。
 
 `SKILL.md` 把 HY 基准利差列为「脚本不产出、由 WebSearch 取」；
 而 `neocloud_credit_monitor.py` **独立地**从 FRED `BAMLH0A0HYM2` 取同一指标（`neocloud-credit.md` 自动取数段）；

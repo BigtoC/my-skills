@@ -286,7 +286,17 @@ python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --emit both
 - **信用层一次取数、两份渲染**：`--emit both` 的完整 markdown 与精简一行出自**同一次取数、同一个判定对象**，结构上不可能对引爆点④ 各说各话。**不要再分两次调用**（旧写法是 `neocloud_credit_monitor.py` 与 `--compact` 各跑一次）：那是两轮网络取数，还会**同日写两次历史档**——明天的⑩跨档变化比对到的是第二次取数，而报告引用的是第一次。要把精简一行另存成档案时用 `--compact-also FILE`（stdout 内容不变）。`--emit` 与 `--json` / `--compact` 指定不同形式时脚本会响亮拒绝，不做静默裁决。
 - **技术面取数口径、完整交易日判定、港股/韩股各自的数据日期、字段可得性分层** —— 读 `references/data-acquisition.md`。港股价格必须走姊妹技能的 `hk_quote.py`（`technicals.py` 已自动路由），**不得**用 WebSearch/yfinance 复权价；港股/韩股与美股允许**不同数据日期**，须在报告头逐一注明。
 - **📝 编者注 · 取数优先级相对原文已翻转**：`references/data-acquisition.md` 原文写的是「**WebSearch 为主、yfinance 补缺**」（当时 yfinance 只是一段参考代码骨架）。本技能把该骨架实现成了 `scripts/technicals.py`，故实际执行改为「**脚本优先、WebSearch 补脚本取不到的字段**」——脚本一次算全标的、口径统一且可复现，比逐标的搜索更不易前后矛盾。**这是有意的演进，不是对原文的忽略**；原文的数据源优先级（Finviz > Yahoo Finance > TradingView > StockAnalysis.com）在需要 WebSearch 补数时仍然适用，港股仍必须走 `hk_quote.py`。同一字段脚本与 WebSearch 冲突时以脚本为准，并在完整版注明差异。
-- **`macro` 区块的字段边界（别高估它；`--macro-only` 兜底时同此边界）**：脚本只产出 **10Y(^TNX) 收盘/日变动/近5日变动、DXY、QQQ/SMH/SOXX/^VIX、大盘现货指数 ^GSPC（标普500）与 ^NDX（纳斯达克100）的收盘/日涨跌%、SMH−QQQ 板块相对强弱、折现率信号**（^GSPC/^NDX 同时是 `perp_quotes.py` 算大盘隐含跳空的现货分母，见 `references/perp-overnight.md` 的「大盘层」）。**2Y 与 2s10s 期限利差脚本不产出**，`references/data-acquisition.md`「宏观利率背景」却要求逐日取这两项（政策预期代理）——**必须用 WebSearch 补**，取不到记 ⚪，**不得拿 10Y 反推、不得省略这两行**。同节要求的联邦基金目标区间、距下次 FOMC 交易日数、CME FedWatch 隐含概率、HY 基准利差，同样由 WebSearch 取，脚本不产出。
+- **`macro` 区块的字段边界（别高估它；`--macro-only` 兜底时同此边界）**：脚本只产出 **10Y(^TNX) 收盘/日变动/近5日变动、DXY、QQQ/SMH/SOXX/^VIX、大盘现货指数 ^GSPC（标普500）与 ^NDX（纳斯达克100）的收盘/日涨跌%、SMH−QQQ 板块相对强弱、折现率信号**（^GSPC/^NDX 同时是 `perp_quotes.py` 算大盘隐含跳空的现货分母，见 `references/perp-overnight.md` 的「大盘层」）。**2s10s 期限利差脚本不产出**（2Y 则**另有一路脚本来源**，见下方 ⚠️），`references/data-acquisition.md`「宏观利率背景」却要求逐日取这两项（政策预期代理）——**必须用 WebSearch 补**，取不到记 ⚪，**不得拿 10Y 反推、不得省略这两行**。同节要求的联邦基金目标区间、距下次 FOMC 交易日数、CME FedWatch 隐含概率、HY 基准利差，同样由 WebSearch 取，脚本不产出。
+
+  ⚠️ **2Y 是本技能第二个「被两套源同时覆盖」的指标，这条以前没写下来，实测已经踩到。**
+  `neocloud_credit_monitor.py` 的区块① 会从 FRED `DGS2` 取 **UST 2Y** 并印出来（脚本第 121 行的利率表）。
+  也就是说同一份报告里可能出现两个 2Y：信用层区块里的 FRED 读数，与 WebSearch 补的读数。
+  **处置：2Y 一律以信用层脚本的 FRED 读数为准，不要另外检索 2Y。** 理由是回退链第 3 条——
+  两个不同源、可能不同数据日的读数**不得并进同一行、也不得互相顶替**；而脚本那一路已经在跑、
+  同源同日、可复现，检索那一路只会制造一个需要人去调解的第二个数字。
+  实测 2026-09-05：WebSearch 得 4.35% @09-03、信用层区块印 4.34% @09-03，两个数在同一份报告里
+  相隔两节——正是本仓库回退规则要防的情形。**2s10s 仍须 WebSearch**（脚本两条腿都不产出），
+  且**绝不能用脚本 10Y 减脚本 2Y 自行拼出来**（见 `references/search-contract.md` §5.2）。
 - **📝 编者注 · 港股 asof 的已知口径差异（可能滞后，不必然滞后）**：`technicals.py` 对港股把 `asof` 覆写为 `hk_quote.py` 的当日报价日，而该行的 **MA/RSI/20日高/20日回撤来自 yfinance 最近一根已落地的未复权日线**。yfinance 的港股日 K 当日**有时**尚未落地，此时派生指标会**落后一根日线**；但也常常当日即落地、两者同日（2026-09-02 实测 0700.HK / 1810.HK / 0941.HK：`hk_quote` 报价日与 yfinance 最新日线同为 09-02，全行同日）。**所以不得无条件写成「MA/RSI 是前一交易日」**——那在同日的日子里就是谎报。以**脚本当次输出为准**：看该行的 `asof` 与 `notes`（`notes` 里出现「数据滞后」即确证滞后）。确实滞后时才在港股行注明（如「价格为 HKT 当日收盘，MA/RSI/20日高为 yfinance 上一交易日」）；同日则如实写同日。这不是 bug，是两个数据源的更新节奏差。
 - **24/7 永续** —— 读 `references/perp-overnight.md`。**纯观察节点，绝不改变 T1/T2/T3 触发与分桶**；跨阈值只能写成「若明日以此价开盘将触及 XX（预告，非已触发）」。
 - **Neocloud 信用层** —— 读 `references/neocloud-credit.md`。脚本输出的十个区块**整段贴入完整版，不删节、不改写数字**；「⑧ 数据缺口」与已知局限声明须保留。债券报价没有免费 API：由你 WebSearch 取到后喂进 `assets/neocloud_bonds.json` 的 `quote.price / quote.as_of / quote.source`，脚本自己反解 YTM 与利差。脚本失败 → 该节写「本次未取到信用层数据，引爆点④ 沿用上次状态并标⚪」，**不臆测利差**、不影响其余部分。
