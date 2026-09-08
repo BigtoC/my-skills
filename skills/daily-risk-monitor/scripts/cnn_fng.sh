@@ -165,7 +165,14 @@ zh_rating() {
 #   delta → 印成「↑ +41.9」        —— 一个凭空捏造的单日变动
 # 而文字分支是要被逐字照抄进报告的那一份，所以缺就是缺：一律记 N/A，不估算也不补 0。
 # 判定条件与 jnum 保持同一套口径（''|null），另加历史序列那边的 NA。
-has_num() { case "$1" in ''|null|NA) return 1 ;; *) return 0 ;; esac; }
+# 只筛 ''/null/NA 不够：**任何**非数值都会被下面 fmt 的 awk 当成 0 印出「0.0」，
+# 而 0.0 在恐惧贪婪刻度上是「极度恐惧」——整条刻度上最可操作的那个读数。
+# 端点改版回 "undefined"、回一段 HTML、甚至只是把 NA 写成小写 n/a，都会走到这里。
+# 把「读不到」讲成「极度恐惧」比讲成「没事」更贵：它会直接催出一个买入动作。
+has_num() {
+  case "$1" in ''|null|NA) return 1 ;; esac
+  awk -v v="$1" 'BEGIN{ exit (v ~ /^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$/) ? 0 : 1 }'
+}
 fmt() {
   has_num "$1" || { printf 'N/A'; return 0; }
   awk -v v="$1" 'BEGIN{ printf "%.1f", v }'
@@ -213,7 +220,9 @@ add_degraded() {  # $1=简短理由（一行）
 
 # 四个对照读数是端点自己给的，改版时可能整栏消失。空字串喂给 jq --argjson 会让整份 JSON
 # 产不出来（连 ⚪️ 都印不出），所以缺就是 null —— 记 N/A，不估算也不补 0。
-jnum() { case "$1" in ''|null) echo null ;; *) echo "$1" ;; esac; }
+# 同一个洞的 JSON 侧：非数值原样喂给 jq --argjson 会让 jq 解析失败、整份 JSON
+# 产不出来（上面那段注解已记下空字串的情形，但没涵盖「回了别的东西」）。
+jnum() { if has_num "$1"; then printf '%s\n' "$1"; else echo null; fi; }
 PREV_J="$(jnum "$PREV")"; W1_J="$(jnum "$W1")"; M1_J="$(jnum "$M1")"; Y1_J="$(jnum "$Y1")"
 
 [ "$SANITY_OK" -eq 1 ] || add_degraded "量级自检未通过：score ${SCORE} 落在 0–100 之外，端点结构可能已变更，数字不可引用"

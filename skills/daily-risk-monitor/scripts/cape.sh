@@ -182,9 +182,29 @@ awk -v v="$CUR" -v t="$CAPE_TRIGGER" 'BEGIN{ exit (v>t)?0:1 }' && TRIGGERED=1
 # 理由字串会直接内插进 JSON，所以只放中文与数字，不放引号/反斜线。
 DEGRADED=0
 DEG_JSON=""
+
+# ── JSON 跳脱：本档的每一个值都是从 multpl.com 的 HTML 刮下来的 ──
+# 原本这些值全部**原样**插进 JSON。页面版型一变，$TS / $CUR 里带一个引号或反斜线，
+# 整份 JSON 就产不出来了——而这正是最坏的耦合方向：量级自检失败 → add_degraded 把
+# 可疑的 $CUR 写进理由字串 → 那个 $CUR 又把「用来宣告这次失败」的 JSON 弄坏。
+# 呼叫端拿到的是解析错误，不是 ok:false。⚪️ 讲不出口就等於没讲。
+# 刻意不用 jq：本档不依赖 jq（CLAUDE.md 记明「只有 cnn_fng.sh 需要 jq」），
+# sed + tr 已在依赖清单里，够用。
+json_str() {  # 任意文字 → 合法 JSON 字串（含前后引号）
+  printf '"%s"' "$(printf '%s' "$1" | tr -d '\000-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+}
+json_num() {  # 数值 → 原样；非数值（含空、NA、awk 产出的 inf/nan）→ null
+  case "$1" in ''|null|NA) printf 'null'; return 0 ;; esac
+  if awk -v v="$1" 'BEGIN{ exit (v ~ /^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$/) ? 0 : 1 }'; then
+    printf '%s' "$1"
+  else
+    printf 'null'   # 缺就是 null——不补 0（0 会被读成一个真实的极端读数）
+  fi
+}
+
 add_degraded() {  # $1=简短理由
   DEGRADED=1
-  DEG_JSON="${DEG_JSON}${DEG_JSON:+,}\"$1\""
+  DEG_JSON="${DEG_JSON}${DEG_JSON:+,}$(json_str "$1")"
 }
 
 [ "$SANITY_OK" -eq 1 ]     || add_degraded "量级自检未通过：CAPE ${CUR} 落在 ${CAPE_MIN}–${CAPE_MAX} 之外"
@@ -202,20 +222,24 @@ VS_MEAN_J="$(awk -v c="$CUR" -v m="$MEAN" 'BEGIN{ printf "%.1f", (c/m - 1) * 100
 if [ "$JSON" -eq 1 ]; then
   # ok 不是字面量：量级自检没过就是 false（写死 true 而 sanity.pass 是 false，
   # 等于让最显眼的字段说谎，真相却藏在最不显眼的那个）。
-  printf '{"ok":%s,"signal":28,"name":"Shiller CAPE / PE10","source":"%s",' \
-    "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)" "$URL"
-  printf '"asof_page_timestamp":"%s",' "$TS"
-  printf '"current":%s,"mean":%s,"median":%s,' "$CUR" "$MEAN" "$MEDIAN"
-  printf '"min":{"value":%s,"when":"%s"},"max":{"value":%s,"when":"%s"},' "$MIN" "$MIN_DATE" "$MAX" "$MAX_DATE"
-  printf '"vs_max_abs":%s,"vs_mean_pct":%s,' "$VS_MAX_J" "$VS_MEAN_J"
+  printf '{"ok":%s,"signal":28,"name":"Shiller CAPE / PE10","source":%s,' \
+    "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)" "$(json_str "$URL")"
+  printf '"asof_page_timestamp":%s,' "$(json_str "$TS")"
+  printf '"current":%s,"mean":%s,"median":%s,' "$(json_num "$CUR")" "$(json_num "$MEAN")" "$(json_num "$MEDIAN")"
+  printf '"min":{"value":%s,"when":%s},"max":{"value":%s,"when":%s},' \
+    "$(json_num "$MIN")" "$(json_str "$MIN_DATE")" "$(json_num "$MAX")" "$(json_str "$MAX_DATE")"
+  printf '"vs_max_abs":%s,"vs_mean_pct":%s,' "$(json_num "$VS_MAX_J")" "$(json_num "$VS_MEAN_J")"
   printf '"threshold":%s,"triggered":%s,' "$CAPE_TRIGGER" "$([ "$TRIGGERED" -eq 1 ] && echo true || echo false)"
   printf '"sanity":{"range":[%s,%s],"pass":%s},' "$CAPE_MIN" "$CAPE_MAX" "$([ "$SANITY_OK" -eq 1 ] && echo true || echo false)"
   # 禁令也要是字段：下面这段文字与 exit 4 前的 stderr 告警逐字同源。
   if [ "$SANITY_OK" -eq 1 ]; then
     printf '"do_not_quote":null,'
   else
-    printf '"do_not_quote":{"reason":"量级自检未通过：CAPE %s 落在 %s–%s 之外。行为准则第 6 条：算出来量级不对，先怀疑解析，不要直接报出来。最可能的原因：multpl.com 版型变更，抓到的不是 Shiller PE 那一栏。请先人工核对 %s 再引用这个数字。","observed":%s,"expected_range":[%s,%s]},' \
-      "$CUR" "$CAPE_MIN" "$CAPE_MAX" "$URL" "$CUR" "$CAPE_MIN" "$CAPE_MAX"
+    # reason 里嵌的 $CUR 正是那个可疑值，必须跳脱——不跳脱的话，坏值会把
+    # 「宣告它坏掉」的这份 JSON 一起弄坏（observed 另存原样值的数值形式）。
+    printf '"do_not_quote":{"reason":%s,"observed":%s,"expected_range":[%s,%s]},' \
+      "$(json_str "量级自检未通过：CAPE ${CUR} 落在 ${CAPE_MIN}–${CAPE_MAX} 之外。行为准则第 6 条：算出来量级不对，先怀疑解析，不要直接报出来。最可能的原因：multpl.com 版型变更，抓到的不是 Shiller PE 那一栏。请先人工核对 ${URL} 再引用这个数字。")" \
+      "$(json_num "$CUR")" "$CAPE_MIN" "$CAPE_MAX"
   fi
   printf '"degraded":%s,"degraded_reasons":[%s]}\n' \
     "$([ "$DEGRADED" -eq 1 ] && echo true || echo false)" "$DEG_JSON"
