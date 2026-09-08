@@ -49,6 +49,34 @@ Copy or vendor the skill directory into your agent's preferred skills path:
 cp -r skills/rust-best-practices ~/.claude/skills/
 ```
 
+## Optional Claude Code enhancements (`.claude/agents/`, `.claude/settings.json`)
+
+`.claude/` at the repo root is a **Claude Code-only, optional** layer. It is not
+part of the portable `SKILL.md` layer and no skill depends on it:
+
+- `.claude/agents/search-transport.md` — a subagent that carries out the
+  retrieval half of the two daily routines' search contracts: it reads the
+  governing reference file, follows each item's documented source order, and
+  writes readings and provenance to a JSON file the parent reads, so raw search
+  snippets never reach the context that writes the report.
+- `.claude/settings.json` — the `PreToolUse` hook described under
+  [Claude Code hook (optional)](#claude-code-hook-optional).
+
+**Neither ships with a skill, and that is the point.** The documented install
+path above — `cp -r skills/<name> ~/.claude/skills/` — copies a single skill
+directory and carries **nothing** from `.claude/`. Anyone installing that way, or
+via `npx skills add`, or running these skills on another agent entirely, gets the
+skill without this layer. So the skills must not depend on it, and they do not:
+
+- The `SKILL.md` files name the *capability* (`WebSearch / web_fetch`), never the
+  mechanism. No skill mentions this agent, and adding an `@agent-name` or
+  `mcp__…` reference to a `SKILL.md` would break portability.
+- With the agent absent, the parent session simply performs the same searches
+  itself, against the same `references/search-contract.md` and into the same JSON
+  file. The report comes out byte-identical — what changes is only *where* the
+  searching happened, not what was fetched. Repo rule: **少一路增强，不少一段交付**
+  — one fewer enhancement, not one less section delivered.
+
 ## Runtime state
 
 `rust-best-practices` is pure documentation. The three finance skills are not —
@@ -98,7 +126,7 @@ they keep runtime state that changes on every run:
   is only the fallback for when this file is missing, so deleting it costs a day
   of tier-to-tier comparison, not the report itself.
 - **BTC dominance history.** `skills/daily-risk-monitor/assets/dominance_history.jsonl`
-  also **does not ship with the skill**. `scripts/crypto.sh dominance` appends one
+  also **does not ship with the skill**. `scripts/crypto.py dominance` appends one
   record per day (a same-day rerun overwrites its own record, and the file is
   capped at 90 records), because signal 16's "7d drop > 3%" leg has no free
   same-caliber source: what the free tier lacks is the market-cap *history
@@ -113,7 +141,7 @@ they keep runtime state that changes on every run:
   denominators. Seeing the file modified in `git status` is normal, and
   committing it is what preserves the history the 7d leg depends on —
   `git checkout`-ing it away costs seven days of re-accumulation.
-  `scripts/crypto.sh dominance --history` prints what has accumulated (no
+  `scripts/crypto.py dominance --history` prints what has accumulated (no
   network) when you need to check.
 - **Cross-skill dependency.** `ai-pullback-daily` does not carry its own quality
   table. It reads the industry ratings from

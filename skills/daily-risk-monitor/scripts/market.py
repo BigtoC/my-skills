@@ -30,7 +30,7 @@ references/signals-f-monday.md 与 references/data-cadence.md 的「yfinance 通
 
 硬约束（弄错会直接改变判定，改代码前先读 references/known-traps.md）：
   * **必须用 `requests.Session` + UA**——urllib 走 yfinance 会 SSL 验证失败。
-    注意这条与 FRED **相反**：FRED 必须用 `curl`，python `requests` 在该环境会超时。
+    注意这条与 FRED **相反**：FRED **绝不能送浏览器 UA**（送了会超时）。方向差在 header，不在语言。
     所以本脚本只负责 yfinance 那一半，FRED 那一半在 scripts/fred.sh。
   * **不要用 yfinance 取 `^VIX3M` / `^VIX9D` / `^VIX6M`**——三个序列全部停更，
     而 `^VIX` 是当日的，拿它们算期限结构会静默地用几周前的远月值比今天的近月值，
@@ -230,9 +230,10 @@ def load_deps():
         import yfinance as _yf
     except ImportError as exc:
         missing = getattr(exc, "name", None) or "yfinance / pandas / numpy / requests 之一"
+        # 依赖缺失 = 2（本仓库保留：1 参数错误｜2 依赖缺失｜3 取数失败｜4 量级自检未通过）。
         err(f"错误：缺少依赖 {missing}（{scrub(exc)}）。"
             f"请先 `pip install yfinance pandas numpy requests`。")
-        sys.exit(1)
+        sys.exit(2)
     try:
         import logging
 
@@ -260,13 +261,27 @@ def make_session():
     """必须是 requests.Session + UA。
 
     references/known-traps.md：`yfinance via urllib` → SSL 验证失败 →
-    必须用 `requests.Session` + UA。这条与 FRED（必须用 curl）方向相反，最容易搞混。
+    必须用 `requests.Session` + UA。这条与 FRED（绝不能送浏览器 UA）方向相反，最容易搞混。
     """
     import requests
 
     s = requests.Session()
     s.headers["User-Agent"] = USER_AGENT
     return s
+
+
+# 实际用到的取数引擎。fallback 规则第 2 条：哪一层出的数，人读与 --json 都要标出来。
+# 写死成 "requests.Session + UA" 会在限流回退时说谎——那正是本栏位存在的意义。
+_ENGINE_USED = "requests.Session + UA"
+_ENGINE_NOTES: list[str] = []
+
+
+def _set_engine(name: str, why: str) -> None:
+    """记录本次实际用到的引擎与回退原因，供 meta.source / degraded_reasons 照实写。"""
+    global _ENGINE_USED
+    _ENGINE_USED = name
+    _ENGINE_NOTES.append(f"yfinance 取数回退到{name}：{why}")
+
 
 
 def download_closes(tickers: list[str], period: str):
@@ -290,8 +305,10 @@ def download_closes(tickers: list[str], period: str):
         raw = _dl(True)
     except TypeError:
         err("⚠ 当前 yfinance 不支持 download(session=...)，改用默认引擎。")
+        _set_engine("默认引擎(curl_cffi)", "当前 yfinance 不支持 download(session=...)")
     except Exception as exc:
         err(f"⚠ requests.Session 路径取数失败（{type(exc).__name__}），改用默认引擎重试。")
+        _set_engine("默认引擎(curl_cffi)", f"requests.Session 路径取数失败（{type(exc).__name__}）")
 
     if raw is None or len(raw) == 0:
         try:
@@ -302,6 +319,8 @@ def download_closes(tickers: list[str], period: str):
         if raw2 is not None and len(raw2) > 0:
             err("⚠ requests.Session 路径回空表、默认引擎(curl_cffi)取到数据 —— "
                 "多半是 Yahoo 限流挡了裸 Session。本次采用默认引擎结果。")
+            _set_engine("默认引擎(curl_cffi)",
+                        "requests.Session 路径回空表、默认引擎取到数据——多半是 Yahoo 限流挡了裸 Session")
             raw = raw2
 
     if raw is None or len(raw) == 0:
@@ -416,7 +435,7 @@ def fred_vixcls() -> tuple[float | None, str | None, str | None]:
     """经 subprocess 调**同目录**的 fred.sh 取 FRED VIXCLS，回 (值, 数据日期, 失败原因)。
 
     为什么必须绕 fred.sh 而不在本脚本里直接打 FRED：references/known-traps.md 实测
-    「FRED 必须用 curl、且**不能加自订 UA**」，python requests 打 FRED 在本环境会超时。
+    「FRED **不能加浏览器 UA**」（加了 25–30s 超时）；用什么语言取都行，实测 requests 0.50s 正常。
     本脚本只管 yfinance 那一半，FRED 一律走 fred.sh，不另开第二条 FRED 取数路径。
 
     任何失败（脚本不存在 / 不可执行 / 超时 / 非 0 退出 / JSON 解析不了）都回
@@ -745,6 +764,47 @@ def above_200dma_streak(s, window: int = MA200_WINDOW, need: int = STREAK_NEED):
     return streak, note
 
 
+# 硬阈值第 5 项（信号 6 A/D 线顶背离）与信号 2（站上 200DMA 比例）的触发条件
+# 都是「**SPX 创新高，但 X 未同步**」——两者都被同一个布尔闸住，而在此之前
+# 本仓库没有任何脚本产出它，`references/search-contract.md` 只能写「由父级供给」。
+# 结果是硬阈值第 5 项**每一天都结构性 ⚪️**、分母恒为 6、最坏情况恒被抬高 1。
+#
+# ⚠️ 口径声明（signals-a-macro.md:76 只写「创新高」，没写窗口，故在此定死并标注）：
+#   · 窗口 = 252 个交易日（约 52 周）；
+#   · 用**收盘价**比收盘价——yfinance 的日线 Close，不是盘中最高价。所以这是
+#     「收盘创 52 周新高」，不是「触及 52 周新高」。引用时照抄这个口径。
+def spx_new_high(closes, window: int = 252) -> dict:
+    s = series_of(closes, "^GSPC")
+    if s is None or len(s) < 2:
+        return {"at_new_high": None, "caliber": "252 交易日收盘新高（收盘价对收盘价）",
+                "note": "取不到 ^GSPC 收盘序列，无法判定；信号 2 / 信号 6 的前置布尔记 ⚪️，"
+                        "**不得据此断言「未创新高」**——不知道不等于否。"}
+    s = s.dropna()
+    if len(s) < 2:
+        return {"at_new_high": None, "caliber": "252 交易日收盘新高（收盘价对收盘价）",
+                "note": "^GSPC 收盘序列有效点不足，无法判定；前置布尔记 ⚪️。"}
+    tail = s.iloc[-window:]
+    last = float(tail.iloc[-1])
+    peak = float(tail.max())
+    idx = tail.idxmax()
+    short = len(tail) < window
+    return {
+        "at_new_high": bool(last >= peak),
+        "close": last,
+        "high": peak,
+        "high_date": str(getattr(idx, "date", lambda: idx)()),
+        "pct_from_high": (last / peak - 1.0) * 100.0 if peak else None,
+        "bars_used": len(tail),
+        "window_bars": window,
+        "history_short": short,
+        "caliber": "252 交易日收盘新高（收盘价对收盘价，非盘中高点）",
+        "note": ("可用日线仅 %d 根 < %d，窗口不足 52 周，「创新高」的分母偏小、"
+                 "会**高估**创新高的可能——引用前须注明。" % (len(tail), window)) if short else
+                ("信号 2 与信号 6 的触发都以此为前置：at_new_high 为 false 时两者一律 ❌ 未触发"
+                 "（前提不成立），为 true 时才去比对 A/D 线 / 站上 200DMA 比例；为 null 时记 ⚪️。"),
+    }
+
+
 def calc_26(closes) -> dict:
     s = series_of(closes, "^GSPC")
     price = ma200 = dev = slope = None
@@ -944,7 +1004,7 @@ def parse_signals(raw: str | None) -> list[int]:
         # 显式给了空的 --signals 就报错，不要静默当成「全部」：
         # 那会让一次本想只跑子集的调用悄悄跑满，多打十次 Yahoo 请求。
         err("错误：--signals 为空。省略该参数才是「跑全部」。")
-        sys.exit(2)
+        sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
     out: list[int] = []
     for chunk in re.split(r"[,\s，、]+", raw.strip()):
         if not chunk:
@@ -952,21 +1012,21 @@ def parse_signals(raw: str | None) -> list[int]:
         if not chunk.isdigit():
             err(f"错误：--signals 只接受信号编号，实际「{chunk}」。"
                 f"本脚本支持：{','.join(str(i) for i in sorted(SIGNAL_SPECS))}。")
-            sys.exit(2)
+            sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
         n = int(chunk)
         if n in ELSEWHERE:
             err(f"错误：{ELSEWHERE[n]}")
-            sys.exit(2)
+            sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
         if n not in SIGNAL_SPECS:
             err(f"错误：信号 {n} 不由本脚本负责。"
                 f"本脚本支持：{','.join(str(i) for i in sorted(SIGNAL_SPECS))}"
                 f"（其余信号见 scripts/fred.sh 等取数脚本与 references/）。")
-            sys.exit(2)
+            sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
         if n not in out:
             out.append(n)
     if not out:
         err("错误：--signals 为空。")
-        sys.exit(2)
+        sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
     return sorted(out)
 
 
@@ -985,7 +1045,8 @@ def run(signals: list[int], period: str) -> dict:
             err(f"  yfinance 报告：{line}")
         err("  若是 Too Many Requests（限流），等几分钟再跑；"
             "仍失败则这几项在报告里写「⚪️ 数据暂缺」+ 尝试过的来源 + 滞后周数。")
-        sys.exit(1)
+        # 取数失败 = 3。限流是取数失败，回 1 会让调度层读成「参数写错了」。
+        sys.exit(3)
 
     missing = [t for t in tickers if series_of(closes, t) is None]
 
@@ -1006,10 +1067,14 @@ def run(signals: list[int], period: str) -> dict:
     return {
         "meta": {
             "generated_at": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
-            "source": "yfinance (requests.Session + UA)",
+            "source": f"yfinance ({_ENGINE_USED})",
             "period": period,
             "signals": signals,
             "tickers": tickers,
+            "spx_new_high": spx_new_high(closes),
+            "degraded": bool(_ENGINE_NOTES or missing),
+            "degraded_reasons": list(_ENGINE_NOTES)
+            + ([f"以下代码取不到收盘价，记 N/A：{'、'.join(missing)}"] if missing else []),
             "missing_tickers": missing,
             "fetch_errors": yf_reasons() if missing else [],
             "stale_note": stale_note,

@@ -28,11 +28,26 @@ assets/last_run.json，下次直接读它。Slack 历史仅作**回退**（本�
 状态文件不存在时，`show` / `diff` 明确输出「无昨日基准，本次为首次建立」并 **exit 0**。
 原文：读不到就标注首次建立，不影响其余部分。
 
+`show --json` 与 `show` 等价，不是它的子集
+------------------------------------------
+`--json` 曾经只是把 last_run.json 原样 dump 出去，于是**严格少于** `show`：
+staleness 横幅（含「报告里请写「对比 N 天前」，不要写成「对比昨日」」）、档位分布、
+两条轨道、7 项硬阈值的 ⚪️ 计数、回补 / 恢复条件的判定，全都只活在人读文字里。
+管道、跨步骤交接、并发跑批只看得到 stdout，少掉的恰好全是禁令与「判不了」的声明。
+
+现在人读分支印出的每一句判定与禁令都有对应字段（`staleness` / `signals` /
+`tracks` / `hard_thresholds` / `recovery`），原始状态档收在 `state` 键下，
+顶层另有 `ok` / `degraded` / `degraded_reasons[]`。三条口径必须守住：
+判不了写 `null` 配理由（不是 `false`）；⚪️ 既不进分子也不进分母
+（`fired` 三态 + `counted_in_denominator`）；`ok` 不是常量，状态档校验不过就是 false。
+文字与字段同源——`staleness_banner` / `print_tracks` / `print_hard` / `recovery_lines`
+都从各自的 `*_info` 取行，不允许两边各写一份措辞。
+
 子命令
 ------
     snapshot.py show                              打印上次运行的各信号档位 + 两条轨道档位 + 7 项硬阈值
                                                   + 回补 / 恢复条件的连续天数进度
-    snapshot.py show --json                       同上，输出原始 JSON
+    snapshot.py show --json                       同上，输出结构化 JSON（见下节）
     snapshot.py diff <today.json>                 逐信号对照：哪些档位变了、哪些没变
     snapshot.py write <today.json> --date YYYY-MM-DD   先校验，通过才原子覆写
 
@@ -404,7 +419,12 @@ def hard_summary(data: dict) -> dict:
     hard = as_map(data.get("hard_thresholds"))
     syms = {i: unwrap(hard.get(i), "symbol") for i in HARD_IDS}
     fired = [i for i in HARD_IDS if syms.get(i) == "✅"]
-    unknown = [i for i in HARD_IDS if syms.get(i) == "⚪️"]
+    # 判不了的不只 ⚪️：符号缺失／空／不在 HARD_SYMBOLS 里（打错、结构坏了）
+    # 一样是「不知道」。只认字面 ⚪️ 会让这些项既不进分子也不进 unknown，
+    # 於是 denominator 仍是 7、worst_case 少算、low_confidence 也不触发——
+    # 等於把「判不了」静默记成「查过了、没触发」，正是 ⚪️ 计数规则要挡的那件事。
+    unknown = [i for i in HARD_IDS
+               if syms.get(i) == "⚪️" or (syms.get(i) or "") not in HARD_SYMBOLS]
     n = len(HARD_IDS) - len(unknown)
     return {
         "symbols": syms,
@@ -417,6 +437,50 @@ def hard_summary(data: dict) -> dict:
     }
 
 
+def hard_notes(h: dict, label: str = "今日") -> list[str]:
+    """7 项硬阈值那几行「→ …」（不带缩进）。print_hard 与 --json 共用同一份文字。"""
+    out = [f"→ {label}共 {h['count']} / {h['denominator']} 项触发"
+           f"（{len(h['unknown'])} 项数据暂缺）"]
+    if h["unknown"]:
+        out.append(f"→ 若暂缺的 {len(h['unknown'])} 项全部触发，计数将达 {h['worst_case']}"
+                   f"（≥2 即触发警戒升级）")
+    if h["low_confidence"]:
+        out.append(f"→ ⚠️ 暂缺 ≥3 项：本日触发计数可信度低（仅 {h['denominator']} 项可判定），"
+                   f"战略基准维持昨日档位不变，不因计数下降而回补仓位。")
+    return out
+
+
+def hard_rows(h: dict) -> list[dict]:
+    """逐项硬阈值的结构化行（--json 用）。
+
+    `fired` 是三态：✅ = true，❌ / ⚠️ = false（查过了，没触发），
+    ⚪️ 或读不出来 = **null**（判不了）。这就是 ⚪️ / ❌ 之分的 JSON 形态，
+    把 ⚪️ 压成 false 等于把「不知道」记成「安全」。
+    `counted_in_denominator` 同样照 hard_summary 的口径：只有 ⚪️ 不计入分母。
+    """
+    rows = []
+    for i in HARD_IDS:
+        sym = h["symbols"].get(i) or ""
+        valid = sym in HARD_SYMBOLS
+        if sym == "✅":
+            fired = True
+        elif sym in ("❌", "⚠️"):
+            fired = False
+        else:                        # ⚪️ 数据暂缺，或符号缺失 / 不合法
+            fired = None
+        rows.append({
+            "id": i,
+            "name": HARD_NAMES[i],
+            "symbol": sym or None,
+            "meaning": HARD_MEANING.get(sym) if valid else None,
+            "valid": valid,
+            "fired": fired,
+            # 与 hard_summary 同一口径：⚪️ 与「不合法/缺失」都不计入分母
+            "counted_in_denominator": sym in HARD_SYMBOLS and sym != "⚪️",
+        })
+    return rows
+
+
 def print_hard(data: dict, indent: str = "", label: str = "今日") -> None:
     h = hard_summary(data)
     print(f"{indent}7 项硬阈值：")
@@ -424,14 +488,8 @@ def print_hard(data: dict, indent: str = "", label: str = "今日") -> None:
         sym = h["symbols"].get(i) or "（缺）"
         meaning = HARD_MEANING.get(sym, "")
         print(f"{indent}  {i}. {sym} {meaning} ｜ {HARD_NAMES[i]}")
-    print(f"{indent}→ {label}共 {h['count']} / {h['denominator']} 项触发"
-          f"（{len(h['unknown'])} 项数据暂缺）")
-    if h["unknown"]:
-        print(f"{indent}→ 若暂缺的 {len(h['unknown'])} 项全部触发，计数将达 {h['worst_case']}"
-              f"（≥2 即触发警戒升级）")
-    if h["low_confidence"]:
-        print(f"{indent}→ ⚠️ 暂缺 ≥3 项：本日触发计数可信度低（仅 {h['denominator']} 项可判定），"
-              f"战略基准维持昨日档位不变，不因计数下降而回补仓位。")
+    for line in hard_notes(h, label):
+        print(f"{indent}{line}")
 
 
 def track_line(data: dict) -> tuple[str, str]:
@@ -448,7 +506,12 @@ def track_line(data: dict) -> tuple[str, str]:
     return s_disp, t_disp
 
 
-def print_tracks(data: dict, indent: str = "") -> None:
+def track_info(data: dict) -> dict:
+    """两条轨道的结构化读数 + 那两行文字（--json 与 print_tracks 共用同一份）。
+
+    读不出来的字段一律 null，并在 `*_display` 里保留人读的 N/A / 「—」，
+    绝不拿 0 或 100 顶上——档位读不出来时报告第 1 部分的决策层那一行就是空的。
+    """
     s_disp, t_disp = track_line(data)
     tracks = data.get("tracks") or {}
     strat = tracks.get("strategic") or {}
@@ -458,9 +521,83 @@ def print_tracks(data: dict, indent: str = "") -> None:
     tc_disp = f"{tc}" if tc is not None else "—"
     factor = tac.get("factor")
     f_disp = f"×{float(factor):.2f}" if isinstance(factor, (int, float)) else "—"
-    print(f"{indent}轨道一 战略层：目标仓位基准 {s_disp}"
-          f"（硬阈值触发 {tc_disp} 项，估值环境 {env}）")
-    print(f"{indent}轨道二 战术层：{t_disp} {TACTICAL_MEANING.get(t_disp, '')} 系数 {f_disp}")
+    try:
+        pct = int(float(strat.get("baseline_pct")))
+    except (TypeError, ValueError):
+        pct = None
+    lines = [f"轨道一 战略层：目标仓位基准 {s_disp}"
+             f"（硬阈值触发 {tc_disp} 项，估值环境 {env}）",
+             f"轨道二 战术层：{t_disp} {TACTICAL_MEANING.get(t_disp, '')} 系数 {f_disp}"]
+    return {
+        "strategic": {
+            "baseline_pct": pct,
+            "baseline_pct_display": s_disp,
+            "trigger_count": tc if isinstance(tc, int) and not isinstance(tc, bool) else None,
+            "valuation_env": env if env in VALUATION_ENVS else None,
+        },
+        "tactical": {
+            "state": t_disp if t_disp in TACTICAL_STATES else None,
+            "state_display": t_disp,
+            "meaning": TACTICAL_MEANING.get(t_disp),
+            "factor": float(factor) if isinstance(factor, (int, float))
+                      and not isinstance(factor, bool) else None,
+            "factor_display": f_disp,
+            "above_200dma": tac.get("above_200dma")
+                            if isinstance(tac.get("above_200dma"), bool) else None,
+            "dma200_slope_positive": tac.get("dma200_slope_positive")
+                                     if isinstance(tac.get("dma200_slope_positive"), bool) else None,
+        },
+        "lines": lines,
+    }
+
+
+def print_tracks(data: dict, indent: str = "") -> None:
+    for line in track_info(data)["lines"]:
+        print(f"{indent}{line}")
+
+
+def staleness_info(prev_date: str | None, today_date: str | None) -> dict:
+    """基准新旧的结构化判定（--json 用；文字横幅由 staleness_banner 取这里的 warnings）。
+
+    verdict 四档：ok / gap（中间漏跑过）/ clock_skew（基准比今天还新）/
+    unknown（基准日期读不出来）。**判不了是 unknown，不是 ok**——
+    把「没比成」写成「比过了、正常」正是 --json 最容易撒的那个谎。
+    report_wording 是漏跑时报告里必须改用的措辞，forbidden_wording 是不许再写的那句。
+    """
+    info: dict = {
+        "baseline_date": prev_date if (prev_date and DATE_RE.match(prev_date)) else None,
+        "reference_date": None,
+        "gap_days": None,
+        "verdict": "unknown",
+        "report_wording": None,
+        "forbidden_wording": None,
+        "warnings": [],
+    }
+    if not prev_date or not DATE_RE.match(prev_date):
+        return info
+    ref = today_date if (today_date and DATE_RE.match(today_date)) \
+        else datetime.now().strftime("%Y-%m-%d")
+    info["reference_date"] = ref
+    try:
+        gap = (datetime.strptime(ref, "%Y-%m-%d") - datetime.strptime(prev_date, "%Y-%m-%d")).days
+    except ValueError:
+        return info
+    info["gap_days"] = gap
+    info["verdict"] = "ok"
+    if gap < 0:
+        info["verdict"] = "clock_skew"
+        info["warnings"].append(
+            f"⚠️ 基准日期 {prev_date} 晚于本次 {ref}：状态文件比今天还新，"
+            f"很可能日期写错或跑串了，请先核对再采信对照结果。")
+    elif gap >= 3:
+        info["verdict"] = "gap"
+        info["report_wording"] = f"对比 {gap} 天前"
+        info["forbidden_wording"] = "对比昨日"
+        info["warnings"].append(
+            f"⚠️ 基准是 {gap} 天前（{prev_date}）的，中间漏跑过。"
+            f"报告里请写「对比 {gap} 天前」，不要写成「对比昨日」——"
+            f"否则会把几天累积的档位变化说成一天内发生的。")
+    return info
 
 
 def staleness_banner(prev_date: str | None, today_date: str | None) -> list[str]:
@@ -469,24 +606,10 @@ def staleness_banner(prev_date: str | None, today_date: str | None) -> list[str]
     本例程每个日历日都跑，所以基准正常只会比今天早 1 天。差 ≥3 天意味着中间漏跑过，
     这时「对比昨日」这四个字就是错的——报告必须改写成「对比 N 天前」，
     否则会把一段时间累积的档位变化说成一天之内发生的。
+
+    文字与 --json 同源：横幅就是 staleness_info() 的 warnings，不另写一份。
     """
-    out: list[str] = []
-    if not prev_date or not DATE_RE.match(prev_date):
-        return out
-    ref = today_date if (today_date and DATE_RE.match(today_date)) \
-        else datetime.now().strftime("%Y-%m-%d")
-    try:
-        gap = (datetime.strptime(ref, "%Y-%m-%d") - datetime.strptime(prev_date, "%Y-%m-%d")).days
-    except ValueError:
-        return out
-    if gap < 0:
-        out.append(f"⚠️ 基准日期 {prev_date} 晚于本次 {ref}：状态文件比今天还新，"
-                   f"很可能日期写错或跑串了，请先核对再采信对照结果。")
-    elif gap >= 3:
-        out.append(f"⚠️ 基准是 {gap} 天前（{prev_date}）的，中间漏跑过。"
-                   f"报告里请写「对比 {gap} 天前」，不要写成「对比昨日」——"
-                   f"否则会把几天累积的档位变化说成一天内发生的。")
-    return out
+    return list(staleness_info(prev_date, today_date)["warnings"])
 
 
 def state_counts(data: dict) -> dict:
@@ -497,6 +620,32 @@ def state_counts(data: dict) -> dict:
         if st in counts:
             counts[st] += 1
     return counts
+
+
+def signal_info(data: dict) -> dict:
+    """30 个信号档位的结构化统计（--json 用；show 的那行分布也取这里的 counts_line）。
+
+    缺号与档位不合法的编号单独列出：它们既不在 counts 的任何一档里，
+    也就不该被当成「🟢 正常」——不点名，分布行的四个数就悄悄少于 30。
+    ⚪️ 单独给一份编号清单：⚪️ 是「不知道」，不是「安全」。
+    """
+    signals = as_map(data.get("signals"))
+    counts = state_counts(data)
+    missing = [i for i in SIGNAL_IDS if i not in signals]
+    invalid = [i for i in SIGNAL_IDS
+               if i in signals and unwrap(signals[i], "state") not in SIGNAL_STATES]
+    unknown = [i for i in SIGNAL_IDS if unwrap(signals.get(i), "state") == "⚪️"]
+    return {
+        "total": len(SIGNAL_IDS),
+        "counts": counts,
+        "counted": sum(counts.values()),
+        "missing_ids": missing,
+        "invalid_ids": invalid,
+        "unknown_ids": unknown,
+        "unknown_note": "⚪️ 是「不知道」，不是「安全」：报告须写明尝试过的来源与滞后周数。",
+        "counts_line": (f"→ 🟢 {counts['🟢']}｜🟡 {counts['🟡']}｜🔴 {counts['🔴']}"
+                        f"｜⚪️ {counts['⚪️']}（共 {len(SIGNAL_IDS)} 项）"),
+    }
 
 
 # ------------------------------------------------- history 与恢复条件的连续天数
@@ -601,76 +750,160 @@ def streak_of(hist: list[dict], predicate, needed: int) -> tuple[int, str]:
     return streak, "unknown"
 
 
+def _met_tristate(status: str):
+    """streak_of 的三档 → JSON 三态：met=true，not_met=false，unknown=**null**。
+
+    unknown 绝不能写成 false：false 是「数过了，没数满」，null 是「根本数不出来」。
+    两者对应的动作恰好相同（都不得回补），但可信度不同，报告措辞也不同。
+    """
+    return {"met": True, "not_met": False}.get(status)
+
+
+def _strategic_recovery(hist: list[dict]) -> dict:
+    """轨道一回补条件的判定 + 那两行文字（文字与 --json 同源）。"""
+    n = len(hist)
+    streak, status = streak_of(hist, _tc_ok, STRATEGIC_RECOVERY_DAYS)
+    rule_line = (f"  轨道一 战略层回补条件：7 项硬阈值触发数回落至 ≤1 "
+                 f"且维持满 2 周（{STRATEGIC_RECOVERY_DAYS} 个交易日）")
+    days_remaining = None
+    if status == "met":
+        days_remaining = 0
+        prohibition = None
+        verdict = (f"    → 触发数 ≤1 已连续 {streak} 个交易日"
+                   f"（≥{STRATEGIC_RECOVERY_DAYS}）：已满足「维持满 2 周」，"
+                   f"可逐档往上回补**一级**（不可一次补满）。")
+    elif status == "not_met" and streak == 0:
+        last = hist[-1] if hist else {}
+        tc = last.get("trigger_count")
+        prohibition = "尚不满足回补条件。"
+        verdict = (f"    → 最近一笔（{last.get('date', '？')}）触发数 {tc} 项 >1："
+                   f"回补计时尚未开始，需先回落至 ≤1 再连续 {STRATEGIC_RECOVERY_DAYS} 个交易日。"
+                   f"{prohibition}")
+    elif status == "not_met":
+        days_remaining = STRATEGIC_RECOVERY_DAYS - streak
+        prohibition = f"**尚不满足回补条件，还差 {days_remaining} 个交易日**。"
+        verdict = (f"    → 触发数 ≤1 已连续 {streak} 个交易日，"
+                   f"距「满 2 周」还差 {days_remaining} 个交易日："
+                   f"{prohibition}")
+    else:
+        why = (f"已知最近 {streak} 个交易日触发数 ≤1，但更早无记录"
+               if streak >= n else
+               f"已知最近 {streak} 个交易日触发数 ≤1，再往前那笔读不出触发数")
+        if n == 0:
+            why = "尚无任何记录"
+        prohibition = (f"在记录补满 {STRATEGIC_RECOVERY_DAYS} 个交易日之前一律按"
+                       f"「尚不满足」处理，不得回补。")
+        verdict = (f"    → **历史不足，无法判定是否满 2 周**（history 仅 {n} 笔，{why}）："
+                   f"{prohibition}")
+    return {
+        "rule": (f"7 项硬阈值触发数回落至 ≤1 且维持满 2 周"
+                 f"（{STRATEGIC_RECOVERY_DAYS} 个交易日）"),
+        "required_days": STRATEGIC_RECOVERY_DAYS,
+        "streak_days": streak,
+        "status": status,
+        "met": _met_tristate(status),
+        "days_remaining": days_remaining,
+        "restore_allowed": status == "met",
+        "prohibition": prohibition,
+        "rule_line": rule_line,
+        "verdict": verdict,
+    }
+
+
+def _tactical_recovery(hist: list[dict]) -> dict:
+    """轨道二恢复条件的判定 + 那两行文字（文字与 --json 同源）。"""
+    n = len(hist)
+    streak, status = streak_of(hist, _dma_ok, TACTICAL_RECOVERY_DAYS)
+    rule_line = (f"  轨道二 战术层恢复条件：SPX 重新站上 200DMA 且连续 "
+                 f"{TACTICAL_RECOVERY_DAYS} 个交易日站稳，且 200DMA 斜率转正")
+    days_remaining = None
+    if status == "met":
+        days_remaining = 0
+        prohibition = None
+        verdict = (f"    → 站上 200DMA 已连续 {streak} 个交易日"
+                   f"（≥{TACTICAL_RECOVERY_DAYS}）：站稳天数这一半已满足；"
+                   f"斜率转正需另行确认，本脚本不判定斜率。")
+    elif status == "not_met" and streak == 0:
+        last = hist[-1] if hist else {}
+        prohibition = None
+        verdict = (f"    → 最近一笔（{last.get('date', '？')}）SPX 未站上 200DMA："
+                   f"连续站稳天数归零，需重新连续 {TACTICAL_RECOVERY_DAYS} 个交易日。")
+    elif status == "not_met":
+        days_remaining = TACTICAL_RECOVERY_DAYS - streak
+        prohibition = None
+        verdict = (f"    → 站上 200DMA 已连续 {streak} 个交易日，"
+                   f"还差 {days_remaining} 个交易日（另需 200DMA 斜率转正）。")
+    else:
+        if n == 0:
+            why = "尚无任何记录"
+        elif streak >= n:
+            why = (f"已知最近 {streak} 个交易日站上 200DMA，但更早无记录"
+                   if streak else "最近一笔没有 above_200dma 记录")
+        else:
+            why = (f"已知最近 {streak} 个交易日站上 200DMA，"
+                   f"再往前那笔没有 above_200dma 记录")
+        remedy = ("每天在 today.json 的 tracks.tactical.above_200dma 写入 true / false "
+                  "才能判定")
+        prohibition = "在此之前一律按「尚不满足」处理。"
+        verdict = (f"    → **历史不足，无法判定「连续 {TACTICAL_RECOVERY_DAYS} "
+                   f"个交易日站稳」**（history 仅 {n} 笔，{why}）："
+                   f"{remedy}；{prohibition}")
+    return {
+        "rule": (f"SPX 重新站上 200DMA 且连续 {TACTICAL_RECOVERY_DAYS} 个交易日站稳，"
+                 f"且 200DMA 斜率转正"),
+        "required_days": TACTICAL_RECOVERY_DAYS,
+        "streak_days": streak,
+        "status": status,
+        "met": _met_tristate(status),
+        "days_remaining": days_remaining,
+        # 站稳天数只是恢复条件的一半：斜率本脚本一概不判，
+        # 所以 met=true 也只等于「这一半满足」，绝不等于「已恢复」。
+        "slope_evaluated_here": False,
+        "slope_note": "斜率转正需另行确认，本脚本不判定斜率。",
+        "covers_full_recovery": False,
+        "treat_as_not_met": status != "met",
+        "prohibition": prohibition,
+        "rule_line": rule_line,
+        "verdict": verdict,
+    }
+
+
+def recovery_info(hist: list[dict], projected: bool = False) -> dict:
+    """回补 / 恢复条件的结构化进度 + 逐行文字（recovery_lines 就取这里的 lines）。"""
+    n = len(hist)
+    tail = "（含今日这笔，尚未写入状态档）" if projected else ""
+    lines = [f"回补 / 恢复条件进度{tail}：",
+             f"  history {n} 笔" + (
+                 f"（{hist[0]['date']} → {hist[-1]['date']}，最多保留 {HISTORY_MAX_DAYS} 笔；"
+                 f"每个交易日跑一次时即为交易日数）" if n else "（尚无记录）")]
+    strategic = _strategic_recovery(hist)
+    tactical = _tactical_recovery(hist)
+    lines.append(strategic["rule_line"])
+    lines.append(strategic["verdict"])
+    lines.append(tactical["rule_line"])
+    lines.append(tactical["verdict"])
+    return {
+        "history_days": n,
+        "history_first_date": hist[0]["date"] if n else None,
+        "history_last_date": hist[-1]["date"] if n else None,
+        "history_max_days": HISTORY_MAX_DAYS,
+        "includes_today_not_yet_written": projected,
+        "day_unit": "运行日（每次 write 一笔）；与 market.py 的交易日口径不一致时以后者为准",
+        "strategic": strategic,
+        "tactical": tactical,
+        "lines": lines,
+    }
+
+
 def recovery_lines(hist: list[dict], projected: bool = False) -> list[str]:
     """回补 / 恢复条件的进度：连续几个交易日了、还差几个。
 
     非满仓状态下每天都要回答「距离恢复还差什么」（decision-framework.md 恢复条件一节），
     这些行就是那句话的数据来源——判不了就明说判不了，不给模型留凭印象编的空间。
+
+    文字与 --json 同源：这里只是把 recovery_info() 的 lines 摊平，不另写一份。
     """
-    n = len(hist)
-    tail = "（含今日这笔，尚未写入状态档）" if projected else ""
-    out = [f"回补 / 恢复条件进度{tail}：",
-           f"  history {n} 笔" + (
-               f"（{hist[0]['date']} → {hist[-1]['date']}，最多保留 {HISTORY_MAX_DAYS} 笔；"
-               f"每个交易日跑一次时即为交易日数）" if n else "（尚无记录）")]
-
-    s_streak, s_status = streak_of(hist, _tc_ok, STRATEGIC_RECOVERY_DAYS)
-    out.append(f"  轨道一 战略层回补条件：7 项硬阈值触发数回落至 ≤1 "
-               f"且维持满 2 周（{STRATEGIC_RECOVERY_DAYS} 个交易日）")
-    if s_status == "met":
-        out.append(f"    → 触发数 ≤1 已连续 {s_streak} 个交易日"
-                   f"（≥{STRATEGIC_RECOVERY_DAYS}）：已满足「维持满 2 周」，"
-                   f"可逐档往上回补**一级**（不可一次补满）。")
-    elif s_status == "not_met" and s_streak == 0:
-        last = hist[-1] if hist else {}
-        tc = last.get("trigger_count")
-        out.append(f"    → 最近一笔（{last.get('date', '？')}）触发数 {tc} 项 >1："
-                   f"回补计时尚未开始，需先回落至 ≤1 再连续 {STRATEGIC_RECOVERY_DAYS} 个交易日。"
-                   f"尚不满足回补条件。")
-    elif s_status == "not_met":
-        left = STRATEGIC_RECOVERY_DAYS - s_streak
-        out.append(f"    → 触发数 ≤1 已连续 {s_streak} 个交易日，"
-                   f"距「满 2 周」还差 {left} 个交易日："
-                   f"**尚不满足回补条件，还差 {left} 个交易日**。")
-    else:
-        why = (f"已知最近 {s_streak} 个交易日触发数 ≤1，但更早无记录"
-               if s_streak >= n else
-               f"已知最近 {s_streak} 个交易日触发数 ≤1，再往前那笔读不出触发数")
-        if n == 0:
-            why = "尚无任何记录"
-        out.append(f"    → **历史不足，无法判定是否满 2 周**（history 仅 {n} 笔，{why}）："
-                   f"在记录补满 {STRATEGIC_RECOVERY_DAYS} 个交易日之前一律按"
-                   f"「尚不满足」处理，不得回补。")
-
-    t_streak, t_status = streak_of(hist, _dma_ok, TACTICAL_RECOVERY_DAYS)
-    out.append(f"  轨道二 战术层恢复条件：SPX 重新站上 200DMA 且连续 "
-               f"{TACTICAL_RECOVERY_DAYS} 个交易日站稳，且 200DMA 斜率转正")
-    if t_status == "met":
-        out.append(f"    → 站上 200DMA 已连续 {t_streak} 个交易日"
-                   f"（≥{TACTICAL_RECOVERY_DAYS}）：站稳天数这一半已满足；"
-                   f"斜率转正需另行确认，本脚本不判定斜率。")
-    elif t_status == "not_met" and t_streak == 0:
-        last = hist[-1] if hist else {}
-        out.append(f"    → 最近一笔（{last.get('date', '？')}）SPX 未站上 200DMA："
-                   f"连续站稳天数归零，需重新连续 {TACTICAL_RECOVERY_DAYS} 个交易日。")
-    elif t_status == "not_met":
-        left = TACTICAL_RECOVERY_DAYS - t_streak
-        out.append(f"    → 站上 200DMA 已连续 {t_streak} 个交易日，"
-                   f"还差 {left} 个交易日（另需 200DMA 斜率转正）。")
-    else:
-        if n == 0:
-            why = "尚无任何记录"
-        elif t_streak >= n:
-            why = (f"已知最近 {t_streak} 个交易日站上 200DMA，但更早无记录"
-                   if t_streak else "最近一笔没有 above_200dma 记录")
-        else:
-            why = (f"已知最近 {t_streak} 个交易日站上 200DMA，"
-                   f"再往前那笔没有 above_200dma 记录")
-        out.append(f"    → **历史不足，无法判定「连续 {TACTICAL_RECOVERY_DAYS} "
-                   f"个交易日站稳」**（history 仅 {n} 笔，{why}）："
-                   f"每天在 today.json 的 tracks.tactical.above_200dma 写入 true / false "
-                   f"才能判定；在此之前一律按「尚不满足」处理。")
-    return out
+    return list(recovery_info(hist, projected=projected)["lines"])
 
 
 def pick(entry: dict, allowed, path: str, dropped: list[str]) -> dict:
@@ -684,20 +917,160 @@ def pick(entry: dict, allowed, path: str, dropped: list[str]) -> dict:
     return out
 
 
+# ------------------------------------------------------------- show 的 JSON
+
+
+def first_run_note() -> str:
+    """首次运行时跟在 FIRST_RUN_MSG 后面的那一行（文字与 --json 同源）。"""
+    return (f"（状态文件 {rel_display(STATE_PATH)} 尚不存在；"
+            f"本次跑完用 `snapshot.py write <today.json> --date YYYY-MM-DD` 建立。"
+            f"回退方案：翻 Slack 历史里标题含「每日风险监控」的上一贴。）")
+
+
+def _bare(line: str) -> str:
+    """把一行提示剥成纯文字（去缩进、去开头的「→ 」），供 degraded_reasons 复用原措辞。"""
+    s = line.strip()
+    return s[2:] if s.startswith("→ ") else s
+
+
+def show_payload(data: dict) -> dict:
+    """`show --json` 的完整载荷：原始状态 + show 人读分支算出来的每一个判定。
+
+    为什么不是直接 dump 原始 JSON：那样 --json 会**严格少于** show——
+    staleness 横幅（含「报告里请写「对比 N 天前」，不要写成「对比昨日」」）、
+    档位分布、两条轨道、7 项硬阈值的 ⚪️ 计数、回补 / 恢复条件的判定
+    全都只存在于人读文字里。任何窄读（管道、交接、并发）只看得到 stdout，
+    少掉的那些恰好都是禁令与「判不了」的声明。
+
+    三条口径在这里必须守住：
+      1. ⚪️ 既不计入分子也不计入分母 —— hard.rows[].fired 用三态 true/false/**null**，
+         `counted_in_denominator` 单列，绝不把 ⚪️ 压成 false；
+      2. 判不了的判定一律 null + 理由字符串，不写 false；
+      3. 人读分支印出的每一句禁令都在这里有对应字段（verdict / prohibition / notes）。
+    """
+    stale = staleness_info(data.get("date"), None)
+    sig = signal_info(data)
+    tracks = track_info(data)
+    h = hard_summary(data)
+    hard_block = {
+        "rows": hard_rows(h),
+        "fired_ids": h["fired"],
+        "unknown_ids": h["unknown"],
+        "count": h["count"],
+        "denominator": h["denominator"],
+        "worst_case": h["worst_case"],
+        "low_confidence": h["low_confidence"],
+        "counting_rule": ("⚪️ 数据暂缺不计入分子，也不计入分母"
+                          "（分母 = 7 − 暂缺项数）"),
+        "escalation_threshold": 2,
+        "escalated": h["count"] >= 2,
+        "notes": hard_notes(h, "上次运行"),
+    }
+    rec = recovery_info(history_of(data))
+    problems = validate(data, rel_display(STATE_PATH))
+
+    reasons: list[str] = []
+    if problems:
+        reasons.append(f"状态文件校验未通过：{len(problems)} 条问题"
+                       f"（逐条见 validation.problems）")
+    reasons.extend(stale["warnings"])
+    if stale["verdict"] == "unknown":
+        # 人读分支这时把日期印成「（未记录）」：新旧判不了，
+        # 「对比昨日」这四个字本次就没有依据，必须当成降级说出来。
+        reasons.append("状态文件读不出基准日期（date 缺失或不是 YYYY-MM-DD）："
+                       "基准新旧无法判定，报告不得直接写「对比昨日」。")
+    bad_ids = sig["missing_ids"] + sig["invalid_ids"]
+    if bad_ids:
+        reasons.append(f"{len(bad_ids)} 个信号档位缺失或不合法（编号 "
+                       f"{'、'.join(sorted(bad_ids, key=int))}）：不计入任何一档，"
+                       f"档位分布四个数之和会少于 {len(SIGNAL_IDS)}")
+    if sig["counts"]["⚪️"]:
+        reasons.append(f"{sig['counts']['⚪️']} 个信号为 ⚪️ 数据暂缺（编号 "
+                       f"{'、'.join(sig['unknown_ids'])}）——{sig['unknown_note']}")
+    if h["unknown"]:
+        reasons.append(f"7 项硬阈值有 {len(h['unknown'])} 项 ⚪️ 数据暂缺"
+                       f"（第 {'、'.join(h['unknown'])} 项）：分母降为 {h['denominator']}，"
+                       f"{hard_block['counting_rule']}")
+    # ⚠️ 开头的那几句本身就是禁令，原样搬进 degraded_reasons，不另写措辞
+    reasons.extend(_bare(n) for n in hard_block["notes"] if n.startswith("→ ⚠️"))
+    if tracks["strategic"]["baseline_pct"] is None:
+        reasons.append("轨道一 战略层目标仓位基准读不出（N/A）："
+                       "报告第 1 部分决策层那一行没有基准可写。")
+    if tracks["tactical"]["state"] is None:
+        reasons.append("轨道二 战术层档位读不出（N/A）："
+                       "报告第 1 部分决策层那一行没有档位可写。")
+    for track in ("strategic", "tactical"):
+        if rec[track]["status"] == "unknown":
+            reasons.append(_bare(rec[track]["verdict"]))
+
+    return {
+        "script": SCRIPT_NAME,
+        "command": "show",
+        "generated_at": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
+        "state_path": rel_display(STATE_PATH),
+        "state_exists": True,
+        "first_run": False,
+        # ok 不是常量：状态文件本身校验不过时它就是 false
+        "ok": not problems,
+        "degraded": bool(reasons),
+        "degraded_reasons": reasons,
+        "validation": {"ok": not problems, "problems": problems},
+        "date": data.get("date"),
+        "updated_at": data.get("updated_at"),
+        "staleness": stale,
+        "signals": sig,
+        "tracks": tracks,
+        "hard_thresholds": hard_block,
+        "recovery": rec,
+        # 原始状态档原样带上（此前 --json 只有这一块）
+        "state": data,
+    }
+
+
+def first_run_payload() -> dict:
+    """首次运行（状态文件不存在）时的 --json 载荷。
+
+    人读分支这时只印两行说明就 return，--json 也必须是**同样的两句话 + 结构化的
+    「判不了」**：所有派生块一律 null，而不是 0 / false——没有基准不等于「都没变」。
+    """
+    return {
+        "script": SCRIPT_NAME,
+        "command": "show",
+        "generated_at": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
+        "state_path": rel_display(STATE_PATH),
+        "state_exists": False,
+        "first_run": True,
+        "ok": True,          # 首次运行不是错误（原文：读不到就标注首次建立）
+        "degraded": True,
+        "degraded_reasons": [FIRST_RUN_MSG],
+        "validation": {"ok": None, "problems": []},
+        "notes": [FIRST_RUN_MSG, first_run_note()],
+        "date": None,
+        "updated_at": None,
+        "staleness": None,
+        "signals": None,
+        "tracks": None,
+        "hard_thresholds": None,
+        "recovery": None,
+        "state": None,
+    }
+
+
 # ---------------------------------------------------------------- 子命令
 
 
 def cmd_show(args: argparse.Namespace) -> int:
     if not STATE_PATH.exists():
+        if args.json:
+            print(json.dumps(first_run_payload(), ensure_ascii=False, indent=2))
+            return 0
         print(FIRST_RUN_MSG)
-        print(f"（状态文件 {rel_display(STATE_PATH)} 尚不存在；"
-              f"本次跑完用 `snapshot.py write <today.json> --date YYYY-MM-DD` 建立。"
-              f"回退方案：翻 Slack 历史里标题含「每日风险监控」的上一贴。）")
+        print(first_run_note())
         return 0
 
     data = read_json(STATE_PATH, "状态文件")
     if args.json:
-        print(json.dumps(data, ensure_ascii=False, indent=2))
+        print(json.dumps(show_payload(data), ensure_ascii=False, indent=2))
         return 0
 
     date = data.get("date") or "（未记录）"
@@ -722,9 +1095,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         if asof:
             tail += f"（as of {asof}）"
         print(f"  {i:>2}. {st} {name}{tail}")
-    c = state_counts(data)
-    print(f"→ 🟢 {c['🟢']}｜🟡 {c['🟡']}｜🔴 {c['🔴']}｜⚪️ {c['⚪️']}"
-          f"（共 {len(SIGNAL_IDS)} 项）")
+    print(signal_info(data)["counts_line"])
     print()
     print_tracks(data)
     print()
@@ -1017,7 +1388,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_show = sub.add_parser(
         "show", help="打印上次运行的各信号档位 + 两条轨道档位 + 7 项硬阈值 + 回补条件进度")
-    p_show.add_argument("--json", action="store_true", help="输出原始 JSON")
+    p_show.add_argument("--json", action="store_true",
+                        help="输出结构化 JSON：原始状态在 state 键下，另带 staleness / "
+                             "档位分布 / 两条轨道 / 7 项硬阈值（⚪️ 计数）/ 回补条件判定，"
+                             "顶层含 ok / degraded / degraded_reasons")
     p_show.set_defaults(func=cmd_show)
 
     p_diff = sub.add_parser("diff", help="逐信号对照：哪些档位变了、哪些没变")

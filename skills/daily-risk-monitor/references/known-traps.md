@@ -66,5 +66,37 @@
 | Buffett Indicator                       | 两序列末行日期常不同季                               | 必须 `merge(on="date")` 后取末行                                                                                            |
 | WALCL / WTREGEN / RRPONTSYD             | 单位不一致（百万 / 百万 / 十亿）                     | 前两者 ÷1000                                                                                                                |
 | Hyperliquid 主池 `SPX`                  | 那是 SPX6900 迷因币，不是标普500                     | 必须指定 `"dex":"xyz"`                                                                                                      |
-| FRED via python `requests`              | 会超时                                               | 必须用 `curl`                                                                                                               |
+| FRED via python `requests`              | **旧记录「会超时」已被推翻**（2026-09-05 实测 0.50s 正常）；真正会超时的是**送浏览器 UA**（25–30s），与语言无关 | 必须用 `curl`                                                                                                               |
 | yfinance via `urllib`                   | SSL 验证失败                                         | 必须用 `requests.Session` + UA                                                                                              |
+
+> **编者注（2026-09-05 追加；2026-09-07 更新：已由迁移解决）：`stock_perp.sh` 的一个本仓库自身缺陷——ctxs 阵列短于 universe 时以 exit 5 中止。**
+> 以上表格与准则为原文逐字迁移，本条不属于原文，是本机 fixture 实测记录，附在此处以免与上表的上游陷阱混为一谈。
+> **本缺陷已於 2026-09-07 随 shell 版删除而消失**（见文末处置）；以下症状与成因保留为历史记录，因为它是一次真实发生过的失败，说明了「短少的阵列被静默补 null」这类问题会怎么变成编出来的读数。
+>
+> **症状（2026-09-05 以离线 fixture 实测，缺陷仍在）。** 构造一份 `universe` 有 3 笔、`assetCtxs` 只有 2 笔的
+> Hyperliquid 回应（即 `xyz:XYZ100` 没有对应报价），两个分支表现不同，**两个都不合格**：
+>
+> | 分支                     | 实测结果                                                                                                                            |
+> |--------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
+> | `stock_perp.sh --json`   | **exit 5**，**stdout 0 bytes**（不是可解析的 JSON），stderr 只有一行 `jq: error (at <unknown>): Expected JSON value (while parsing '')` |
+> | `stock_perp.sh`（文字）  | **exit 4**，且把缺报价的市场印成标记价空白、名义 OI **$0.0M**、隐含跳空 **−100.00%**，据此判定「🔴 取错市场，本市场整笔作废」          |
+>
+> **成因**：`jq` 的 `transpose` 会把短少的 ctx 补成 `null`，`null.markPx` 也是 `null`，`@tsv` 把它写成**空字串**；
+> 文字分支的 awk 拿空字串当 0 算下去（于是 OI 变 0、跳空变 −100%），`--json` 分支则在 `(.[3]|tonumber)` 上炸开——
+> `jq` 遇执行期错误以 **5** 退出，`set -euo pipefail` 把这个 5 原样传出来。
+>
+> **为什么这条重要**：**5 不在本仓库的保留退出码里**（1 参数错误｜2 依赖缺失｜3 取数失败｜4 判定取错市场），
+> 呼叫方按码分派时会掉进没有分支的缝隙；而文字分支更糟——它没有报错，它**编了一个读数**（−100% 跳空、$0 OI），
+> 再拿这个编出来的数去跑撞名检查，把「这个市场没有报价」谎报成「这个市场取错了」。两者都违反
+> 「取不到就标 ⚪️ 数据暂缺、绝不编数字」。
+>
+> **处置（2026-09-07：已由迁移解决）**：`stock_perp.sh` 已删除，信号 18 改由 `stock_perp.py` 取数，**exit 5 与那个假撞名的 exit 4 都不再会出现**。这条缺陷不需要再防，只需要知道它曾经存在：
+> 若日後有人把 `.sh` 版从 git 历史里捞回来接线，症状会原样回来。
+> 删除前最後一次实测（2026-09-07，同一份 fixture）确认缺陷到最後一刻仍在：`stock_perp.sh --json` 回 **exit 5、stdout 0 bytes**、stderr 那一行 `jq: error … Expected JSON value`；文字分支回 **exit 4**。
+>
+> **现在的行为：`stock_perp.py`（唯一实现）同 fixture 同参数**——文字与 `--json` 两个分支都以 **exit 3（取数失败）** 结束，
+> `--json` 输出**合法 JSON**，`markets` 里**两个市场都在**：`xyz:SP500` 照常给读数，`xyz:XYZ100` 的
+> `mark` / `implied_gap_pct` 为 `null` 并带 `unavailable_reason`「assetCtxs 只有 2 笔、universe 有 3 笔，
+> 对不上这个市场的第 3 个位置」，同一句话也出现在 `degraded_reasons` 与 stderr 告警里。
+> 2026-09-07 独立复验（`universe` 119 笔、`assetCtxs` 截成 1 笔的 fixture）结果一致：**exit 3**、合法 JSON、`markets` 两笔都在，缺报价的 `xyz:SP500` 带 `available: false` 与 `unavailable_reason`「assetCtxs 只有 1 笔、universe 有 119 笔，对不上这个市场的第 53 个位置」，另一个市场照常算完。
+> **这就是现在的正常行为**：碰到 exit 3 时把 ⚪️ 的那个市场按取数失败处理（列出已尝试来源、报滞后周数，不得当成「未触发」），另一个市场的读数照常引用。

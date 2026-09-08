@@ -73,13 +73,39 @@ from a private source document and carry the same edit-only-what-you-must rule.
 
 Three things about it are load-bearing and easy to erode:
 
-- **Fetching is split by transport, deliberately.** All curl fetches live in
-  standalone shell scripts (`fred.sh`, `cnn_fng.sh`, `crypto.sh`, `stock_perp.sh`,
-  `cape.sh`) so they can be run and debugged alone; only yfinance work is Python
-  (`market.py`). This is not stylistic drift — **FRED must use curl** (python
-  `requests` times out in this environment) while **yfinance must use
-  `requests.Session` + UA** (urllib fails SSL verification). The two requirements
-  point opposite ways; "unifying" them breaks one side silently.
+- **Fetching is split so each source can be run and debugged alone.** Every fetch
+  lives in its own standalone script. **Standalone invocation is the requirement;
+  the language is not.** The real constraints are **per-host headers, and they are
+  language-independent** (all measured 2026-09-05 on this machine):
+
+  | host | rule | evidence |
+  |---|---|---|
+  | FRED | **never** send a browser User-Agent | Chrome UA → 25–30s ReadTimeout, from curl *and* `requests`. curl-like or `requests`' default UA → HTTP 200 in ~0.5s |
+  | Yahoo | **always** send one | a bare `requests.Session` gets throttled (`market.py:303`); `stock_perp.py:29` records a stable 429 from the chart endpoint |
+  | CNN F&G | needs full browser UA **+ Referer + Origin** | otherwise HTTP 418 「I'm a teapot. You're a bot.」 |
+
+  These do **not** conflict at the language level — only per-host, which one
+  program handles with per-host headers. `stock_perp.py` already straddles both
+  (Hyperliquid JSON + FRED CSV).
+
+  > An earlier version of this bullet claimed **"FRED must use curl (python
+  > `requests` times out in this environment)"**. That is **false**: `requests`
+  > returns FRED in 0.50s versus curl's 1.16s. The failing transport is stdlib
+  > `urllib`, which hits `CERTIFICATE_VERIFY_FAILED` against FRED, multpl.com
+  > *and* CNN alike — this environment's Python has no CA bundle wired to the
+  > system store, so it is not a yfinance-specific fault. `urllib` + `certifi`
+  > works (0.48s). Do not restore the old claim; it misdirects anyone debugging
+  > FRED.
+
+  What the language choice *does* turn on is dependencies: `fred.sh` and
+  `cape.sh` need only bash + curl + awk and **no Python packages at all**.
+  Porting those two would trade a satisfied dependency for `requests` — a
+  portability loss for a repo whose purpose is portable skills. Keep them shell.
+  Concurrency is not a reason to port either: `curl --parallel` with
+  `-w '%{url_effective} %{http_code}'` fetches six FRED series in 1.08s versus
+  3.26s serial **and keeps per-URL status attribution**, so the ⚪️ per-series
+  accounting and `fred.sh`'s three-way ordering invariant survive with the
+  reduction loop staying serial in the parent.
 - **`assets/last_run.json` is the day-over-day baseline.** `snapshot.py write`
   rewrites it each run with every signal's tier plus both track readings, and it
   lands *before* the Slack push so a failed push cannot lose the tiers. Reading
@@ -93,6 +119,67 @@ Three things about it are load-bearing and easy to erode:
 
 It shares no code with `ai-pullback-daily` even though both read Hyperliquid's
 `xyz` pool — each keeps its own fetcher, and they must not be merged.
+
+### crypto / stock_perp are Python now — the shell versions are gone
+
+`scripts/crypto.py` and `scripts/stock_perp.py` are the **only** implementations
+of signals 14–18. `scripts/crypto.sh` and `scripts/stock_perp.sh` were deleted
+on 2026-09-07 when `SKILL.md` step 1.1 switched its two `bg` lines to
+`python3 "$SKILL_DIR/scripts/crypto.py" all --json` and
+`python3 "$SKILL_DIR/scripts/stock_perp.py" --from-fred --json`. **Rollback is
+git alone** — the deleted files are in history; do not restore them into the
+tree. Two implementations silently disagreeing about the same verdict is the
+worst failure this skill family has (see the neocloud credit twins, whose two
+`TH` dicts make every recalibration a two-place edit), and a second copy of
+`crypto` / `stock_perp` would be that trap over signals 14–18.
+
+The switch moved `jq` off the critical path: **`cnn_fng.sh` is now the only
+script that needs it** (measured: 10 invocations; `fred.sh` and `cape.sh` have
+zero — their sources are CSV and HTML). `crypto.py` / `stock_perp.py` need
+`python3` + `requests` and no `jq` / `awk` / `curl`.
+
+Where the language split falls, and why — settled, not to be re-litigated:
+
+- **`fred.sh` and `cape.sh` stay shell.** They need no `jq` and **no Python
+  packages at all**, and this environment's stdlib `urllib` cannot reach these
+  hosts, so porting them would add `requests` for no gain — a portability loss
+  in a repo whose purpose is portable skills.
+- **Concurrency is not a reason to port.** `curl --parallel` with
+  `-w '%{url_effective} %{http_code}'` keeps **per-URL status attribution**, so
+  the ⚪️ per-series accounting and `fred.sh`'s ordering invariant survive in
+  shell.
+- **What Python uniquely bought is two things curl cannot express.**
+  *Heterogeneous-block parallelism*: `crypto.py` fires its four blocks at four
+  different hosts, fences each future separately, and reduces `OKCOUNT` /
+  `MISSING` in fixed submission order — one bad field can no longer discard
+  three good blocks. And *named fields* replacing the old positional TSV, whose
+  one row was addressed under **three incompatible index bases** (awk
+  `$1…$16`, jq `.[0]…[15]`, and a `read -r` variable list).
+
+The divergence that made lingering untenable is now closed. When Hyperliquid's
+`assetCtxs` array is shorter than `universe`, the shell version let `jq`'s
+`transpose` pad with null, the empty fields survived into the `--json` branch's
+`tonumber`, and `set -euo pipefail` propagated jq's exit **5** — a code this
+repo does not reserve — with unparseable JSON on stdout. `stock_perp.py` records
+that market as `MissingMarket` with a reason, keeps both markets in the output,
+and exits **3**. That defect is therefore gone rather than fixed; the record of
+it stays in `skills/daily-risk-monitor/references/known-traps.md`, marked
+resolved-by-migration, because it documents a failure that really happened.
+
+**A migration oracle is not sufficient evidence to switch. Run a live
+interleaved comparison first.** The oracle — frozen upstream payloads plus a
+golden stdout / stderr / exit code per case, replayed offline through the
+`RISK_FIXTURE_DIR` / `RISK_FIXTURE_NOW` hook both versions carry — reached
+119/130 green while `stock_perp.py` was **100% broken against the real
+network**: its `http_request` returned `False` on success, but the contract is
+"a non-`None` `fail_reason` means failure", so every successful fetch was read
+as a transport-layer failure. The fixture path returned `None` there, so the
+oracle never exercised it. The oracle covers *parsing and rendering*; it cannot
+cover the transport layer it replaces. So for any future port: alternate
+`sh → py → sh → py` against live upstreams and diff every decision-relevant
+field before deleting anything. The oracle still **currently lives outside the
+repo, in scratch space** — no fixture or golden file is checked in, so a fresh
+clone cannot replay it.
 
 ### How the two AI-compute skills couple
 
@@ -149,17 +236,27 @@ shared helpers are still copy-pasted, and that is the current state of the code,
 not an oversight waiting to be discovered:
 
 - **`scrub()`** (folds `$HOME`-ish absolute paths out of error text) is defined
-  **five times** — once in each of `industry_table.py`, `technicals.py`,
-  `perp_quotes.py`, `neocloud_credit_monitor.py`, `neocloud_credit_lite.py`.
-- **`rel_display()`** exists in **three** copies: the shared one in `_weekly.py`
-  (imported by the three scripts that need the weekly install) plus private
-  definitions in `neocloud_credit_monitor.py` and `neocloud_credit_lite.py`,
-  which do not import `_weekly` at all — the credit scripts read only this
-  skill's own `assets/`, so they have no reason to depend on the weekly lookup.
+  **ten times** (measured 2026-09-07, not a remembered number — re-run the grep):
+  `industry_table.py`, `technicals.py`, `perp_quotes.py`,
+  `neocloud_credit_monitor.py`, `neocloud_credit_lite.py`, `etf_holdings.py`,
+  `market.py`, `snapshot.py`, `crypto.py`, `stock_perp.py`.
+- **`rel_display()`** exists in **five** copies: the shared one in `_weekly.py`
+  (imported by the scripts that need the weekly install) plus private
+  definitions in `neocloud_credit_monitor.py`, `neocloud_credit_lite.py`,
+  `market.py` and `snapshot.py`. The credit scripts do not import `_weekly` at
+  all — they read only this skill's own `assets/`, so they have no reason to
+  depend on the weekly lookup.
 
-Treat these as five and three separate implementations: a fix to path scrubbing
+Treat these as ten and five separate implementations: a fix to path scrubbing
 (the public-repo leak rule below) is an N-place edit, and grepping for
-`_HOMEISH_RE` finds every copy. Converging them is fine, but `neocloud_credit_lite.py`
+`_HOMEISH_RE` finds every copy.
+
+⚠️ **Count the grep, do not trust this list.** It said five and three until
+2026-09-07, by which point the real numbers were ten and five — the two Python
+ports and three earlier scripts had been added without updating it. Path
+scrubbing is the public-repo leak rule, so a missed copy publishes a home
+directory into a Slack-pushed report; a stale count here is the most expensive
+kind of documentation rot in this file. Converging them is fine, but `neocloud_credit_lite.py`
 is the standard-library cloud variant and must not gain an import that ties it
 to the rest of the script directory.
 
@@ -203,6 +300,133 @@ issuer's own sheet. Alpha Vantage is convenient, not authoritative — so the
 issuer sheet must still be pulled on its own schedule, otherwise "official wins
 on conflict" can never fire, because nothing is ever there to conflict with.
 
+## JSON equivalence — the rule
+
+A script's `--json` must carry everything its human output carries. Every
+warning, prohibition, verdict and caliber declaration that the text branch
+prints must exist as a **field**. Exit codes and stderr are *redundant*
+channels, never the only one: any narrow read, any handoff between steps, and
+any concurrent run sees stdout alone.
+
+This was audited across all 16 scripts (2026-09-05) and 9 of them failed. The
+defects came in two shapes, and the first is the dangerous one because it looks
+fine:
+
+- **Self-contradictory** — the obvious field lies while the truth sits in a
+  less obvious one. `cnn_fng.sh` emitted
+  `triggers.hard_threshold_4_greed_burst: false` when it could not evaluate the
+  trigger at all (only `peak.value: null` gave it away) — and that is *hard
+  threshold #4*, where ⚪️ must be deducted from the denominator (`N = 7 − M`)
+  and `false` is not. `fred.sh`, `cape.sh` and `stock_perp.sh` (the since-deleted
+  shell version — this bullet is the 2026-09-05 audit record, kept as written)
+  all hardcoded `"ok":true` while a conditional `sanity.pass` said otherwise.
+- **Genuinely absent** — no field at all. `neocloud_credit_monitor.py` popped
+  the `cfg` key its own "no live CDS data (this layer's biggest blind spot)"
+  line derives from; `snapshot.py show --json` dumped raw state and skipped
+  every derived banner, making `--json` strictly *less* than `show`.
+
+Four rules follow:
+
+1. **`ok` is never a literal.** It is false whenever a self-check failed.
+2. **A trigger that could not be evaluated is `null`, never `false`.** `false`
+   means "checked, did not fire". Pair it with a reason string. This is the
+   JSON form of the ⚪️ / ❌ distinction the reference docs already insist on.
+3. **Every prohibition in the text branch is also a field.** If the human
+   output says "do not divide these two", the JSON says so too.
+4. **`--quiet` means "no human-readable rendering on stdout". It never means
+   "no warnings".** stderr stays live, and every degradation is additionally a
+   structured field plus a top-level `degraded: bool` / `degraded_reasons[]`.
+
+Rule 4 matters most under concurrency, which is exactly what provokes
+throttling: if `--quiet` silenced the ⚠ lines and a caller read only a summary
+field, a throttled run would become a silently normalised one — the failure
+mode fallback-rule 6 and the ⚪️ accounting exist to prevent, triggered by the
+change meant to make things faster.
+
+Design record: `docs/superpowers/specs/2026-09-05-skill-handoff-and-concurrency-design.md`.
+
+## Retrieval transport layer
+
+The two daily routines fetch a large part of their signals with WebSearch /
+web_fetch. Raw search results are prose, ads and stale reposts — tens of KB per
+item — and letting them into the context that writes the report both drags the
+verdict toward the snippet's own wording and dilutes the source and as-of date
+that `output-format.md` requires on every line. So retrieval is split into
+**transport** and **judgement**: the transport side returns readings and
+provenance as structured fields, never a 🟢🟡🔴 state, a threshold comparison, a
+「一句話解讀」, or narrative. The shape is enforced by the schema having no such
+fields, not by a prompt asking nicely.
+
+### The contract is deliberately duplicated — a TWO-PLACE EDIT
+
+The contract lives in **two files, one per skill**:
+
+- `skills/ai-pullback-daily/references/search-contract.md`
+- `skills/daily-risk-monitor/references/search-contract.md`
+
+This is not drift waiting to be cleaned up. `daily-risk-monitor` is standalone
+by design — the rule above says it shares no code and no sibling-skill
+dependency with `ai-pullback-daily` — so the contract **cannot** be hoisted into
+one shared file without creating exactly the dependency that rule forbids.
+
+Treat it the way the two `TH` threshold dicts are treated: **a change to the
+common envelope is a two-place edit.** The common part is §2 (the envelope
+fields), §3 (`threshold_comparable`, `carry_forward_policy`), §4 (the sentinel
+is chosen by the caller, not the fetcher), §5 (what is excluded), and the
+one-line handoff receipt. The per-skill parts — the group tables, the dispatch
+lists, the payload families actually used, the per-group caliber notes — are
+genuinely different and must not be homogenised. Two copies silently disagreeing
+about the envelope is the same failure mode as the two `TH` dicts disagreeing
+about tripwire ④: whichever copy the day's run happened to read is what the
+report presents as fact.
+
+Note the copies use **different sentinel sets** (`daily-risk-monitor` has three,
+`ai-pullback-daily` four, including `（无）`), so a sentinel change is a real
+per-skill decision, not a copy-paste.
+
+Unlike `references/*.md`, these two files are **not** verbatim migrations from
+the private source document — they are the skills' own handoff contracts and can
+be edited normally. But a contract may only say **how** a caliber is carried,
+never restate or amend the caliber itself; every rule it cites has to be checked
+back against the migrated `signals-*.md` / `tripwires.md` / `neocloud-credit.md`
+files that own it.
+
+### `.claude/agents/` is optional and must stay that way
+
+`.claude/agents/search-transport.md` is the Claude Code mechanism that executes
+one group of the contract. It is a **Claude Code-only optional enhancement**:
+it is not part of the portable `SKILL.md` layer, and the README's own documented
+install path (`cp -r skills/<name> ~/.claude/skills/`) does not carry it.
+
+- **`SKILL.md` names the capability, never the mechanism.** Keep the repo's
+  existing neutral wording (`WebSearch / web_fetch`, `a Slack MCP server`,
+  `python3 + yfinance`, `jq`). The moment an `@agent-name` or an `mcp__…`
+  identifier appears in a `SKILL.md`, the portable layer is dead. Do not add
+  this agent to any `SKILL.md` by name.
+- **Degrading means the parent searches for itself** — same contract, same JSON
+  file, same report bytes.
+- **`isolation: worktree` is forbidden in that definition**, and the reason is in
+  a comment there: the daily state files have inconsistent git status.
+  `last_run.json` and `dominance_history.jsonl` are **untracked**, so a worktree
+  shows a "first run" world; `neocloud_credit_history.jsonl` **is tracked**, so a
+  worktree shows the last committed state and the day's append evaporates with
+  the tree. The tracked one is the more dangerous of the two failures precisely
+  because it looks normal.
+
+### Where a missing transport layer gets announced — a deliberate exception
+
+The absence of the transport layer goes into **run output, not the report body**.
+That deviates from the repo's "falling back must be loud" rule, so the criterion
+is written down here to stop it eroding into "no fallback needs announcing":
+
+> **Announce a fallback in the report body when it changes the data's caliber;
+> announce it only in run output when the data is byte-identical.**
+
+`AV_API_KEYS` being unset changes the caliber (full holdings → top-N), so it must
+appear in the body. The transport layer being absent changes only *where* the
+searching happened, so putting it in the body is noise. Every other fallback in
+this repo changes caliber and therefore still goes in the body.
+
 ## ai-industry-weekly architecture
 
 A weekly re-rating of an AI-compute supply-chain quality table. Three files
@@ -233,7 +457,13 @@ the rolled baseline.
 - `diff` also validates before comparing. This is not redundant: an unvalidated
   diff silently emitted a plausible-but-wrong change summary (a dropped row read
   as a deliberate delisting) that would be published one step before `write`
-  caught it. Malformed input exits 1 with **zero bytes on stdout**.
+  caught it. Malformed input exits 1 with **zero bytes on stdout** — with one
+  deliberate exception added 2026-09-07: `diff --json` on malformed input exits
+  1 and writes an error object carrying `ok: false` / `summary_produced: false`
+  / `result: null`. That is not a diff result and cannot be mistaken for one,
+  and it exists because a caller narrow-reading stdout could not otherwise tell
+  "refused" from "ran and found nothing". The plain (non-`--json`) branch is
+  still byte-for-byte silent.
 - Validation covers header, row count, ticker set *and order* against
   `universe.json`, rating vocabulary, empty cells, and lazy placeholders like
   「见 Slack thread」.
@@ -346,7 +576,8 @@ python3 $S/scripts/baseline.py show > /tmp/t.md
 python3 $S/scripts/baseline.py validate /tmp/t.md     # expect exit 0
 python3 $S/scripts/baseline.py diff /tmp/t.md         # expect "本周评级无变动"
 
-# every malformed shape must be refused with empty stdout
+# every malformed shape must be refused with empty stdout (plain branch;
+# `--json` returns an error object with summary_produced:false instead)
 grep -v '^| ASML ' /tmp/t.md > /tmp/bad.md
 python3 $S/scripts/baseline.py diff /tmp/bad.md       # expect exit 1, 0 bytes on stdout
 ```
