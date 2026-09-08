@@ -15,7 +15,12 @@
      历史基线 xyz:SP500 ≈ $483M OI／$129M 日成交；xyz:XYZ100 ≈ $282M／$177M。
      骤降到千万以下 = 池子在迁移，报价不可信。
   2. **代码撞名**：标记价与真实指数收盘差 **>10% 就判定取错市场**，
-     该市场整笔作废、不得用于报告。
+     该市场整笔作废、不得用于报告。**「整笔」= 隐含跳空、资金费率、流动性
+     三项一律不计触发**（作废的事实记在 triggers.gap_not_evaluated／
+     funding_not_evaluated／liquidity_not_evaluated，既不进分子也不进分母）。
+     ⚠️ 以前只有隐含跳空一条线挡了 wrong，於是一个被判定「取错市场」的迷因币
+     照样贡献 funding_crowded_long／illiquid —— 一个凭空长出来的触发。
+     ① 的原始名义 OI 仍会印，但只当撞名成因的线索，不再是流动性结论。
 
 口径（reference 明订，不可改）：
   xyz:SP500  ↔ ^GSPC   指数点位 1:1（≈7,7xx，不是 SPY 的 ≈77x）
@@ -1173,6 +1178,16 @@ def render_text(units, relstr, wrong_seen, spx_close, ndx_close,
         if not r.available:
             out.append("  ① 流动性  " + padr(r.market, 12)
                        + " ⚪️ 无法判定 —— 本次未取到读数（" + r.reason + "）")
+        elif r.wrong is True:
+            # 取错市场 → 整笔作废，**不得计任何触发**：这里的名义 OI 是**另一个币**
+            # 的 OI，拿它讲「池子在迁移、报价不可信」是替一个根本没看的市场下诊断。
+            # 但原始数字仍要印：它是分辨「池子真的换了」与「呼叫方传错收盘价口径」
+            # 的唯一线索（池子健康 $48xM → 先查收盘价；骤降到千万以下 → 池子迁移）。
+            # 印它不等於下流动性结论——结论那一格已经作废。
+            out.append("  ① 流动性  " + padr(r.market, 12)
+                       + " 🔴 作废（撞名检查判定取错市场）→ 不计触发"
+                       + "（原始名义 OI $%.1fM，仅供判断成因，**不作流动性结论**）"
+                       % (r.notional_f / 1e6))
         elif r.liquid:
             out.append("  ① 流动性  " + padr(r.market, 12)
                        + " 名义 OI $%.1fM ≥ $%.0fM 门槛 → 可用"
@@ -1247,6 +1262,11 @@ def render_text(units, relstr, wrong_seen, spx_close, ndx_close,
         if not r.available:
             out.append("  资金费率  " + padr(r.market, 12)
                        + " ⚪️ 无法判定 —— 本次未取到读数")
+        elif r.wrong is True:
+            # 不挡的话，SPX6900 迷因币的资金费率会印成「标普 500 真实多头拥挤」
+            # ——一个凭空长出来的 ✅ 触发。
+            out.append("  资金费率  " + padr(r.market, 12)
+                       + " 🔴 作废（撞名检查判定取错市场）→ 不计触发")
         elif r.fann_f > FUND_HOT_ANNUAL_F:
             out.append("  资金费率  " + padr(r.market, 12)
                        + " ✅ 触发：年化 %+.2f%% > +%.0f%% → 真实多头拥挤"
@@ -1268,6 +1288,20 @@ def render_text(units, relstr, wrong_seen, spx_close, ndx_close,
     return "\n".join(out) + "\n"
 
 
+def voided_reason(unit):
+    """这个市场为什么**一个触发都不计**：⚪️ 没读数，或 🔴 撞名作废。都不是就 None。
+
+    两种情形共用一个判别式，是因为后果完全一样——整笔作废，既不进触发的分子
+    也不进分母。以前只有隐含跳空一条线挡了 wrong，资金费率／流动性没挡，於是
+    一个被判定「取错市场」的迷因币照样贡献 funding_crowded_long／illiquid。
+    """
+    if not unit.available:
+        return "⚪️ 数据暂缺 —— 本次未取到 perp 读数（%s）" % unit.reason
+    if unit.wrong is True:
+        return "🔴 作废（撞名检查判定取错市场）→ 不计触发"
+    return None
+
+
 def degraded_reasons(units, fred_failed):
     """降级原因：措辞照抄文字分支，一行一条，且一定点名是哪个市场。"""
     reasons = []
@@ -1279,8 +1313,16 @@ def degraded_reasons(units, fred_failed):
                            % (r.market, API, DEX, r.reason))
             continue
         if r.wrong:
-            reasons.append("%s 🔴 与 %s 收盘差 %+.2f%%（>%.0f%%）→ 判定取错市场，本市场整笔作废，不得写进报告"
-                           % (r.market, r.index, r.gap_f, WRONG_MARKET_PCT_F))
+            # 与 ⚪️ 分支一样 continue：整笔作废之后，名义 OI 与隐含跳空都是
+            # **另一个币**的数字，再讲一句「池子可能在迁移」就是替一个作废的
+            # 市场编一条诊断。原始 OI 仍附在同一句里，但明写它只是成因线索。
+            reasons.append("%s 🔴 与 %s 收盘差 %+.2f%%（>%.0f%%）→ 判定取错市场，"
+                           "本市场整笔作废，不计入任何触发，不得写进报告"
+                           "（原始名义 OI $%.1fM，仅供判断成因：池子健康就先查收盘价口径，"
+                           "骤降到千万以下才是池子迁移。不作流动性结论）"
+                           % (r.market, r.index, r.gap_f, WRONG_MARKET_PCT_F,
+                              r.notional_f / 1e6))
+            continue
         if not r.liquid:
             reasons.append("%s 名义 OI $%.1fM < $%.0fM 门槛 → 标「不适用」，池子可能在迁移，报价不可信"
                            % (r.market, r.notional_f / 1e6, OI_MIN_USD_F / 1e6))
@@ -1303,6 +1345,11 @@ def render_json(units, relstr, wrong_seen, wrong_any, fred_failed,
     reasons = degraded_reasons(units, fred_failed)
     rows = [u for u in units if u.available]
     gone = [u for u in units if not u.available]
+    # 撞名判定取错的市场**整笔作废**，不得进入任何触发清单：文字分支已经印
+    # 「🔴 作废 → 不计触发」，--json 里却把它算进 funding_crowded_long／illiquid，
+    # 等於把 SPX6900 迷因币的资金费率报成标普 500 的多头拥挤。
+    # 作废的事实改由 *_not_evaluated 记帐，既不进分子也不进分母。
+    live = [u for u in rows if u.wrong is not True]
 
     market_objs = []
     for r in units:
@@ -1390,31 +1437,32 @@ def render_json(units, relstr, wrong_seen, wrong_any, fred_failed,
         "relative_strength_pt": None if relstr is None else Lit(relstr),
         "relative_strength_na_reason": relna,
         "triggers": {
-            "gap_tier2": [r.market for r in rows
-                          if r.wrong is not True and r.gap is not None
+            "gap_tier2": [r.market for r in live
+                          if r.gap is not None
                           and abs(r.gap_f) >= GAP_TIER2_PCT_F],
-            "gap_mention": [r.market for r in rows
-                            if r.wrong is not True and r.gap is not None
+            "gap_mention": [r.market for r in live
+                            if r.gap is not None
                             and abs(r.gap_f) >= GAP_MENTION_PCT_F],
             "gap_not_evaluated": [
                 {"market": r.market,
-                 "reason": ("⚪️ 数据暂缺 —— 本次未取到 perp 读数（%s）" % r.reason
-                            if not r.available
-                            else "🔴 作废（撞名检查判定取错市场）→ 不计触发" if r.wrong is True
-                            else "⚪️ 无法判定 —— 未提供上一美股收盘价")}
-                for r in units if (not r.available) or r.wrong is True or r.gap is None],
-            "funding_crowded_long": [r.market for r in rows
+                 "reason": (voided_reason(r) or "⚪️ 无法判定 —— 未提供上一美股收盘价")}
+                for r in units if voided_reason(r) is not None or r.gap is None],
+            "funding_crowded_long": [r.market for r in live
                                      if r.fann_f > FUND_HOT_ANNUAL_F],
-            "funding_hedging_demand": [r.market for r in rows
+            "funding_hedging_demand": [r.market for r in live
                                        if r.fann_f < FUND_COLD_ANNUAL_F],
-            "illiquid": [r.market for r in rows if r.liquid is False],
+            "funding_not_evaluated": [{"market": r.market, "reason": voided_reason(r)}
+                                      for r in units if voided_reason(r) is not None],
+            "illiquid": [r.market for r in live if r.liquid is False],
+            "liquidity_not_evaluated": [{"market": r.market, "reason": voided_reason(r)}
+                                        for r in units if voided_reason(r) is not None],
             "stale_cash_close": [r.market for r in rows if r.stale is True],
             "wrong_market": [r.market for r in rows if r.wrong is True],
         },
         "notes": {
             "cash_close_fetch": "Yahoo chart 端点本机实测稳定回 HTTP 429（带 UA、带 cookie jar 都一样），stooq CSV 端点已下线 —— 两者都不可靠，本脚本不用。最准的还是呼叫方直接传 --spx / --ndx；--from-fred 免 API key 但滞后 1 个交易日。绝不自己编一个收盘价。",
             "prev_day_px": "**不要拿 prevDayPx 当收盘价**——那是 perp 自己 24 小时前的报价，不是现货收盘。",
-            "wrong_market": "被判定取错市场的市场，数字整笔作废，不得写进报告。先确认传入的收盘价口径是不是指数点位（^GSPC ≈7,7xx 而非 SPY ≈77x；^NDX ≈29,xxx 而非 QQQ ≈7xx）。",
+            "wrong_market": "被判定取错市场的市场，数字整笔作废，不得写进报告：隐含跳空、资金费率、流动性三项**一律不计触发**（作废的事实记在 triggers.gap_not_evaluated／funding_not_evaluated／liquidity_not_evaluated，既不进分子也不进分母）。**唯一例外是 stale_cash_close**——它讲的是现货收盘价（真的 ^GSPC／^NDX 报价）本身滞后，不是 perp 的数字，而且收盘口径正是撞名判定的头号嫌疑，压掉它就等於删掉线索。先确认传入的收盘价口径是不是指数点位（^GSPC ≈7,7xx 而非 SPY ≈77x；^NDX ≈29,xxx 而非 QQQ ≈7xx）。",
             "dex": "必须带 \"dex\":\"xyz\"：Hyperliquid 主池的 SPX 是 SPX6900 迷因币，不是标普 500。",
         },
     }

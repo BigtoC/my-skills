@@ -41,8 +41,11 @@ baseline.md，并在 stderr 注明走了回退路径。
     industry_table.py --json          打印完整 JSON（含论点、估值性格与元数据）
     industry_table.py --ticker NVDA   单只摘要，评级·层级·瓶颈 形如 🟢·L1·🔥①②③
     industry_table.py --check         只验证能否定位并解析，exit 0/1（SKILL.md 第零步前置检查）
-    industry_table.py --check --json  同上，但输出机读 JSON（checks[] / alerts[] / degraded）；
-                                      退出码语义完全不变，阻断性失败也会给一份 ok:false 的 JSON
+    industry_table.py --check --json  同上，但输出机读 JSON（checks[] / alerts[] / degraded）
+
+**任何** --json 子命令的退出码语义都与其文本分支完全一致，且阻断性失败一律给一份
+`ok:false` / `blocking:true` / `result_produced:false` 的 JSON——stdout 上永远不会
+「什么都没有」。不加 --json 的纯文本分支在失败时仍逐字保持 stdout 静默。
 
 姊妹技能定位顺序由共享模块 `_weekly.py` 统一（三个脚本同一套顺序、同一套探针、
 同一套环境变量语义），见该模块的文档字符串。
@@ -658,14 +661,27 @@ def cmd_json(data: dict) -> int:
     recs = alerts(data)
     for line in banner_lines(recs):
         err(line)
-    payload = dict(data)
+    reasons = degraded_reasons(data, recs)
+    # 成功路径也要带信封：`ok` / `command` / `result_produced` 若只出现在失败载荷里，
+    # 「缺这个键」就等于「成功」，窄读的调用方写 `if not d.get("ok")` 会把每一次正常
+    # 运行读成失败——那正是这次要修的歧义，只是挪到了下一层。`ok` 由 reasons 推出，
+    # 不是写死的 true（口径同 check_payload）。
+    payload = {
+        "command": "table",
+        "ok": not reasons,
+        "blocking": False,
+        "exit_code": 0,
+        "result_produced": True,
+        "error": None,
+    }
+    payload.update(data)
     payload["rows"] = [
         dict(r, summary=rating_layer_bottleneck(r)) for r in data["rows"]
     ]
     # 横幅同时进 JSON：stderr 是冗余通道，不能是唯一通道——窄读 stdout 的调用方
     # 拿到的必须与人类看到的是同一批告警。
-    reasons = degraded_reasons(data, recs)
     payload["alerts"] = recs
+    payload["alerts_reason"] = None
     payload["degraded"] = bool(reasons)
     payload["degraded_reasons"] = reasons
     print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -675,14 +691,41 @@ def cmd_json(data: dict) -> int:
 def cmd_ticker(data: dict, ticker: str, as_json: bool) -> int:
     row = find_row(data["rows"], ticker)
     if row is None:
-        err(f"错误：基准表里没有标的「{ticker}」。")
+        # stderr 这三行逐字不变（人类分支一个字节不动），只是先攒起来，好让
+        # --json 分支把同一批字送进 error.message——stderr 是冗余通道，不是唯一通道。
         codes = [r["ticker"] for r in data["rows"]]
         head = ticker.strip().upper()[:2]
         near = [c for c in codes if c.upper().startswith(head)] if head else []
+        lines = [f"错误：基准表里没有标的「{ticker}」。"]
         if near:
-            err(f"相近的代码：{'、'.join(near)}")
-        err(f"表内共 {len(codes)} 个标的；标的清单由 {WEEKLY_SKILL_NAME}/assets/universe.json 维护，"
+            lines.append(f"相近的代码：{'、'.join(near)}")
+        lines.append(
+            f"表内共 {len(codes)} 个标的；标的清单由 {WEEKLY_SKILL_NAME}/assets/universe.json 维护，"
             "新增标的请改那里并重跑周更技能。")
+        for line in lines:
+            err(line)
+        if as_json:
+            # 这条路径基准表**读出来了**，三类告警是可判定的：照常算、照常带走，
+            # 不沿用 failure_payload 里那份 null（那是「读都没读出来」的口径）。
+            # 横幅同样照常上 stderr，与本函数成功分支一致——否则「基准表已陈旧」
+            # 只在 JSON 里有，盯着终端的人什么都看不到。
+            recs = alerts(data)
+            for line in banner_lines(recs):
+                err(line)
+            # ticker 是用户输入，整段可能就是个绝对路径。failure_payload() 只 scrub
+            # 它收到的 message；下面两处若用原串，同一份载荷里就会出现 error.message
+            # 已折叠成 ~ 而 degraded_reasons / ticker 仍是完整家目录路径——
+            # 而 degraded_reasons[] 正是要被抄进日报正文的那个字段（公开仓库红线）。
+            safe = scrub(ticker)
+            payload = failure_payload("ticker", "ticker_not_found", "\n".join(lines))
+            payload["ticker"] = safe
+            payload["known_ticker_count"] = len(codes)
+            payload["near_matches"] = near
+            payload["alerts"] = recs
+            payload["alerts_reason"] = None
+            payload["degraded_reasons"] = ([f"基准表里没有标的「{safe}」"]
+                                           + degraded_reasons(data, recs))
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 1
 
     if as_json:
@@ -690,10 +733,22 @@ def cmd_ticker(data: dict, ticker: str, as_json: bool) -> int:
         for line in banner_lines(recs):
             err(line)
         reasons = degraded_reasons(data, recs)
-        print(json.dumps(dict(row, summary=rating_layer_bottleneck(row),
-                              alerts=recs, degraded=bool(reasons),
-                              degraded_reasons=reasons),
-                         ensure_ascii=False, indent=2))
+        # 行字段照旧摊在顶层（既有调用方按 payload["rating"] 取，不能改），信封另加一层。
+        payload = {
+            "command": "ticker",
+            "ok": not reasons,
+            "blocking": False,
+            "exit_code": 0,
+            "result_produced": True,
+            "error": None,
+        }
+        payload.update(row)
+        payload["summary"] = rating_layer_bottleneck(row)
+        payload["alerts"] = recs
+        payload["alerts_reason"] = None
+        payload["degraded"] = bool(reasons)
+        payload["degraded_reasons"] = reasons
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
     banner = alert_banners(data)
@@ -791,27 +846,51 @@ def check_payload(data: dict, items: list[dict], recs: list[dict]) -> dict:
     }
 
 
-def check_failure_payload(error_id: str, message: str) -> dict:
-    """--check --json 在阻断性失败时的载荷（exit 仍为 1，stderr 上的中文说明一字不改）。
+# 各 --json 子命令在拒绝路径上的「结果位」，恒为空值。口径抄周更技能 baseline.py
+# 的 `diff --json`：拒绝时给 result=null / summary_produced=false，让 JSON 里压根
+# 不存在一个「长得像正常结果」的对象——窄读 stdout 的调用方因此不可能把
+# 「拒绝了」读成「跑完了、表里就是没有」。
+# ⚠️ ticker **没有**结果位：成功时行字段是摊在顶层的（payload["rating"] 等），
+# 并不存在一个 row 对象。凭空塞 "row": null 的话，成功路径上 payload.get("row")
+# 同样是 None——「查到了」与「没查到」再次不可区分。拒绝与否一律看 result_produced。
+_EMPTY_RESULT: dict[str, dict] = {
+    # checks 记 None 而非 []：连基准表都没读出来，逐条自检一条都没跑，
+    # 而 [] 的语义是「跑了、都过了」。理由同下面 alerts 那条。
+    "check": {"checks": None,
+              "checks_reason": "基准表未读出，逐条自检一条都没跑"},
+    "table": {"rows": None},
+}
 
-    没有这一份，唯一能出 JSON 的路径就只剩「解析成功」那条，`ok` 便退化成写死的 true。
+
+def failure_payload(command: str, error_id: str, message: str) -> dict:
+    """任一 --json 子命令在阻断性失败时的载荷（exit 仍为 1，stderr 上的中文说明一字不改）。
+
+    没有这一份，唯一能出 JSON 的路径就只剩「解析成功」那条，`ok` 便退化成写死的 true；
+    对 `--json` 与 `--ticker X --json` 更糟——stdout 上一个字节都没有，
+    「拒绝了」与「跑完了、什么都没有」在窄读下完全无法区分。
+
+    `alerts` 记 null 而非 []：这些路径连基准表都没读出来，三类告警**无从判定**，
+    而 [] 的语义是「查了、都没触发」——在这里那是谎话，与 ⚪️ / ❌ 的分野同理。
     """
     # 再过一次 scrub：错误文本里可能夹着别处的家目录绝对路径（例如用户把
     # AI_INDUSTRY_WEEKLY_DIR 指到了另一个用户名下），而 JSON 一样会被贴进日报。
     # 正常情形下这层是恒等变换，stderr 上那份保持原样、逐字不变。
     text = scrub(message)
     head = (text.splitlines() or [""])[0]
-    return {
-        "command": "check",
+    payload: dict = {
+        "command": command,
         "ok": False,
         "blocking": True,
         "exit_code": 1,
+        "result_produced": False,
         "error": {"id": error_id, "message": text},
-        "checks": [],
-        "alerts": [],
-        "degraded": True,
-        "degraded_reasons": [head or f"前置检查失败：{error_id}"],
     }
+    payload.update(_EMPTY_RESULT.get(command, {}))
+    payload["alerts"] = None
+    payload["alerts_reason"] = "基准表未读出，陈旧 / 未来日期 / 行数不一致三类告警均无从判定"
+    payload["degraded"] = True
+    payload["degraded_reasons"] = [head or f"前置检查失败：{error_id}"]
+    return payload
 
 
 def cmd_check(data: dict, as_json: bool = False) -> int:
@@ -858,17 +937,34 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def json_command(args) -> str:
+    """这次跑的是哪个子命令。**main() 的分派也走它**——两处各写一套 if 的话，
+    重排其一就会出现「JSON 里 command 说 table、实际跑的是 ticker」，
+    而两边照常 exit 0/1，谁都不会发现。"""
+    if args.check:
+        return "check"
+    if args.ticker:
+        return "ticker"
+    return "table"
+
+
 def fail(args, error_id: str, message: str) -> int:
     """阻断性失败的统一出口：stderr 原样打（人类分支逐字不变），exit 恒为 1。
 
     只有这几类才阻断（定位不到姊妹技能 / 基准表解析不了 / 基准表不是合法 UTF-8 /
     读文件本身失败）；三类横幅告警一律不阻断，见 alerts()。
-    `--check --json` 时额外给一份 ok:false 的 JSON，否则窄读 stdout 的调用方
-    只会看到「什么都没有」，与「一切正常」无法区分。
+    **任何** --json 子命令都额外给一份 ok:false 的 JSON，否则窄读 stdout 的调用方
+    只会看到「什么都没有」，与「一切正常」无法区分。早先这里的条件是
+    `args.check and args.json`，于是同样一次阻断失败下 `--json` 与
+    `--ticker X --json` 在 stdout 上一个字节都不吐，而 `--check --json` 有对象
+    ——同一个 fail() 两种口径。
+
+    不加 --json 的纯文本分支**逐字不变**：stdout 依旧一个字节不吐。这与周更技能
+    baseline.py 一致（`diff` 的纯文本分支保持静默，只有 --json 分支拿错误对象）。
     """
     err(message)
-    if args.check and args.json:
-        print(json.dumps(check_failure_payload(error_id, message),
+    if args.json:
+        print(json.dumps(failure_payload(json_command(args), error_id, message),
                          ensure_ascii=False, indent=2))
     return 1
 
@@ -898,9 +994,11 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         return fail(args, "baseline_read_failed", f"错误：读取产业质量参考表失败：{scrub(exc)}")
 
-    if args.check:
+    # 子命令只判定一次（见 json_command 的注解）。
+    cmd = json_command(args)
+    if cmd == "check":
         return cmd_check(data, args.json)
-    if args.ticker:
+    if cmd == "ticker":
         return cmd_ticker(data, args.ticker, args.json)
     if args.json:
         return cmd_json(data)
