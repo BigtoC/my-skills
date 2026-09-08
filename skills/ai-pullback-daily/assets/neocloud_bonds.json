@@ -23,9 +23,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 86.31,
-        "as_of": "2026-09-04",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取当日 2026-09-04 为完整美股交易日，按当日记录。同页并列显示 YTM：9.75%→12.44%、9.625%→12.39%、9.00%→12.08%、8.50%EUR→11.27%，与本地反解可交叉核对）"
+        "price": 88.74,
+        "as_of": "2026-09-08",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取于 2026-09-08 约 10:30 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页并列显示 YTW：9.625%→12.36%、9.75%→12.31%、9.00%→12.04%、8.50%EUR→11.29%，与本地反解可交叉核对）"
       }
     },
     {
@@ -43,9 +43,9 @@
       "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
       "is_l1_benchmark": true,
       "quote": {
-        "price": 89.74,
-        "as_of": "2026-09-04",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取当日 2026-09-04 为完整美股交易日，按当日记录。同页并列显示 YTM：9.75%→12.44%、9.625%→12.39%、9.00%→12.08%、8.50%EUR→11.27%，与本地反解可交叉核对）"
+        "price": 90.5,
+        "as_of": "2026-09-08",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取于 2026-09-08 约 10:30 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页并列显示 YTW：9.625%→12.36%、9.75%→12.31%、9.00%→12.04%、8.50%EUR→11.29%，与本地反解可交叉核对）"
       }
     },
     {
@@ -62,9 +62,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 88.14,
-        "as_of": "2026-09-04",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取当日 2026-09-04 为完整美股交易日，按当日记录。同页并列显示 YTM：9.75%→12.44%、9.625%→12.39%、9.00%→12.08%、8.50%EUR→11.27%，与本地反解可交叉核对）"
+        "price": 90.51,
+        "as_of": "2026-09-08",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取于 2026-09-08 约 10:30 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页并列显示 YTW：9.625%→12.36%、9.75%→12.31%、9.00%→12.04%、8.50%EUR→11.29%，与本地反解可交叉核对）"
       }
     },
     {
@@ -82,9 +82,9 @@
       "rating_cohort": "single_b",
       "note": "欧元计价，不与美债曲线比；只对 EUR HY 指数(BAMLHE00EHYIOAS)做相对比较",
       "quote": {
-        "price": 87.32,
-        "as_of": "2026-09-04",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取当日 2026-09-04 为完整美股交易日，按当日记录。同页并列显示 YTM：9.75%→12.44%、9.625%→12.39%、9.00%→12.08%、8.50%EUR→11.27%，与本地反解可交叉核对）"
+        "price": 88.21,
+        "as_of": "2026-09-08",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取于 2026-09-08 约 10:30 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页并列显示 YTW：9.625%→12.36%、9.75%→12.31%、9.00%→12.04%、8.50%EUR→11.29%，与本地反解可交叉核对）"
       }
     },
     {
