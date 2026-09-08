@@ -117,8 +117,9 @@
 #     未满足持续 ≥24h」这个**否定结论**，`--json` 里则是 `false`。这支埠把
 #     「评不出来」独立出来：文字走 ⚪️ 无法判定並附 HTTP 证据，JSON 的
 #     `leverage_overheated` 走 `null` 並多一个 `triggers_unknown_reason`，
-#     每列另有 `persist_24h_reason`。三个 UNKNOWN 成因（备援源不查历史／
-#     取数失败／24h 内无结算）不再共用同一句话。
+#     每列另有 `persist_24h_reason`。五个 UNKNOWN 成因（备援源不查历史／
+#     取数失败／24h 内无结算／窗口内结算笔数不足 int(24/周期h) 笔，不足以
+#     肯定「持续」／结算周期本身解析不出来）不再共用同一句话。
 # 13. **读不到的历史档绝不覆写**（信号 16）。crypto.sh 与埠的旧版把
 #     「档案不存在」与「档案在、但读不到」都折成一个空清单：报告上讲成
 #     「尚无历史，明天就好」，而 `dom_history_append` 紧接着把那个读不到的
@@ -728,7 +729,8 @@ def usage(out):
 # 保持字串是为了保住数字字面量（见 FLit/ILit 那段注解）。
 # 第 11 栏 persist_why 是埠自己加的：`persist == "UNKNOWN"` 有好几种成因
 # （备援源本来就不查历史／`/fundingRate` 取数失败／历史资料解析不了／24h 内
-# 没有任何结算），把它们印成同一句话，等于把一次**取数失败**讲成一句
+# 没有任何结算／24h 窗口内结算笔数不足，无法**肯定**「持续」），
+# 把它们印成同一句话，等于把一次**取数失败**讲成一句
 # 「查过、没有历史」。这一栏就是那句话的证据。
 _F_SYM, _F_SRC, _F_RAW, _F_IV, _F_R8, _F_ANN, _F_MARK, _F_NXT, _F_PER, _F_N24, \
     _F_PWHY = range(11)
@@ -819,9 +821,18 @@ class Funding(object):
                 else:
                     nxt = jq_r(v_nxt)
 
-            # 步骤 2：24h 持续性。limit=12 足以覆盖 8h 与 4h 两种周期的 24 小时。
+            # 步骤 2：24h 持续性。**limit 不能写死**：24h 窗口应有 int(24/iv) 笔，
+            # 写死 12 在 iv=1 的币种上永远取不满（实测 2026-09-08 Binance
+            # /fundingInfo：8h 323 个、4h 457 个、**1h 2 个**（ONGUSDT/SKRUSDT），
+            # 经 --symbols 就构得到）。那会让 persist 结构性永久 UNKNOWN，
+            # 而下面那句「窗口未被完整观测」把**我们没问**印成**上游没给**
+            # ——一个指错对象的证据。+2 是边界余裕（结算刚好压在 now-24h 上时
+            # 窗口内会多一笔）。iv=8 → max(12,5)=12、iv=4 → max(12,8)=12，
+            # 今天这两种周期的 URL 与改动前逐字相同。
+            _need = self._need_24h(iv)
+            _lim = 12 if _need is None else max(12, _need + 2)
             code, body = http_get(
-                BINANCE + "/fundingRate?symbol=%sUSDT&limit=12" % sym, out)
+                BINANCE + "/fundingRate?symbol=%sUSDT&limit=%d" % (sym, _lim), out)
             hist = jparse(body)
             # 三态，不是两态：**持续（YES）／未持续（NO）／评不出来（UNKNOWN）**。
             # 把第三种折进第二种，就是把一次「/fundingRate 取不到数」记成
@@ -838,10 +849,10 @@ class Funding(object):
                     pwhy = ("Binance /fundingRate(%sUSDT) 的历史结算资料无法解析"
                             "（fundingTime／fundingRate 栏位不是可用数值）" % sym)
                 else:
-                    n24, persist = got
+                    n24, persist, why = got
                     if persist == "UNKNOWN":
-                        pwhy = ("Binance /fundingRate(%sUSDT) 近 24h 内没有任何"
-                                "结算纪录可比对" % sym)
+                        pwhy = ("Binance /fundingRate(%sUSDT) %s"
+                                % (sym, why or "近 24h 内没有任何结算纪录可比对"))
             else:
                 pwhy = "Binance /fundingRate(%sUSDT) 回 HTTP %s" % (sym, code)
             if not is_uint(n24):
@@ -888,19 +899,52 @@ class Funding(object):
             return "8"
         return iv
 
+    @staticmethod
+    def _need_24h(iv):
+        """24h 窗口里**本该**看到几笔结算；算不出来回 None。
+
+        结算每 iv 小时一次，滚动 24 小时窗口内必有 int(24/iv) 笔
+        （iv=8 → 3 笔；实测 2026-09-08 Binance BTC/ETH/SOL 三者当下皆 3 笔）。
+        ⚠️ **算不出来时回 None，不回 1。** 这个函式唯一的用途就是挡下
+        「证据不足却说 YES」；给一个「一笔就够」的默认值，正好把它要挡的
+        东西原样放行——那是把守门员换成门。
+        """
+        try:
+            n = int(24.0 // float(iv))
+        except (TypeError, ValueError, ZeroDivisionError, OverflowError):
+            return None
+        return n if n > 0 else None
+
     def _persist(self, hist, iv):
-        """→ (n24, persist) 或 None（统计失败 = 无法判定，不得当成未触发）。
+        """→ (n24, persist, why) 或 None（统计失败 = 无法判定，不得当成未触发）。
+        why 只在 persist == "UNKNOWN" 时非空，是那个 UNKNOWN 的专属成因。
         每一笔历史结算都要各自换算成 8h 口径再比阈值。"""
         hot = float(FUND_HOT_8H)
         if not isinstance(hist, list) or NOW_MS is None:
             return None
+        # iv 在这里一次验完：下面的 8h 换算要 float(iv)，而它以前**没有守卫**
+        # ——iv 不可解析时会在迴圈里抛 ValueError 冲出本函式，把「无法判定」
+        # 变成整支脚本崩掉。本函式的契约是「算不出来回 None」，不是抛。
+        # （今天呼叫端有 is_pos_num(iv) 挡着，构不到；但契约要自己站得住。）
+        need = self._need_24h(iv)
+        if need is None:
+            return None
+        iv_f = float(iv)
         cutoff = NOW_MS - 86400000
         rates = []
         for e in hist:
             if not isinstance(e, dict):
                 return None
             ft = e.get("fundingTime")
-            t = as_num(0 if not _present(ft) else ft)   # 缺栏位 → 0（jq 的 `// 0`）
+            if not _present(ft):
+                # 缺 fundingTime = **不知道这笔落在窗口内还是窗口外**。
+                # 旧写法沿用 jq 的 `// 0` 记 0，下一行就当成「超过 24h」丢掉
+                # ——一笔本来会否定「持续」的低费率结算被静默丢弃，剩下的
+                # 尖峰於是自己证明自己。逐字对齐 crypto.sh 是当初记 0 的理由，
+                # 而该档已於 2026-09-07 删除，理由不再成立；与本档其他数值栏位
+                # 一致：不知道就是不知道。
+                return None
+            t = as_num(ft)
             if t is _NUM_BAD:
                 return None                            # 时间戳坏掉 = 无法判定
             if float(t) < cutoff:
@@ -908,14 +952,27 @@ class Funding(object):
             fr = as_num(e.get("fundingRate"))
             if fr is _NUM_BAD:
                 return None                            # 单笔坏掉就不敢说 YES/NO
-            r = float(fr) * 8 / float(iv) * 100
+            r = float(fr) * 8 / iv_f * 100
             if not _finite(r):
                 return None
             rates.append(r)
         if not rates:
-            return "0", "UNKNOWN"
-        every = all(r > hot for r in rates)
-        return str(len(rates)), ("YES" if every else "NO")
+            return "0", "UNKNOWN", ""
+        if not all(r > hot for r in rates):
+            # 「持续 ≥24h」是对整个窗口的合取式：**看到一笔不高于阈值就足以
+            # 否定**，窗口观测不完整也翻不了案。这个 NO 是有资格下的结论。
+            return str(len(rates)), "NO", ""
+        if len(rates) < need:
+            # 反过来，YES 是**肯定**结论，要求这 24 小时真的被看完。少于 need
+            # 笔就说「持续 ≥24h」，等於拿不足 24 小时的证据下 24 小时的结论
+            # ——**一次瞬间尖峰会被印成「持续过热」**，而这条腿存在的唯一理由
+            # 就是滤掉尖峰（references/signals-c-crypto.md：「必须查历史，
+            # 不能只看当下一个数」）。一笔就足以成立的话，这条腿等於不存在。
+            return str(len(rates)), "UNKNOWN", (
+                "近 24h 只取到 %d 笔结算（结算周期 %sh，24h 窗口应有 %d 笔），"
+                "窗口未被完整观测，不足以判定「持续 ≥24h」"
+                % (len(rates), iv, need))
+        return str(len(rates)), "YES", ""
 
     # ── 备援源 ──
     def hyperliquid(self, out):
@@ -1023,7 +1080,9 @@ class Funding(object):
         # 标题用实际查询的币种，不要写死 BTC/ETH/SOL —— --symbols 可以只查子集，
         # 标题与表格内容不符会让人误以为漏了币种。
         out.p("【信号 14】%s 永续资金费率　来源：%s" % ("/".join(self.symbols), self.source))
-        out.p("口径：原始费率已按结算周期换算成 **8h 口径**；年化 = 8h × 3 × 365。")
+        out.p("口径：原始费率已按结算周期换算成 **8h 口径**；年化 = 8h × 3 × 365。"
+              "「持续 ≥24h」= YES 要求 24h 窗口内结算笔数完整（int(24/结算周期h) 笔）"
+              "**且每笔都 >阈值**；单笔结算不足以成立，取不满即 ⚪️ 无法判定。")
         out.p()
         out.p("  %s %s %s %s %s %s %s %s" % (
             pad("币种", 5, True), pad("来源", 12, True), pad("原始费率", 10),
@@ -1196,7 +1255,10 @@ class Funding(object):
         doc = _od(
             signal=14, name="永续资金费率", status="ok", source=self.source,
             note=self.note,
-            caliber="所有费率已换算成 8h 口径；年化 = 8h × 3 × 365",
+            caliber="所有费率已换算成 8h 口径；年化 = 8h × 3 × 365；"
+                    "persist_24h=YES 要求 24h 窗口内的结算笔数完整"
+                    "（int(24/结算周期h) 笔）且每一笔都 >阈值，"
+                    "单笔结算不足以成立「持续 ≥24h」",
             thresholds=_od(hot_8h_pct=_lit(FUND_HOT_8H),
                            extreme_8h_pct=_lit(FUND_EXTREME_8H)),
             rows=rows,
@@ -2115,6 +2177,7 @@ class Stablecoins(object):
     def __init__(self):
         self.series = []
         self.note = ""
+        self.base_gap_ages = []
 
     def run(self, out):
         code, body = http_get(LLAMA_STABLE + "/stablecoins", out)
@@ -2172,49 +2235,88 @@ class Stablecoins(object):
             self.note = ("序列中有 %d 天的 totalCirculating.peggedUSD 不可用"
                          "（最早 %s，最新 %s），该几日记 N/A" % (len(na), na[0], na[-1]))
         self.series = series
+        # 基准日断层是一次**真正的降级**，必须和上面 peggedUSD N/A 那条一样大声。
+        # 只写进 base_*_reason 栏位是不够的：--json 时 render_text 根本不会跑，
+        # stderr 与 note 是仅有的即时通道，而 SKILL.md 明写读者要 grep degraded。
+        # 只记在巢状栏位里 = 把「不知道」记成「查过、没事」——⚪️ 记账规则与
+        # 「回退必须大声」要挡的正是这件事。
+        t0 = epochday(series[-1]["date"]) if series else None
+        if t0 is not None:
+            have = set()
+            for r in series:
+                e = epochday(r["date"])
+                if e is not None:
+                    have.add(t0 - e)
+            mx = max(have) if have else -1
+            # `mx > w` 才算断层：序列根本没那么长是「不足」不是「断层」。
+            lost = [w for w in (1, 7, 14) if w not in have and mx > w]
+            self.base_gap_ages = lost
+            if lost:
+                ws = "、".join(str(w) for w in lost)
+                out.w("⚠️ DeFiLlama 对齐后的序列缺少 %s 日前那一天（最新一日 %s），"
+                      "对应的净流入/出一律记 ⚪️ 无法判定：不得拿邻近日冒充，"
+                      "也不得当成未触发。" % (ws, series[-1]["date"]))
+                self.note = _join_note(
+                    self.note,
+                    "对齐后序列缺少 %s 日前那一天，该几条腿记 ⚪️"
+                    "（基准日按日历年龄取，不按列表位置）" % ws)
         return True
 
     def metrics(self):
         s = self.series
-        n = len(s)
         last = s[-1]
-        d1 = s[-2] if n >= 2 else None
-        d7 = s[-8] if n >= 8 else None
-        d14 = s[-15] if n >= 15 else None
+        # 基准日一律按**日历年龄**取，不按列表位置——理由见 _stable_base。
+        d1, r1 = _stable_base(s, last, 1)
+        d7, r7 = _stable_base(s, last, 7)
+        d14, r14 = _stable_base(s, last, 14)
         dayout = float(STABLE_DAY_OUT_USD)
-        # 每个差值都可能是 None：基准日不存在（序列太短），或对齐日的
-        # peggedUSD 是 N/A。两种情况都是「无法判定」，不是「未触发」。
+        # 每个差值都可能是 None：基准日不存在（序列太短**或断层**），或对齐日
+        # 的 peggedUSD 是 N/A。两种情况都是「无法判定」，不是「未触发」。
         c1 = _sub(last["total"], d1["total"]) if d1 else None
         c7 = _sub(last["total"], d7["total"]) if d7 else None
         c14 = _sub(last["total"], d14["total"]) if d14 else None
         cout = _sub(d1["total"], last["total"]) if d1 else None
-        return _od(
+        m = _od(
             asof=last["date"], usdt=last["usdt"], usdc=last["usdc"],
             total=last["total"],
             change_1d=c1, change_7d=c7, change_14d=c14,
             base_1d=(d1["date"] if d1 else None),
             base_7d=(d7["date"] if d7 else None),
             base_14d=(d14["date"] if d14 else None),
+            base_1d_age_days=(1 if d1 else None),
+            base_7d_age_days=(7 if d7 else None),
+            base_14d_age_days=(14 if d14 else None),
+            base_selection=("基准日按日历年龄取，须**恰好** 1/7/14 天；"
+                            "不按列表位置。序列断层时一律 ⚪️ 无法判定，"
+                            "不得拿邻近日冒充，也不得当成未触发"),
             triggers=_od(
                 net_outflow_7d=((c7 < 0) if c7 is not None else None),
                 midterm_flat_or_shrink_14d=((c14 <= 0) if c14 is not None else None),
                 daily_outflow_gt_1b=((cout > dayout) if cout is not None else None)))
+        # 只有真的取不到基准日才多这三个栏位：正常那天不多写理由。
+        for k, r in (("base_1d_reason", r1), ("base_7d_reason", r7),
+                     ("base_14d_reason", r14)):
+            if r is not None:
+                m[k] = r
+        return m
 
     def render_text(self, out):
         m = self.metrics()
 
-        def flow(v, base, short_reason):
+        def flow(v, base, age, reason):
             """净流入/出这一格：算得出来才带货币符号与单位。
             读不出来时**整格**换成 ⚪️ 标记 —— 旧版只把数字换成「—」、
             外面照样包上 `$` 与 ` B`，印出来是 `$— B（基准日 —）`：一个
             带货币符号与单位的空洞，扫过去很像「零净流入」。缺口要长得像
             缺口（行为准则第 1 条）。"""
             if v is None:
-                if not base:
-                    return "⚪️ 无法判定（%s）" % short_reason
+                if reason:
+                    return reason
                 return ("⚪️ 无法判定（基准日 %s 的 peggedUSD 为 N/A，"
                         "不得当成 0）" % base)
-            return "$%+.2f B（基准日 %s）" % (float(v) / 1e9, base)
+            # 年龄要印出来：光印一个日期，读的人无从分辨它是不是**恰好** N
+            # 天前——一个错龄的基准日看起来完全正常。
+            return "$%+.2f B（基准日 %s，%d 天前）" % (float(v) / 1e9, base, age)
 
         def bb(v, field):
             """N/A 一律印 ⚪️ 并点名坏在哪个栏位。
@@ -2230,11 +2332,14 @@ class Stablecoins(object):
         out.p("  合计               %s" % bb(m["total"], "USDT/USDC totalCirculating.peggedUSD"))
         out.p()
         out.p("  1 日净流入/出      %s"
-              % flow(m["change_1d"], m["base_1d"], "序列不足 2 天"))
+              % flow(m["change_1d"], m["base_1d"], m["base_1d_age_days"],
+                     m.get("base_1d_reason")))
         out.p("  7 日净流入/出      %s"
-              % flow(m["change_7d"], m["base_7d"], "序列不足 8 天"))
+              % flow(m["change_7d"], m["base_7d"], m["base_7d_age_days"],
+                     m.get("base_7d_reason")))
         out.p("  14 日净流入/出     %s"
-              % flow(m["change_14d"], m["base_14d"], "序列不足 15 天"))
+              % flow(m["change_14d"], m["base_14d"], m["base_14d_age_days"],
+                     m.get("base_14d_reason")))
         out.p()
         out.p("阈值判定：")
         tg = m["triggers"]
@@ -2266,7 +2371,15 @@ class Stablecoins(object):
         # 只有真的有缺口时才多这个栏位：正常那一天的 JSON 位元组不变。
         if self.note:
             m["note"] = self.note
-            m["data_gaps"] = [r["date"] for r in self.series if r["total"] is None]
+            # `data_gaps` 专指「那一天在、但 peggedUSD 是 N/A」。把它和断层
+            # 共用同一个闸门，会让一条讲断层的 note 旁边摆一个空阵列——
+            # 读起来正是「没有断层」。**自相矛盾的 JSON 比缺栏位更危险**
+            # （本仓 2026-09-05 那次 JSON 等价律稽核的原话），所以断层另立栏位。
+            gaps = [r["date"] for r in self.series if r["total"] is None]
+            if gaps:
+                m["data_gaps"] = gaps
+        if self.base_gap_ages:
+            m["series_missing_base_ages_days"] = list(self.base_gap_ages)
         return m
 
     def missing_json(self):
@@ -2306,6 +2419,48 @@ def _llama_pairs(seq):
         v = as_num(_dig(e, "totalCirculating", "peggedUSD"))
         pairs.append((key, d, None if v is _NUM_BAD else v))
     return pairs
+
+
+def _stable_base(series, last, want):
+    """取「距 last **恰好** want 个日历天」那一笔 → (row, 理由)。
+
+    **不按列表位置取。** series 是 USDT/USDC 两条序列按 date 取交集后的
+    结果：交集会整天丢掉（run() 里 `k not in cm`），上游也可能漏日。
+    位置一旦不等于年龄，`series[-8]` 就是 8 日前那笔而输出仍写着
+    「7 日净流入/出」；`series[-2]` 就是 2 日前那笔，而它算出来的数字要
+    去比对照**单日**校准的 >$1B 阈值——那是编数字。这与 dominance 的 7d
+    腿（dom_seven_day 的 [DOM_7D_MIN_AGE, DOM_7D_MAX_AGE] 窗口）是同一条规矩，
+    那里连理由都写下来了：「拿它算出来的数字是『31 日变动』，贴上『7d 变动』
+    的标签就是编数字」。
+
+    这里不给窗口（年龄必须**恰好**等于 want）：上游序列本来逐日完整
+    （实测 2026-09-08：USDT 3205 天、USDC 2919 天，对齐后 2919 天、零断层、
+    零重复日），少一天是上游缺陷而不是「漏跑」，放宽窗口只会把断层
+    重新贴成正常读数。
+
+    年龄对不上一律回 (None, 理由) → ⚪️ 无法判定，不得折成「未触发」。
+    """
+    t0 = epochday(last["date"])
+    if t0 is None:
+        return None, ("⚪️ 无法判定（最新一日的日期 %s 无法解析）"
+                      % _brief(last["date"]))
+    oldest = None
+    for r in series:
+        e = epochday(r["date"])
+        if e is None:
+            continue
+        age = t0 - e
+        if age == want:
+            return r, None
+        if age > want and (oldest is None or age < oldest[1]):
+            oldest = (r, age)
+    if oldest is None:
+        # 序列根本没那么长 =「不足」，与「断层」是两回事：混为一谈会让人
+        # 以为再多跑几天就好了。这句措辞与改动前逐字相同。
+        return None, ("⚪️ 无法判定（序列不足 %d 天）" % (want + 1))
+    return None, ("⚪️ 无法判定（序列断层：没有 %d 日前那一天，最接近的一笔是 "
+                  "%s（%d 天前）；不得拿它冒充 %d 日变动）"
+                  % (want, oldest[0]["date"], oldest[1], want))
 
 
 def _sub(a, b):
