@@ -108,6 +108,19 @@ scrub() {
 command -v curl >/dev/null 2>&1 || die "找不到 curl。本脚本是 shell 实作，取数走 curl。" 2
 command -v awk  >/dev/null 2>&1 || die "找不到 awk。" 2
 
+# ── curl 是否支援 --parallel（需 curl ≥ 7.66，2019-09）──
+# 不探测的后果不是「慢一点」，是**误诊**：旧 curl 把 --parallel 当未知选项、整批
+# 立刻失败，http.status 空档 → 六条序列全部落进「FRED 连线失败」分支，真正的原因
+# （curl 太旧）只混在整批共用的 stderr 里。那就是把**依赖问题讲成取数失败**，
+# 与 2026-09-07 修掉的那批退出码是同一个错误家族。
+# 用能力探测而非版本号比对：`curl --parallel --version` 在支援时回 0、不支援时回 2
+# （实测本机 curl 8.7.1 回 0；未知选项回 2），比解析版本字串少一层猜测。
+# 退回串行只影响**排程**，不影响任何一个位元组的资料，所以按 CLAUDE.md 的判准
+# 「口径不变的降级只进运行输出、不进报告正文」——这里只发一行 stderr，
+# 不设 degraded 栏位（degraded 的语意是「资料变差了」，串行的资料并没有变差）。
+_CURL_PARALLEL=1
+curl --parallel --version >/dev/null 2>&1 || _CURL_PARALLEL=0
+
 WORK="$(mktemp -d 2>/dev/null)" || die "无法建立临时目录。" 2
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
@@ -186,13 +199,52 @@ fetch_parallel() {  # $1=起始日期  $2..=SERIES_ID...；逐条结果写进 $W
   return 0
 }
 
+# ── 串行版（curl < 7.66 时用）──
+# 与 fetch_parallel **契约相同**：逐条写 $WORK/<id>.csv 与 $WORK/<id>.state，
+# 所以 fetch_ok 与其后的一切归并逻辑完全不必知道走了哪一条路径。
+# 唯一的差别在措辞：串行时 stderr 本来就属於这一条，讲得出「这条自己的错」，
+# 不必像并行版那样声明「属整批、未逐条切分」。
+fetch_serial() {  # $1=起始日期  $2..=SERIES_ID...
+  local start="$1"; shift
+  local id code err rc
+  for id in "$@"; do
+    : > "$WORK/$id.csv"; rc=0
+    # 同样刻意不带 -H "User-Agent: ..."（见档头踩坑记录第 2 条）
+    code="$(curl -sS --max-time "$TIMEOUT" --retry 2 --retry-delay 2 \
+              -o "$WORK/$id.csv" -w '%{http_code}' \
+              --url "${FRED_CSV}?id=${id}&cosd=${start}" 2> "$WORK/curl.err")" || rc=$?
+    err="$(scrub < "$WORK/curl.err" | awk '!seen[$0]++' | tr '\n' ' ')"
+    if [ -z "$code" ] || [ "$code" = "000" ]; then
+      printf 'FRED 连线失败（curl 退出码 %s）：%s\n' "$rc" "$err" > "$WORK/$id.state"
+    elif [ "$code" != "200" ]; then
+      printf 'FRED 回 HTTP %s\n' "$code" > "$WORK/$id.state"
+    elif ! head -n 1 "$WORK/$id.csv" | grep -qiE '^(observation_date|DATE),'; then
+      printf 'FRED 回传的不是 CSV（序列名可能拼错；或误用了 id=A,B,C 多序列写法——那会回 ZIP）\n' > "$WORK/$id.state"
+    else
+      printf 'ok\n' > "$WORK/$id.state"
+    fi
+  done
+  return 0
+}
+
+# ── 取数入口：所有呼叫点都走这里，路径选择只在这一处 ──
+_FELL_BACK=0
+fetch_all() {
+  if [ "$_CURL_PARALLEL" -eq 1 ]; then fetch_parallel "$@"; return $?; fi
+  if [ "$_FELL_BACK" -eq 0 ]; then
+    _FELL_BACK=1
+    warn "curl $(curl -V 2>/dev/null | awk 'NR==1{print $2}') 不支援 --parallel（需 ≥7.66）→ 退回串行取数。资料逐字相同，只是较慢。"
+  fi
+  fetch_serial "$@"
+}
+
 # ── 逐条检查取数结果；失败时印出与串行版逐字相同的 ⚪️ 告警，回 3 ──
 fetch_ok() {  # $1=SERIES_ID
   local id="$1" st
   st="$(cat "$WORK/$id.state" 2>/dev/null || true)"
   # 写成 if 而不是 `[ ] && return 0`——理由同下方参数检查处那条注解。
   if [ "$st" = "ok" ]; then return 0; fi
-  warn "⚪️ ${id}：${st:-未取数（fetch_parallel 没跑到这条）}"
+  warn "⚪️ ${id}：${st:-未取数（fetch_all 没跑到这条）}"
   return 3
 }
 
@@ -253,7 +305,7 @@ if [ "$NETLIQ" -eq 1 ]; then
   if [ -n "$START" ]; then NL_START="$START"; else NL_START="$(days_ago $(( DAYS * 7 + 120 )))"; fi
 
   # 三条一次并行取回；顺序敏感的部分（哪一条失败要挂哪一条的名字）留在下面串行做。
-  fetch_parallel "$NL_START" WALCL WTREGEN RRPONTSYD
+  fetch_all "$NL_START" WALCL WTREGEN RRPONTSYD
 
   FAILED=""
   for id in WALCL WTREGEN RRPONTSYD; do
@@ -392,7 +444,7 @@ if [ "$BUFFETT" -eq 1 ]; then
   if [ -n "$START" ]; then BI_START="$START"; else BI_START="$(days_ago $(( DAYS * 95 + 400 )))"; fi
 
   # 两条一次并行取回；哪一条失败仍逐条归得回去（见 fetch_ok）。
-  fetch_parallel "$BI_START" NCBEILQ027S GDP
+  fetch_all "$BI_START" NCBEILQ027S GDP
 
   FAILED=""
   for id in NCBEILQ027S GDP; do
@@ -571,7 +623,7 @@ done
 # 一次并行取回全部序列；下面这圈**串行**归并，顺序完全由 $IDS 决定。
 # $UNIQ_IDS 刻意不加引号：这里要的就是断词（一条 id 一个参数），同 `for id in $IDS`。
 # shellcheck disable=SC2086
-fetch_parallel "$DEF_START" $UNIQ_IDS
+fetch_all "$DEF_START" $UNIQ_IDS
 
 for id in $IDS; do
   if ! fetch_ok "$id"; then
