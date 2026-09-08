@@ -108,6 +108,15 @@ T3_RSI = 35.0               # T3: RSI14 <= 35
 EARNINGS_MAX_WORKERS = 6
 # 无结果占比超过这条线就当限流嫌疑处理。样本 < MIN_N 时不判：--tickers 调子集时
 # 「1/3 只查不到」多半只是那只票本来就没有财报日历，报限流是噪声不是信号。
+#
+# ⚠️ empty 与 failed **不是同一件事**，相加当讯号会稳定误报：
+#   failed = 真的抛了异常。Yahoo 的 429 在 yfinance 里就是抛出来的——这才是限流的样子。
+#   empty  = 呼叫成功、回了空。多数时候是「这只本来就没有财报日历」：港股 0700/1810/
+#            0941、韩股 000660/005930、ADR MRAAY 常态如此，全宇宙约 6/41 长期是 empty。
+# MIN_N=5 挡不住这个：`--tickers 0700.HK,1810.HK,0941.HK,000660.KS,005930.KS,MRAAY`
+# 会是 6/6 empty = 100%，稳定报「疑似 Yahoo 限流」——一个永远为真的假警报。
+# 但 empty 也不全然无辜：限流偶尔表现为回空而不抛。所以规则按 failed 分档（见
+# earnings_block）：failed==0 时不论多少 empty 都不报限流，只如实说「没有财报日历」。
 EARNINGS_THROTTLE_RATIO = 1 / 3
 EARNINGS_THROTTLE_MIN_N = 5
 
@@ -499,19 +508,42 @@ def prefetch_earnings(yf, tickers):
 def earnings_block(stats, requested):
     """把预取统计整理成 --json 的 earnings 块 + 需要出声的告警文案。"""
     attempted = stats["attempted"]
-    missing = stats["failed"] + stats["empty"]
-    throttle = (attempted >= EARNINGS_THROTTLE_MIN_N
-                and missing >= attempted * EARNINGS_THROTTLE_RATIO)
+    failed, empty = stats["failed"], stats["empty"]
+    missing = failed + empty
+    big_enough = attempted >= EARNINGS_THROTTLE_MIN_N
+    over = lambda n: n >= attempted * EARNINGS_THROTTLE_RATIO  # noqa: E731
+    # 限流嫌疑由 failed 主导（见档头 EARNINGS_THROTTLE_RATIO 处的注解）：
+    #   failed 自己过线                    → 限流嫌疑
+    #   failed > 0 且 failed+empty 过线    → 限流嫌疑（限流部分表现为回空而不抛）
+    #   failed == 0                        → **绝不**报限流，不论多少 empty
+    if not big_enough:
+        throttle, throttle_reason = False, None
+    elif over(failed):
+        throttle = True
+        throttle_reason = f"{failed}/{attempted} 只抛出异常，已达 1/3 线"
+    elif failed and over(missing):
+        throttle = True
+        throttle_reason = (f"{failed}/{attempted} 只抛出异常，加上 {empty} 只回空"
+                           f"共 {missing}/{attempted} 达 1/3 线（限流可能部分表现为回空）")
+    else:
+        throttle, throttle_reason = False, None
     warnings = []
-    if stats["failed"]:
+    if failed:
         warnings.append(
-            f"⚠ 下次财报日并发查询有 {stats['failed']}/{attempted} 只异常失败"
+            f"⚠ 下次财报日并发查询有 {failed}/{attempted} 只异常失败"
             f"（记 N/A，不估算）"
         )
     if throttle:
         warnings.append(
-            f"⚠ 下次财报日有 {missing}/{attempted} 只查不到结果，疑似 Yahoo 限流"
-            f"（并发 {EARNINGS_MAX_WORKERS}）；这些标的的下次财报记 N/A，不估算"
+            f"⚠ 下次财报日疑似 Yahoo 限流（并发 {EARNINGS_MAX_WORKERS}）：{throttle_reason}；"
+            f"这些标的的下次财报记 N/A，不估算"
+        )
+    elif big_enough and not failed and over(empty):
+        # 以前这一支会喊限流。改成如实陈述：呼叫都成功了，只是这些标的没有财报日历
+        # ——港股/韩股/ADR 长期如此。喊限流会让报告把一个常态讲成取数事故。
+        warnings.append(
+            f"ℹ 下次财报日有 {empty}/{attempted} 只回空但**无任何异常**：这些标的多半"
+            f"本就没有财报日历（港股/韩股/ADR 常态），记 N/A，不估算；不判为限流"
         )
     block = {
         "requested": bool(requested),
@@ -524,6 +556,11 @@ def earnings_block(stats, requested):
         "missing": missing,
         "errors": stats["errors"],
         "throttle_suspected": bool(throttle),
+        # JSON 等价律：判据也要是栏位。未判为限流时是 null 而非空字串——
+        # null 表示「没有这个结论」，空字串会被读成「有结论但没写理由」。
+        "throttle_reason": throttle_reason,
+        # empty 与 failed 分开出栏，呼叫端才不必再犯一次把两者相加的错。
+        "empty_without_error": int(empty) if not failed else None,
         "note": ("--no-earnings：本轮跳过下次财报日查询，全部记 N/A（不估算）"
                  if not requested else
                  "下次财报日取不到即 N/A，不估算；ETF 与指数代码本就不查"),
