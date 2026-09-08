@@ -1,0 +1,177 @@
+{
+  "signals": {
+    "1": {
+      "state": "🟢",
+      "notes": "HY OAS 2.65% @09-03; 4wk -6bp; SPX 未创新高"
+    },
+    "2": {
+      "state": "🟢",
+      "notes": "读数⚪️(barchart空/macromicro403/搜索无日期); 触发前提 SPX 新高=否"
+    },
+    "3": {
+      "state": "⚪️",
+      "notes": "BofA B&B 无公开源; 上次已知 9.7 @2026-08上旬, 滞后4周(该读数>8.0)"
+    },
+    "4": {
+      "state": "🟢",
+      "notes": "VIX 14.32 / VIX3M 17.42 @09-03, 正价差 +3.10"
+    },
+    "5": {
+      "state": "🟡",
+      "notes": "净流动性 5768.7B @09-02, 连4周降; 但 SPX 同期 -0.74% 未上涨"
+    },
+    "6": {
+      "state": "🟢",
+      "notes": "A/D 当日净涨跌 -89 @09-04; 累积线⚪️; 触发前提 SPX 新高=否"
+    },
+    "7": {
+      "state": "⚪️",
+      "notes": "NAAIM 自2026-08-01改订阅制/公开延迟3月; 上次 79.70 @07-29, 滞后6周"
+    },
+    "8": {
+      "state": "🟢",
+      "notes": "AAII 多空差 +2.1pt @週結09-02 (39.7/22.7/37.6)"
+    },
+    "9": {
+      "state": "🟢",
+      "notes": "CNN F&G 41.9 fear @09-08; 30日高点66.6, 从未>75"
+    },
+    "10": {
+      "state": "🟢",
+      "notes": "CBOE equity P/C 0.67 @09-01 (thetrading.tools 镜像)"
+    },
+    "11": {
+      "state": "🟡",
+      "notes": "Margin Debt 1417.2B @2026-07; YoY +38.6% 距+40%不足10%; MoM -5.7% 首月降"
+    },
+    "12": {
+      "state": "⚪️",
+      "notes": "GuruFocus HTTP 403; 上次已知 0.23 @2026-07, 滞后10周(>0.17)"
+    },
+    "13": {
+      "state": "🔴",
+      "notes": "IPO 募资 $145.8B YoY +541.8% >100% 触发; 件数 106 宗 -25.9% 未触发"
+    },
+    "14": {
+      "state": "🟢",
+      "notes": "费率 BTC -0.0044/ETH +0.0027/SOL -0.0119 %/8h @09-08 (Hyperliquid, Binance 451)"
+    },
+    "15": {
+      "state": "⚪️",
+      "notes": "清算无免费公开源; 上次 $304M(多头246/空头57.6) @2026-08-26, 滞后2周"
+    },
+    "16": {
+      "state": "⚪️",
+      "notes": "Dominance 58.93% @09-08, 24h +1.16pt 未触发; 7d腿⚪️历史不足(已累积1天)"
+    },
+    "17": {
+      "state": "🟢",
+      "notes": "USDT+USDC 257.74B @09-08; 7d +0.93B 净流入; 14d +0.29% 近乎持平"
+    },
+    "18": {
+      "state": "🟢",
+      "notes": "xyz:SP500 -0.43% / XYZ100 -0.26% vs 09-04 收盘; 费率年化 5.47% 纯利率"
+    },
+    "19": {
+      "state": "🟢",
+      "notes": "SPX 0.72σ (-0.38%, 1σ=0.523%) @09-04; BTC 0.39σ (-1.01%, 1σ=2.616%)"
+    },
+    "20": {
+      "state": "🟢",
+      "notes": "VRP = 14.32 - RV20 8.49 = +5.83 @09-03 (同日同源 FRED)"
+    },
+    "21": {
+      "state": "🟢",
+      "notes": "不适用: 上一交易日 SPX -0.38%, 未达 -1% 判定门槛"
+    },
+    "22": {
+      "state": "⚪️",
+      "notes": "RSP-SPY 取不到 (yfinance 429/连线重置x3, stooq JS挑战); 上次 +0.08pt @08-07, 滞后5周"
+    },
+    "23": {
+      "state": "🟢",
+      "notes": "T10Y2Y +0.41 / T10Y3M +0.87 @09-04, 皆未倒挂; 无当期倒挂转正事件"
+    },
+    "24": {
+      "state": "🟢",
+      "notes": "Sahm -0.07 @2026-08, 滞后5周, 远离 0.50"
+    },
+    "25": {
+      "state": "🟢",
+      "notes": "LEI 2026-07 +0.2% MoM; 6个月成长率 +0.2%, 未低于 -4%"
+    },
+    "26": {
+      "state": "🟢",
+      "notes": "SPX 7718.60 vs 200DMA 7141.76 (+8.08%), 20日斜率 +1.30%, 连续105交易日站稳 (FRED SP500 自算)"
+    },
+    "27": {
+      "state": "🔴",
+      "notes": "Buffett 218.14% @2026-Q1 同季对齐, >200% 触发, 滞后35周"
+    },
+    "28": {
+      "state": "🔴",
+      "notes": "Shiller CAPE 41.41 @09-04, >30 触发, 距史高44.19 -2.78"
+    },
+    "29": {
+      "state": "🔴",
+      "notes": "AAII 家庭股票配置 71.05% @2026-08, >70% 触发"
+    },
+    "30": {
+      "state": "🔴",
+      "notes": "Margin Debt/GDP = 1417.2B/32486.1B = 4.36%, >3.0% 触发"
+    }
+  },
+  "hard_thresholds": {
+    "1": {
+      "symbol": "❌",
+      "name": "VIX 突破并站稳（>25 且连续 3 个交易日）"
+    },
+    "2": {
+      "symbol": "❌",
+      "name": "Margin Debt 月减（连续 3 个月）"
+    },
+    "3": {
+      "symbol": "❌",
+      "name": "HY Spread 扩张（>4.5%）"
+    },
+    "4": {
+      "symbol": "❌",
+      "name": "Fear & Greed 从高位回落（>75 跌回 <50）"
+    },
+    "5": {
+      "symbol": "❌",
+      "name": "A/D Line 顶背离（SPX 新高但 A/D 未创新高）"
+    },
+    "6": {
+      "symbol": "⚪️",
+      "name": "BofA Bull & Bear（>8.0）"
+    },
+    "7": {
+      "symbol": "⚪️",
+      "name": "Insider Buy/Sell（<0.17）"
+    }
+  },
+  "tracks": {
+    "strategic": {
+      "baseline_pct": 100
+    },
+    "tactical": {
+      "state": "🟢",
+      "above_200dma": true,
+      "dma200_slope_positive": true
+    }
+  },
+  "date": "2026-09-08",
+  "updated_at": "2026-09-08 08:31:45+0000",
+  "written_by": "snapshot.py",
+  "history": [
+    {
+      "date": "2026-09-08",
+      "trigger_count": 0,
+      "unknown_count": 2,
+      "strategic_baseline_pct": 100,
+      "tactical_state": "🟢",
+      "above_200dma": true
+    }
+  ]
+}
