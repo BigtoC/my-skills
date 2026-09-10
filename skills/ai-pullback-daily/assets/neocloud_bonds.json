@@ -23,9 +23,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 88.74,
-        "as_of": "2026-09-08",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取于 2026-09-08 约 10:30 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页并列显示 YTW：9.625%→12.36%、9.75%→12.31%、9.00%→12.04%、8.50%EUR→11.29%，与本地反解可交叉核对）"
+        "price": 88.93,
+        "as_of": "2026-09-09",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAE0；页面未标注报价日；抓取于 2026-09-09 约 10:48 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页 YTW 9.625%→12.31%）"
       }
     },
     {
@@ -43,9 +43,9 @@
       "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
       "is_l1_benchmark": true,
       "quote": {
-        "price": 90.5,
-        "as_of": "2026-09-08",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取于 2026-09-08 约 10:30 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页并列显示 YTW：9.625%→12.36%、9.75%→12.31%、9.00%→12.04%、8.50%EUR→11.29%，与本地反解可交叉核对）"
+        "price": 90.76,
+        "as_of": "2026-09-09",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAC4；页面未标注报价日；抓取于 2026-09-09 约 10:48 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页并列显示 YTW：9.75%→12.24%、9.625%→12.31%、9.00%→11.80%、8.50%EUR→11.17%，与本地反解可交叉核对。同页显示到期日 9.75%→2031-10-01、9.00%→2031-02-01，与资产档 terms 的当月15日（maturity_precision=month）不同；本单元只喂 quote，不改 terms）"
       }
     },
     {
@@ -62,9 +62,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 90.51,
-        "as_of": "2026-09-08",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取于 2026-09-08 约 10:30 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页并列显示 YTW：9.625%→12.36%、9.75%→12.31%、9.00%→12.04%、8.50%EUR→11.29%，与本地反解可交叉核对）"
+        "price": 90.58,
+        "as_of": "2026-09-09",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAB6；页面未标注报价日；抓取于 2026-09-09 约 10:48 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页 YTW 9.00%→11.80%；同页显示到期日 2031-02-01）"
       }
     },
     {
@@ -82,9 +82,9 @@
       "rating_cohort": "single_b",
       "note": "欧元计价，不与美债曲线比；只对 EUR HY 指数(BAMLHE00EHYIOAS)做相对比较",
       "quote": {
-        "price": 88.21,
-        "as_of": "2026-09-08",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/ （页面未标注报价日；抓取于 2026-09-08 约 10:30 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页并列显示 YTW：9.625%→12.36%、9.75%→12.31%、9.00%→12.04%、8.50%EUR→11.29%，与本地反解可交叉核对）"
+        "price": 88.67,
+        "as_of": "2026-09-09",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN XS333313928；页面未标注报价日；抓取于 2026-09-09 约 10:48 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页 YTW 8.50%EUR→11.17%。EUR 计价，绝对利差 N/A，只对 EUR HY 指数 BAMLHE00EHYIOAS 做相对比较）"
       }
     },
     {
@@ -102,9 +102,9 @@
       "note": "项目层 SPV，背后是 AWS 10-15 年租约 → L2 真正的主题指标。这条走阔才是论点崩坏",
       "is_l2_benchmark": true,
       "quote": {
-        "price": 101.28,
-        "as_of": "2026-07-30",
-        "source": "ICE/FactSet 挂牌报价"
+        "price": 99.69,
+        "as_of": "2026-09-09",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CIFR/bonds/（识别码 BLPG6304798，页面标注发行人 Black Pearl Compute LLC，6.125%、到期 2031-02-15、USD；页面未标注报价日；抓取于 2026-09-09 约 10:48 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。该行 YTW 列为「—」，无同源收益率可交叉核对。派单列出的 FINRA TRACE / cbonds / CIFR IR·8-K / ICE·FactSet / Bloomberg 各级均未给出二级报价，本条为清单外回退来源）"
       }
     },
     {
@@ -180,6 +180,34 @@
         "status": "priced",
         "purpose": "CoreWeave 北达科他数据中心",
         "source": "对照点：6月为信用修复叙事顶点（半年前投资人索要10%）"
+      },
+      {
+        "date": "2026-08-27",
+        "issuer": "Lambda",
+        "instrument": "Senior Secured Term Loan B（杠杆贷款）",
+        "size_usd_mm": 926,
+        "base_rate": "SOFR",
+        "initial_spread_bp": null,
+        "final_spread_bp": 300,
+        "initial_oid": null,
+        "final_oid": null,
+        "status": "priced",
+        "purpose": "采购并安装 NVIDIA GB300 GPU（对应 Microsoft 算力合约）",
+        "source": "hoodline.com/2026/08/san-jose-s-lambda-piles-on-1b-more-debt-to-feed-microsoft-s-chip-hunger/（文章日期 2026-08-31）。逐字条款：$926M senior secured Term Loan B，Morgan Stanley 与 MUFG 牵头，priced at SOFR plus 3.00%，Moody's Baa2 投资级评级，到期 2030-12。date=2026-08-27 为来源披露的 closed 日期（非必然为定价日）。初始价格指引（initial talk）与 OID 来源未披露 → 留 null，未回填"
+      },
+      {
+        "date": "2026-08-31",
+        "issuer": "Lambda",
+        "instrument": "短期私募债（private credit，以所购 GPU 为质押）",
+        "size_usd_mm": 1000,
+        "base_rate": null,
+        "initial_spread_bp": null,
+        "final_spread_bp": null,
+        "initial_oid": null,
+        "final_oid": null,
+        "status": "priced",
+        "purpose": "采购 NVIDIA GPU（对应 Microsoft 算力合约）",
+        "source": "hoodline.com/2026/08/san-jose-s-lambda-piles-on-1b-more-debt-to-feed-microsoft-s-chip-hunger/（文章日期 2026-08-31）。逐字：约 $1 billion 短期私募债、JPMorgan Chase 牵头、所购芯片本身作为质押；spread / OID / 到期日 / 基准利率均「Not disclosed」。⚠️ 日期不确定：来源只写「week of 2026-08-31」，date 取文章日期 2026-08-31，确切定价日未能确证"
       }
     ]
   },
