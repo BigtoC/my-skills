@@ -23,9 +23,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 88.93,
-        "as_of": "2026-09-09",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAE0；页面未标注报价日；抓取于 2026-09-09 约 10:48 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页 YTW 9.625%→12.31%）"
+        "price": 88.71,
+        "as_of": "2026-09-10",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAE0；页面未标注报价日；抓取于 2026-09-10 美股盘中，为盘中最新挂牌报价、非当日收盘。同页 YTW 9.625%→12.37%）"
       }
     },
     {
@@ -43,9 +43,9 @@
       "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
       "is_l1_benchmark": true,
       "quote": {
-        "price": 90.76,
-        "as_of": "2026-09-09",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAC4；页面未标注报价日；抓取于 2026-09-09 约 10:48 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页并列显示 YTW：9.75%→12.24%、9.625%→12.31%、9.00%→11.80%、8.50%EUR→11.17%，与本地反解可交叉核对。同页显示到期日 9.75%→2031-10-01、9.00%→2031-02-01，与资产档 terms 的当月15日（maturity_precision=month）不同；本单元只喂 quote，不改 terms）"
+        "price": 89.5,
+        "as_of": "2026-09-10",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAC4；页面未标注报价日；抓取于 2026-09-10 美股盘中，为盘中最新挂牌报价、非当日收盘。同页 YTW 9.75%→12.61%。同页显示到期日 2031-10-01，与本档 terms 当月15日(maturity_precision=month)不同，本次只更新 quote、不改 terms）"
       }
     },
     {
@@ -62,9 +62,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 90.58,
-        "as_of": "2026-09-09",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAB6；页面未标注报价日；抓取于 2026-09-09 约 10:48 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。同页 YTW 9.00%→11.80%；同页显示到期日 2031-02-01）"
+        "price": 90.15,
+        "as_of": "2026-09-10",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAB6；页面未标注报价日；抓取于 2026-09-10 美股盘中，为盘中最新挂牌报价、非当日收盘。同页 YTW 9.00%→11.94%。同页显示到期日 2031-02-01，与本档 terms 当月15日不同，本次只更新 quote、不改 terms）"
       }
     },
     {
@@ -103,8 +103,8 @@
       "is_l2_benchmark": true,
       "quote": {
         "price": 99.69,
-        "as_of": "2026-09-09",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CIFR/bonds/（识别码 BLPG6304798，页面标注发行人 Black Pearl Compute LLC，6.125%、到期 2031-02-15、USD；页面未标注报价日；抓取于 2026-09-09 约 10:48 ET 美股盘中，为盘中最新挂牌报价、非当日收盘。该行 YTW 列为「—」，无同源收益率可交叉核对。派单列出的 FINRA TRACE / cbonds / CIFR IR·8-K / ICE·FactSet / Bloomberg 各级均未给出二级报价，本条为清单外回退来源）"
+        "as_of": "2026-09-10",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CIFR/bonds/（识别码 BLPG6304798，发行人 Black Pearl Compute LLC，6.125%、到期 2031-02-15、USD；页面未标注报价日；抓取于 2026-09-10 美股盘中，为盘中最新挂牌报价、非当日收盘。该行 YTW 列为「—」，无同源收益率可交叉核对。⚠️ 本次读数 99.69 与 2026-09-09 完全相同，页面无报价日字段，无法区分「真无变动」与「挂牌价未刷新」）"
       }
     },
     {
@@ -154,9 +154,9 @@
     ],
     "deals": [
       {
-        "date": "2026-07-29",
+        "date": "2026-08-10",
         "issuer": "CoreWeave",
-        "instrument": "Term Loan B (杠杆贷款)",
+        "instrument": "Delayed Draw Term Loan Facility（DDTL 5.5 Facility，杠杆贷款）",
         "size_usd_mm": 2600,
         "base_rate": "SOFR",
         "initial_spread_bp": 425,
@@ -165,7 +165,7 @@
         "final_oid": 96.5,
         "status": "repricing",
         "purpose": "为 Anthropic 等客户扩充算力",
-        "source": "一级市场条款上调报导（定价讨论升至基准+5.5pt，OID 降至96-97）"
+        "source": "发行人一级来源：CoreWeave 8-K 附件 99.1 新闻稿 sec.gov/Archives/edgar/data/1769628/000176962826000357/ex991pr.htm，公告日 2026-08-10，逐字「priced at SOFR + 5.50%」，$2.6B DDTL 5.5 Facility，JPMorgan 与 MUFG 联席牵头，约 5 年期。本条与旧 2026-07-29 条目为同一笔交易，仅将日期与来源换成发行人一级来源确认的版本，非新增第二笔。initial_spread_bp 425 取初始辛迪加区间(S+425–450, OID 99, 2026-07-16 启动)下沿；final_oid 96.5 沿用二级市场报导，发行人公告未披露 OID，本次未在一级来源核实、故不覆盖）"
       },
       {
         "date": "2026-06-中",
