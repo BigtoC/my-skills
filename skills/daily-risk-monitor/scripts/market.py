@@ -323,14 +323,97 @@ def download_closes(tickers: list[str], period: str):
                         "requests.Session 路径回空表、默认引擎取到数据——多半是 Yahoo 限流挡了裸 Session")
             raw = raw2
 
-    if raw is None or len(raw) == 0:
+    closes = None
+    if raw is not None and len(raw) > 0:
+        try:
+            closes = raw["Close"]
+        except Exception:  # noqa: BLE001
+            closes = None
+        if closes is not None and not hasattr(closes, "columns"):
+            closes = closes.to_frame(name=tickers[0])   # 单代码时会退化成 Series
+
+    # ---- 第3档：换**上游**（不是换引擎）。
+    # 2026-09-11 实测：yfinance 的数据 host 写死 query2.finance.yahoo.com，而本执行环境的
+    # 出站代理会切断到 query2 的隧道——前两档打的是同一个被封的 host，所以会一起死。
+    # 这正是「market.py 三次全败」的成因，只有换上游才有救。
+    # 逐标的补空，不是「整片失败才回退」：部分缺票与全灭走同一条路径，少一个分支就少一处
+    # 会漏测的行为。
+    need = list(tickers) if closes is None else [
+        t for t in tickers
+        if t not in getattr(closes, "columns", []) or closes[t].dropna().empty
+    ]
+    if need:
+        closes = _apply_market_fallback(closes, need, tickers)
+
+    if closes is None or not len(closes.columns):
         return None
+    return closes
+
+
+def _apply_market_fallback(closes, need, tickers):
+    """把第3档取到的收盘序列并进 closes。取不到的标的保持缺失（记 N/A，绝不估算）。"""
+    # 本脚本此前不需要同目录 import（fred.sh 走 subprocess），所以 SCRIPT_DIR 从没进过
+    # sys.path。-P / PYTHONSAFEPATH / runpy 等场景下 script 目录不会自动在路径里，
+    # 不显式加就会静默走进「第3档不可用」——姊妹脚本 technicals.py 同样显式加了。
+    _sd = str(SCRIPT_DIR)
+    if _sd not in sys.path:
+        sys.path.insert(0, _sd)
     try:
-        closes = raw["Close"]
-    except Exception:
-        return None
-    if not hasattr(closes, "columns"):          # 单代码时可能退化成 Series
-        closes = closes.to_frame(name=tickers[0])
+        import market_fallback
+    except ImportError as exc:
+        _ENGINE_NOTES.append(f"第3档不可用（无法导入 market_fallback：{scrub(exc)}），"
+                             f"{len(need)} 个标的保持 N/A")
+        return closes
+    try:
+        results, meta = market_fallback.fetch_closes(need)
+    except Exception as exc:  # noqa: BLE001 - 第3档自身失败只降级，绝不掀掉整轮
+        _ENGINE_NOTES.append(f"第3档取数抛错（{type(exc).__name__}: {scrub(exc)}），"
+                             f"{len(need)} 个标的保持 N/A")
+        return closes
+
+    import pandas as _pd
+    got = {}
+    for t, r in (results or {}).items():
+        if not r.get("points"):
+            continue
+        idx = _pd.to_datetime([d for d, _ in r["points"]])      # tz-naive，别 localize
+        got[t] = _pd.Series([c for _, c in r["points"]], index=idx).sort_index()
+        # 回退链规则第 2 条：哪一层出的数，人读与 --json 都要标出来
+        _ENGINE_NOTES.append(f"{t} 由第3档 {r['tier']} 提供（yfinance 未返回）")
+        if r.get("note"):
+            _ENGINE_NOTES.append(f"{t} 口径提示：{r['note']}")
+    for e in (meta or {}).get("degraded_reasons", []):
+        if e not in _ENGINE_NOTES:
+            _ENGINE_NOTES.append(f"第3档：{e}")
+    if not got:
+        return closes
+
+    # 不同档是**不同时点的快照**（回退链规则第 3 条）。实测 stockanalysis 的 ETF 比
+    # 腾讯指数/Binance 晚一个交易日，于是信号 21/22（ETF）会落在 D-1、而信号 19/26
+    # （^GSPC/BTC）落在 D——同一份报告里各信号的 as_of 不同。每个信号自己是同日对齐的
+    # （market.py 用 anchor + pct_change_on 保证），但跨信号比较会踩空，必须响。
+    last_by_tier = {}
+    for t, r in (results or {}).items():
+        if r.get("points") and r.get("tier"):
+            last_by_tier.setdefault(r["tier"], set()).add(r["last"])
+    all_last = {d for ds in last_by_tier.values() for d in ds}
+    if len(all_last) > 1:
+        detail = "；".join(f"{tier} 最新 {sorted(ds)[-1]}" for tier, ds in sorted(last_by_tier.items()))
+        _ENGINE_NOTES.append(
+            f"⚠ 第3档各源数据日期不一致（{detail}）：各信号的 as_of 会不同，"
+            f"**跨信号比较前务必逐个看 as_of**，不要当成同一天的读数")
+
+    _set_engine("第3档 非Yahoo上游", "yfinance 两档引擎均未返回，已换上游取数")
+    add = _pd.DataFrame(got)
+    if closes is None:
+        return add
+    # 只填缺的列，绝不覆盖 yfinance 已给出的列——不同档的数不并进同一列
+    for t in add.columns:
+        if t not in closes.columns or closes[t].dropna().empty:
+            closes = closes.join(add[[t]], how="outer", rsuffix="_fb")
+            if f"{t}_fb" in closes.columns:
+                closes[t] = closes[f"{t}_fb"]
+                closes = closes.drop(columns=[f"{t}_fb"])
     return closes
 
 
