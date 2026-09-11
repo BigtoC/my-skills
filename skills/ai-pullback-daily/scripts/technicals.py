@@ -284,6 +284,9 @@ USER_AGENT = (
 # yfinance 版本间 session= 的支持情况不一（Routines 实测 1.7.0，本地 1.4.1 两者都收）。
 # 一旦某个版本不收，退回默认引擎并**显式降级**——绝不静默，否则代理环境下会变成全灭。
 _SESSION_OK = True
+# 回退档（非 Yahoo 源）产生的告警，同样由 main() 汇进 asof_notes。
+_FALLBACK_NOTES: list = []
+
 # make_session / 调用点产生的传输层告警，由 main() 汇进 asof_notes。
 # 必须以 ⚠ 开头：apply_degraded() 靠这个前缀把它转成 degraded_reasons 字段。
 _ENGINE_NOTES: list = []
@@ -438,6 +441,97 @@ def frame_for(raw, ticker):
         return None
     f = f.dropna(subset=["Close"])
     return f if len(f) else None
+
+
+def _prices_source_label(rows) -> str:
+    """按本轮各行实际的 bars_source 统计出一句 provenance，绝不写死。"""
+    tally = {}
+    for r in rows or []:
+        src = r.get("bars_source")
+        if src:
+            tally[src] = tally.get(src, 0) + 1
+    if not tally:
+        return "N/A（本轮无任何档位产出日线）"
+    parts = [f"{src} {n} 档" for src, n in sorted(tally.items(), key=lambda kv: -kv[1])]
+    base = "；".join(parts)
+    if len(tally) > 1:
+        # 不同档不并表（回退链规则第 3 条）：并列陈述，不合成一个来源名
+        base += "（**不同档口径不同，逐行看 bars_source，勿合并解读**）"
+    return base + "。口径：auto_adjust=False，原始未复权"
+
+
+def fallback_frames(tickers):
+    """用非 Yahoo 档补 yfinance 没给出的标的。返回 (frames, tiers, notes)。
+
+    只在 yfinance 对该标的回空时才调用（第0档优先，见 CLAUDE.md 回退链规则：
+    顺序固定并写下来、标注来源、不跨级合并、阈值不随源转移、回退必须响）。
+
+    本函数只做**帧的搬运与格式归一**，指标数学一行都不碰——bars_fallback.py 只回
+    bar，RSI/均线/52周高仍由 compute_row 算。两份指标实现对同一个 T1/T2/T3 各说各话，
+    是本技能族记录在案的最坏故障（见两份 TH 阈值字典）。
+
+    ⚠ 帧契约（与 yf.download 实测一致，必须逐条对齐，否则会以奇怪的方式炸）：
+      * DatetimeIndex，**tz-naive**（yfinance 实测 datetime64[ns]、tz=None）。
+        这一条最要命：tz-naive.union(tz-aware) **不会抛**，它回 dtype=object，
+        紧接着的 sort_values() 才抛 TypeError，被顶层兜底吞成 **exit 1（参数错误）**——
+        一次取数回退会被调度层读成「命令写错了」，正好是 SKILL.md 第二步要防的误判。
+      * 升序、唯一；Open/High/Low/Close/Volume 均为 float
+    """
+    if not tickers:
+        return {}, {}, []
+    try:
+        import bars_fallback
+    except ImportError as exc:
+        return {}, {}, [f"⚠ 回退档不可用（无法导入 bars_fallback：{scrub(exc)}），"
+                        f"{len(tickers)} 个标的保持无数据"]
+
+    notes = []
+    try:
+        results, meta = bars_fallback.fetch_bars(tickers)
+    except Exception as exc:  # noqa: BLE001 - 回退档自身失败只降级，绝不掀掉整轮
+        return {}, {}, [f"⚠ 回退档取数抛错（{type(exc).__name__}: {scrub(exc)}），"
+                        f"{len(tickers)} 个标的保持无数据"]
+
+    frames, tiers = {}, {}
+    for t, r in (results or {}).items():
+        if not r.get("rows"):
+            continue
+        try:
+            idx = pd.to_datetime([row[0] for row in r["rows"]])   # tz-naive，别 localize
+            f = pd.DataFrame(
+                {"Open":   [float(row[1]) for row in r["rows"]],
+                 "High":   [float(row[2]) for row in r["rows"]],
+                 "Low":    [float(row[3]) for row in r["rows"]],
+                 "Close":  [float(row[4]) for row in r["rows"]],
+                 "Volume": [float(row[5]) for row in r["rows"]]},
+                index=idx,
+            ).sort_index()
+            f = f[~f.index.duplicated(keep="last")]
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"⚠ {t} 回退档数据无法转成日线帧（{scrub(exc)[:120]}），记 N/A")
+            continue
+        if len(f) == 0:
+            continue
+        frames[t] = f
+        tiers[t] = r.get("tier") or "回退档"
+
+    if frames:
+        # 回退必须响（回退链规则第 6 条）：静默降级等于把「不知道」记成「查过了，没事」
+        notes.append(
+            f"⚠ yfinance 未返回、已由回退档补上 {len(frames)} 档："
+            + ", ".join(f"{t}[{tiers[t]}]" for t in sorted(frames))
+        )
+        # 阈值不随源转移（规则第 4 条）：量口径不同，「放量 ≥1.5x」不可跨档沿用
+        notes.append(
+            "⚠ 回退档成交量口径与 yfinance 不同（实测 AVGO −11.1%、NVDA −4.6%），"
+            "这些行的 量比 不可与 yfinance 标定的「放量 ≥1.5x」阈值比较"
+        )
+    still = [t for t in tickers if t not in frames]
+    if still:
+        notes.append("⚠ 回退档也取不到（记 N/A，不估算）：" + ", ".join(still))
+    for reason in (meta or {}).get("degraded_reasons", []):
+        notes.append(f"⚠ 回退档：{reason}")
+    return frames, tiers, notes
 
 
 def resolve_asof(ref_frame, union_index, market: str):
@@ -746,12 +840,18 @@ def compute_row(meta, frame, asof, market, earnings_cals, want_earnings):
         "asof": None,
         "price_source": "yfinance(auto_adjust=False)",
         "insufficient_history": False,
+        "source_unavailable": False,
         "data_lag": False,
         "notes": [],
     }
     if frame is None or asof is None:
-        row["notes"].append("无日线数据")
+        # ⚪️「取不到」与 ❌「上市太新」是两件事，绝不能塌进同一个桶：
+        # 前者读起来像「等满半年就好」，真相却是「所有档位都没拿到数，需要查」。
+        # insufficient_history 保持 True 以维持下游分桶行为不变，但另立一个旗标，
+        # 让报告能把两者分开写（这正是本仓库 ⚪️/❌ 语义塌缩要防的事）。
+        row["notes"].append("无日线数据（yfinance 与回退档均未返回——是取数失败，不是上市太新）")
         row["insufficient_history"] = True
+        row["source_unavailable"] = True
         row["bars"] = 0
         return row
 
@@ -1030,6 +1130,16 @@ def print_report(result):
     for n in result["asof_notes"]:
         print(f"  · {n}")
     print(f"标的来源：{result['sources']['universe']}（{result['counts']['universe']} 档，按 order）")
+    tier_map = result["sources"].get("prices_tier_by_ticker") or {}
+    fb = {t: v for t, v in tier_map.items() if v and v != "yfinance"}
+    if fb:
+        print(f"⚠ 日线回退档 {len(fb)} 档（yfinance 未返回）："
+              + "，".join(f"{t}[{v}]" for t, v in sorted(fb.items())))
+        print("  这些行的 收盘/52周高/RSI 与 yfinance 同口径；**量比不可**与"
+              "「放量 ≥1.5x」阈值比较（量口径不同）。")
+    if result.get("source_unavailable"):
+        print(f"⛔ 取数失败 {len(result['source_unavailable'])} 档"
+              f"（**不是上市太新**，需查）：" + ", ".join(result["source_unavailable"]))
     print()
 
     rows = []
@@ -1087,14 +1197,27 @@ def print_report(result):
             if r.get("next_earnings"):
                 note.append(f"财报 {r['next_earnings']}")
             if is_num(r.get("vol_ratio")) and r["vol_ratio"] >= 1.5:
-                note.append(f"放量 {r['vol_ratio']:.2f}x")
+                # 「放量 ≥1.5x」是在 yfinance 的量口径上标定的。回退档的量系统性偏低，
+                # 直接套这个阈值就是让阈值跨档旅行（回退链规则第 4 条明令禁止）。
+                if r.get("vol_ratio_comparable") is False:
+                    note.append(f"量比 {r['vol_ratio']:.2f}x（回退档量口径，不可比 1.5x 阈值）")
+                else:
+                    note.append(f"放量 {r['vol_ratio']:.2f}x")
             rows.append([t, fnum(r.get("close"), 2), fnum(r.get("dd52_pct"), 1, "%"),
                          fnum(r.get("dd20_pct"), 1, "%"), fnum(r.get("rsi14"), 1), "；".join(note)])
         print_table(["代码", "收盘", "52w回撤%", "20D回撤%", "RSI", "备注"], rows)
     print()
 
     if result["insufficient_history"]:
-        print("⛔ 历史不足，不参与技术面判定（不进任何桶、也不进未触发清单）")
+        # 标题必须同时点名两类，否则「取不到」会被整段读成「上市太新」——
+        # ⚪️ 与 ❌ 的语义塌缩正是本仓库明令要防的事。每一行的成因写在备注里。
+        n_bad = len(result.get("source_unavailable") or [])
+        n_young = len(result.get("insufficient_history_too_young")
+                      or result["insufficient_history"])
+        head = f"⛔ 不参与技术面判定（不进任何桶、也不进未触发清单）：❌ 上市太新 {n_young} 档"
+        if n_bad:
+            head += f"　＋　⚪️ 取数失败 {n_bad} 档（**成因不同，需查，不是等满半年就好**）"
+        print(head)
         rows = []
         for t in result["insufficient_history"]:
             r = next(x for x in result["tickers"] if x["ticker"] == t)
@@ -1143,12 +1266,35 @@ def apply_degraded(result):
             reasons.append(f"现货指数 {t} 收盘缺失，perp_quotes.py 的隔夜隐含跳空将无从对照")
 
     rows = result.get("tickers") or []
-    fallback = [r["ticker"] for r in rows if any("回退" in n for n in (r.get("notes") or []))]
-    if fallback:
-        reasons.append("港股价格回退 yfinance 未复权日线（口径次优）：" + ", ".join(fallback))
-    ins = result.get("insufficient_history") or []
-    if ins:
-        reasons.append(f"历史不足、不参与技术面判定 {len(ins)} 档：" + ", ".join(ins))
+    # ⚠ 这里**必须**读显式旗标，绝不能扫 note 文本找「回退」二字。
+    # 2026-09-11 的教训：新增了「日线来自回退档…」与「yfinance 与回退档均未返回」两条 note
+    # 之后，子串匹配把 42 档美股/韩股全打成「港股价格回退」，provenance 字段整体说谎
+    # （回退链规则第 2 条：来源必须标对；第 3 条：不同档不得并成一张表）。
+    hk_fb = [r["ticker"] for r in rows if r.get("hk_price_fallback")]
+    if hk_fb:
+        reasons.append("港股价格回退 yfinance 未复权日线（口径次优）：" + ", ".join(hk_fb))
+    # 日线回退档（非 Yahoo 源）单独成条，按档位分组——不同档不并表
+    by_tier = {}
+    for r in rows:
+        t = r.get("bars_source")
+        if t and t != "yfinance":
+            by_tier.setdefault(t, []).append(r["ticker"])
+    for tier, tks in sorted(by_tier.items()):
+        reasons.append(f"日线回退档 {tier}（yfinance 未返回）{len(tks)} 档：" + ", ".join(tks))
+        reasons.append(f"　└ 该档成交量口径与 yfinance 不同，这些行的 量比 不可与"
+                       f"「放量 ≥1.5x」阈值比较（阈值不随源转移）")
+    # ⚪️ 取不到（异常，需查）与 ❌ 上市太新（正常）分两条写。
+    # 混成一句会让「所有档位都没拿到数」读起来像「等满半年就好」。
+    src_bad = result.get("source_unavailable") or []
+    if src_bad:
+        reasons.append(
+            f"⚠ 取数失败 {len(src_bad)} 档（yfinance 与回退档均未返回，**不是上市太新**，需查）："
+            + ", ".join(src_bad))
+    young = result.get("insufficient_history_too_young")
+    if young is None:
+        young = [t for t in (result.get("insufficient_history") or []) if t not in src_bad]
+    if young:
+        reasons.append(f"历史不足、不参与技术面判定 {len(young)} 档：" + ", ".join(young))
     # 触发位为 null＝「数据不足暂不判定」，与 false＝「判过了、没触发」是两回事。
     undecided = [r["ticker"] for r in rows
                  if not r.get("insufficient_history")
@@ -1233,29 +1379,56 @@ def run(args):
             _engine_fallback("第1档 requests.Session 回空表、第2档默认引擎取到数据"
                              "（多半是本机 IP 被 Yahoo 限流，429 只挡得住第1档）")
             raw = raw2
-    if raw is None or len(raw) == 0:
-        # 取数失败 = 退出码 3（本仓库保留：1 参数错误｜2 依赖缺失｜3 取数失败｜4 量级自检未通过）。
-        # 这一支的成因按实测可能性排序：① 出站代理无法完成到 Yahoo 的 TLS 隧道，
-        # ② Yahoo 按 UA 限流 429，③ 断网。（2026-09-11 更正：原注释只写 ②，已被实测推翻，
-        # 详见 make_session() 上方的传输层矩阵。）三者都是取数失败，不是参数错误。
-        # 回 1 会让调度层（SKILL.md 第二步逐单元收 .rc）把一次限流读成「命令写错了」。
-        err("错误：yfinance 未返回任何日线数据（全部标的皆空）。常见成因按可能性排序："
-            "① 出站代理无法完成到 Yahoo 的 TLS 隧道（本脚本已改用 requests.Session+浏览器UA "
-            "绕开 curl_cffi 指纹；若仍失败，代理可能连 requests 也拦）；"
-            "② Yahoo 按 UA 限流 429；③ 断网或代码全错。"
-            "区分方法：带浏览器 UA 直连 query1.finance.yahoo.com/v8/finance/chart/NVDA，"
-            "拿到 200 说明 ①②皆不成立，问题在本脚本；连不上则看是握手断还是 429。")
+    # yfinance 整片皆空**不再直接 exit 3**：那是 2026-09-11 之前的行为，会在回退档
+    # 还没跑之前就退出——而 Routines 容器正是「yfinance 整片皆空」那一种，等于回退档
+    # 永远不会被用上。现在先记下来，把判定推迟到回退档也试过之后。
+    yf_dead = raw is None or len(raw) == 0
+    if yf_dead:
+        err("⚠ yfinance 未返回任何日线数据（全部标的皆空）。成因按实测可能性排序："
+            "① 出站代理无法完成到 Yahoo 数据 host（yfinance 的 _BASE_URL_ 写死 "
+            "query2.finance.yahoo.com，换传输引擎救不了）；② Yahoo 按 UA 限流 429；"
+            "③ 断网。转入回退档（美股 stockanalysis / 韩股 Naver）。")
+        _FALLBACK_NOTES.append(
+            "⚠ yfinance 整片皆空，全部标的改由回退档取数（见各行 bars_source）")
+
+    frames = {t: None for t in dl} if yf_dead else {t: frame_for(raw, t) for t in dl}
+    missing = [t for t, f in frames.items() if f is None]
+
+    # ---- 第1档：yfinance 没给出的标的走非 Yahoo 回退档（美股 stockanalysis / 韩股 Naver）
+    # 逐标的补，不是「整轮失败才回退」：yfinance 部分缺票与整片全灭走同一条路径，
+    # 少一个分支就少一处会漏测的行为。
+    bars_tier = {}
+    # 候选 = 没有帧的 + 帧「短到不够判定」的。后者是限流下的常见形态：yfinance 回了
+    # 几根就断，直接拿去算会把标的标成「历史不足」，而回退档本可给上千根。
+    short = [t for t, f in frames.items() if f is not None and len(f) < MIN_HISTORY_BARS]
+    candidates = missing + [t for t in short if t not in missing]
+    if candidates:
+        fb_frames, fb_tiers, fb_notes = fallback_frames(candidates)
+        for t, f in fb_frames.items():
+            cur = frames.get(t)
+            # 只在回退档**确实更长**时替换：真·次新股（LYTE 24 根）两档都短，
+            # 此时保留 yfinance 原帧，不制造无谓的档位切换。
+            if cur is None or len(f) > len(cur):
+                frames[t] = f
+                bars_tier[t] = fb_tiers.get(t, "回退档")
+        _FALLBACK_NOTES.extend(fb_notes)
+        missing = [t for t, f in frames.items() if f is None]
+
+    if not any(f is not None for f in frames.values()):
+        # 到这里才是真正的取数失败：**两个上游都没给出任何数据**。
+        # 退出码 3（本仓库保留：1 参数错误｜2 依赖缺失｜3 取数失败｜4 量级自检未通过）；
+        # 回 1 会让调度层（SKILL.md 第二步逐单元收 .rc）把一次取数失败读成「命令写错了」。
+        err("错误：yfinance 与回退档均未返回任何日线数据。"
+            "区分方法：带浏览器 UA 直连 query1.finance.yahoo.com/v8/finance/chart/NVDA；"
+            "另跑 `python3 scripts/bars_fallback.py --tickers NVDA` 看回退档是死在哪一档。")
         err("     本次不写 tech.json——下游 perp_quotes.py 的 --spot 因此拿不到现货基准，"
             "🌙 盘后隐含只能标 ⚪️，**不得拿别处价格凑数**。")
         sys.exit(3)
 
-    frames = {t: frame_for(raw, t) for t in dl}
-    missing = [t for t, f in frames.items() if f is None]
-
     # ---- 各市场的完整交易日（美股用 SMH 基准；港股/韩股按自己市场单独判定）
     # 传输层降级（yfinance 不收 session= -> 退回 curl_cffi）必须进 asof_notes：
     # ⚠ 前缀让 apply_degraded() 把它转成 degraded_reasons 字段，--json 才不会少于正文。
-    asof, asof_notes = {}, list(_ENGINE_NOTES)
+    asof, asof_notes = {}, list(_ENGINE_NOTES) + list(_FALLBACK_NOTES)
     markets_needed = {market_of(t) for t in sel_tickers} | {"US"}
     for mkt in markets_needed:
         mk_frames = [frames[t] for t in dl if frames[t] is not None and market_of(t) == mkt]
@@ -1292,7 +1465,16 @@ def run(args):
             "sources": {
                 "prices": "yfinance 本地计算（auto_adjust=False）",
                 "transport": ("yfinance + requests.Session(浏览器UA)" if _SESSION_OK
-                              else "yfinance：部分或全部调用未能使用 requests.Session(浏览器UA)，已退回自管引擎（哪一处见 degraded_reasons）"),
+                              else "yfinance：部分或全部调用未能使用 requests.Session(浏览器UA)，已退回自管引擎（哪一处见 degraded_reasons）")
+                             + "（**仅描述 Yahoo 传输层，不涵盖回退档**）",
+                "prices_fallback_order": {
+                    "US": ["yfinance(auto_adjust=False)", "stockanalysis.com(c·拆股已还原·股息未复权)"],
+                    "KR": ["yfinance(auto_adjust=False)", "naver siseJson(拆股已还原·股息未复权)"],
+                    "HK": ["yfinance(auto_adjust=False) + hk_quote.py 覆写价格"],
+                    "INDEX": ["yfinance(auto_adjust=False)（无替代档，取不到即 N/A）"],
+                },
+                "prices_tier_note": "--macro-only 不产出个股行，故无 prices_tier_by_ticker；"
+                                    "宏观/背景标的的档位见 degraded_reasons",
             },
         }
         return apply_degraded(result), True
@@ -1323,8 +1505,29 @@ def run(args):
     for meta in selected:
         t = meta["ticker"]
         mkt = market_of(t)
-        rows.append(compute_row(meta, frames.get(t), asof.get(mkt + "_ts"), mkt,
-                                earnings_cals, want_earnings=want_earn))
+        row = compute_row(meta, frames.get(t), asof.get(mkt + "_ts"), mkt,
+                          earnings_cals, want_earnings=want_earn)
+        # 档位标注：来源不明的数字事后无法复核（回退链规则第 2 条）
+        tier = bars_tier.get(t)
+        if row.get("source_unavailable"):
+            # 没有任何档给出数据：provenance 必须是 null，不能说谎说来自 yfinance。
+            # 「查过了、来自 X」与「根本没拿到」是两回事（⚪️ / ❌ 的字段形态）。
+            row["bars_source"] = None
+            row["vol_ratio_comparable"] = None
+        elif tier:
+            row["bars_source"] = tier
+            row["price_source"] = f"{tier}（yfinance 未返回，已回退）"
+            # 阈值不随源转移（规则第 4 条）：量口径不同，量比不可跨档比较
+            row["vol_ratio_comparable"] = False
+            row["notes"].append(
+                f"日线来自回退档 {tier}（yfinance 未返回）；"
+                "收盘/52周高/RSI 与 yfinance 同口径（拆股已还原·股息未复权），"
+                "但**量比不可**与 yfinance 标定的「放量 ≥1.5x」阈值比较"
+            )
+        else:
+            row["bars_source"] = "yfinance"
+            row["vol_ratio_comparable"] = True
+        rows.append(row)
 
     # ---- 港股覆写（hk_quote.py 为准）
     hk_codes = [m["ticker"] for m in selected if m.get("hk_quote") or market_of(m["ticker"]) == "HK"]
@@ -1338,8 +1541,11 @@ def run(args):
             if usable_hk(q):
                 apply_hk(r, q)
             elif q:
+                # 显式旗标，不让 apply_degraded 再去猜 note 文本（见下方说明）
+                r["hk_price_fallback"] = True
                 r["notes"].append("hk_quote 报价不可用作收盘价，本行价格回退 yfinance 未复权日线")
             else:
+                r["hk_price_fallback"] = True
                 r["notes"].append("hk_quote 未返回本标的，价格回退 yfinance 未复权日线")
 
     for r in rows:
@@ -1350,6 +1556,9 @@ def run(args):
                    if r.get("t1") is not True and r.get("t2") is not True and r.get("t3") is not True]
     triggered = [r["ticker"] for r in evaluated if r.get("triggered") is True]
     insufficient = [r["ticker"] for r in rows if r.get("insufficient_history")]
+    # 取数失败单列，且**不与「上市太新」混在一个数字里**
+    src_unavail = [r["ticker"] for r in rows if r.get("source_unavailable")]
+    too_young = [t for t in insufficient if t not in src_unavail]
 
     result = {
         "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -1364,6 +1573,9 @@ def run(args):
         "triggered": triggered,
         "untriggered": untriggered,
         "insufficient_history": insufficient,
+        # ⚪️ 取不到（异常，需查）——与 ❌ 上市太新（正常，等满半年）分开
+        "source_unavailable": src_unavail,
+        "insufficient_history_too_young": too_young,
         "counts": {
             "universe": len(universe),
             "selected": len(selected),
@@ -1371,6 +1583,8 @@ def run(args):
             "triggered": len(triggered),
             "untriggered": len(untriggered),
             "insufficient_history": len(insufficient),
+            "source_unavailable": len(src_unavail),
+            "insufficient_history_too_young": len(too_young),
         },
         "params": {
             "min_history_bars": MIN_HISTORY_BARS, "rsi_n": RSI_N,
@@ -1381,9 +1595,21 @@ def run(args):
             "universe": rel_path(weekly / "assets" / "universe.json"),
             "industry_table": rel_path(weekly / "assets" / "baseline.md"),
             "hk_quote": rel_path(weekly / "scripts" / "hk_quote.py"),
-            "prices": "yfinance 本地计算（auto_adjust=False，原始未复权）",
+            # 不是字面量：由本轮实际产出行的档位统计推导。
+            # yfinance 整片不可达时仍写「yfinance 本地计算」，就是把一次全回退的运行
+            # 记成一次干净的 yfinance 运行——正是 ok/provenance 不得写死的那条规则。
+            "prices": _prices_source_label(rows),
+            "prices_fallback_order": {
+                "US": ["yfinance(auto_adjust=False)", "stockanalysis.com(c·拆股已还原·股息未复权)"],
+                "KR": ["yfinance(auto_adjust=False)", "naver siseJson(拆股已还原·股息未复权)"],
+                "HK": ["yfinance(auto_adjust=False) + hk_quote.py 覆写价格"],
+                "INDEX": ["yfinance(auto_adjust=False)（无替代档，取不到即 N/A）"],
+            },
+            "prices_tier_by_ticker": {r["ticker"]: r.get("bars_source")
+                                      for r in rows if r.get("bars_source")},
             "transport": ("yfinance + requests.Session(浏览器UA)" if _SESSION_OK
-                          else "yfinance：部分或全部调用未能使用 requests.Session(浏览器UA)，已退回自管引擎（哪一处见 degraded_reasons）"),
+                          else "yfinance：部分或全部调用未能使用 requests.Session(浏览器UA)，已退回自管引擎（哪一处见 degraded_reasons）")
+                         + "（**仅描述 Yahoo 传输层，不涵盖回退档；回退档见 prices/bars_source**）",
         },
         # 人读分支打出来的每一条口径/禁令都必须同时是字段（--json 不得少于正文）
         "disclaimers": [

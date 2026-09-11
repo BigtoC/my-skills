@@ -263,12 +263,29 @@ to the rest of the script directory.
 ## Fallback chains — the rule
 
 Several data points in this repo have no single reliable source, so they are
-fetched through an ordered chain. Five exist today: HK prices (`hk_quote.py` →
+fetched through an ordered chain. Six exist today: HK prices (`hk_quote.py` →
 yfinance, derived indicators only, never the price), VIX (FRED `VIXCLS` →
 yfinance `^VIX`), funding rates (Binance → Hyperliquid → coinglass search), BTC
-dominance (CoinGecko → CoinPaprika), and ETF holdings (Alpha Vantage → yfinance
-→ issuer page). They were each written separately; these constraints are common
-to all of them, and a sixth chain should follow them rather than reinvent one.
+dominance (CoinGecko → CoinPaprika), ETF holdings (Alpha Vantage → yfinance
+→ issuer page), and **daily OHLCV bars** (`technicals.py`: yfinance →
+`bars_fallback.py` — stockanalysis.com for US, Naver siseJson for KR; HK stays on
+yfinance + `hk_quote.py`; indices have **no** second tier and go N/A).
+
+The sixth was added 2026-09-11 for a reason worth stating, because it is the only
+one where changing the *transport* cannot help: yfinance is **structurally**
+unreachable from the Routines container. Its data host is hardcoded
+(`yfinance/const.py: _BASE_URL_ = query2.finance.yahoo.com`, used by `base.py` and
+`scrapers/history.py`), and that container's egress proxy kills every query2 tunnel
+(~1.8KB ClientHello out, 39 bytes back, code 1006 at ~6s). Both engines —
+`requests.Session` and `curl_cffi` — hit that same blocked host, so only a
+different **upstream** fixes it. Its two tiers share a price caliber
+(split-adjusted, dividend-unadjusted; verified across 7 in-window splits, and
+across all 46 tickers **0 differing T1/T2/T3 verdicts**) but **not** a volume
+caliber, so fallback rows carry `vol_ratio_comparable: false` and the
+「放量 ≥1.5x」 label is suppressed on them — rule 4 in action.
+
+They were each written separately; these constraints are common
+to all of them, and a seventh chain should follow them rather than reinvent one.
 
 1. **The order is fixed and written down.** Not chosen at call time, not
    "whichever answers first".
