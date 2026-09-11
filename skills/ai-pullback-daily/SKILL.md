@@ -2,7 +2,7 @@
 name: ai-pullback-daily
 description: AI 算力产业链「质量 × 时机」回调进场监控日更助手。每个日历日（含周末与美股休市日）跑一次：引爆点监控（Thesis Tripwire，5 项结构性信号）＋ 24/7 永续盘后隐含变动 ＋ Neocloud 信用层四层判定 ＋ 个股 T1/T2/T3 技术触发，经「技术分桶 → 产业质量闸门 → 论点宏观闸门 → 驱动源节奏层」四步产出 🚨重点买入 / ⚡轻仓试探 / 👀观察 / ✅未触发 分桶，输出精简版（推 Slack）+ 完整版双层报告。当用户提到 AI 算力回调监控、回调进场监控、日更监控、抄底监控、T1/T2/T3 触发、52周回撤/20日高/RSI 超卖、引爆点、Thesis Tripwire、论点闸门、分桶、重点买入/轻仓试探/观察、Neocloud 信用层、L1 公司层/L2 项目层、回调驱动源、折现率驱动 vs AI论点驱动、盘后隐含、24/7 永续、双层报告推 Slack 时自动使用。
 license: MIT
-compatibility: Portable Agent Skills format for agents that support SKILL.md. **硬依赖同级安装的 `ai-industry-weekly` 技能**（产业评级表与 `hk_quote.py` 都在那边）。脚本需 python3 + `yfinance` / `pandas` / `numpy` + 联网；WebSearch 用于引爆点与个股取数；**检索传输层为可选增强**（把四组检索交给独立取数上下文、只回传结构化 JSON），缺席时由本体按同一份契约自行检索、报告字节相同；Slack 推送需 Slack MCP，可跳过。
+compatibility: Portable Agent Skills format for agents that support SKILL.md. **硬依赖同级安装的 `ai-industry-weekly` 技能**（产业评级表与 `hk_quote.py` 都在那边）。脚本需 python3 + `yfinance` / `pandas` / `numpy` / `requests` + 联网；WebSearch 用于引爆点与个股取数；**检索传输层为可选增强**（把四组检索交给独立取数上下文、只回传结构化 JSON），缺席时由本体按同一份契约自行检索、报告字节相同；Slack 推送需 Slack MCP，可跳过。
 metadata:
   author: BigtoC
   version: "0.1.0"
@@ -43,23 +43,23 @@ metadata:
 
 ## 文件地图
 
-| 路径                                   | 作用                                              |
-|----------------------------------------|---------------------------------------------------|
-| `references/tripwires.md`              | 引爆点 5 项定义、状态口径、Fed 传导校准、汇总裁决 |
-| `references/data-acquisition.md`       | 任务时点、完整交易日判定、取数口径与指标定义      |
-| `references/perp-overnight.md`         | 24/7 永续盘后/休市隐含变动细则                    |
+| 路径                                   | 作用                                                  |
+|----------------------------------------|-------------------------------------------------------|
+| `references/tripwires.md`              | 引爆点 5 项定义、状态口径、Fed 传导校准、汇总裁决     |
+| `references/data-acquisition.md`       | 任务时点、完整交易日判定、取数口径与指标定义          |
+| `references/perp-overnight.md`         | 24/7 永续盘后/休市隐含变动细则                        |
 | `references/drawdown-driver.md`        | 回调驱动源**五分法**（折现率 vs AI论点 + 预警未确认） |
-| `references/neocloud-credit.md`        | Neocloud 信用层 L1–L4 阈值与判定                  |
-| `references/buckets.md`                | 触发条件、四步分桶、风险标签、操作建议映射        |
-| `references/output-format.md`          | 双层报告结构、全局规则、Slack 推送、静默条件      |
-| `references/search-contract.md`        | 检索传输层契约：21 项、四组、信封与 payload 六族   |
-| `scripts/industry_table.py`            | 读**姊妹技能**的产业质量参考表                    |
-| `scripts/technicals.py`                | 个股技术面 + 宏观利率/驱动源输入                  |
-| `scripts/perp_quotes.py`               | 24/7 永续隐含变动                                 |
-| `scripts/neocloud_credit_monitor.py`   | Neocloud 信用层四层判定（引爆点④ 的量化层）       |
-| `scripts/neocloud_credit_lite.py`      | 同上的云端版（纯标准库，无历史档）                |
-| `assets/neocloud_bonds.json`           | 债券条款 + WebSearch 喂入的报价 + 一级市场条款    |
-| `assets/neocloud_credit_history.jsonl` | 每日一笔的信用层历史档（变化率检验/跨档侦测）     |
+| `references/neocloud-credit.md`        | Neocloud 信用层 L1–L4 阈值与判定                      |
+| `references/buckets.md`                | 触发条件、四步分桶、风险标签、操作建议映射            |
+| `references/output-format.md`          | 双层报告结构、全局规则、Slack 推送、静默条件          |
+| `references/search-contract.md`        | 检索传输层契约：21 项、四组、信封与 payload 六族      |
+| `scripts/industry_table.py`            | 读**姊妹技能**的产业质量参考表                        |
+| `scripts/technicals.py`                | 个股技术面 + 宏观利率/驱动源输入                      |
+| `scripts/perp_quotes.py`               | 24/7 永续隐含变动                                     |
+| `scripts/neocloud_credit_monitor.py`   | Neocloud 信用层四层判定（引爆点④ 的量化层）           |
+| `scripts/neocloud_credit_lite.py`      | 同上的云端版（纯标准库，无历史档）                    |
+| `assets/neocloud_bonds.json`           | 债券条款 + WebSearch 喂入的报价 + 一级市场条款        |
+| `assets/neocloud_credit_history.jsonl` | 每日一笔的信用层历史档（变化率检验/跨档侦测）         |
 
 脚本**内部**用 `__file__` 相对定位 `assets/` 与姊妹技能，与 cwd 无关；但**调用命令**仍要给对路径，故下文一律用 `$SKILL_DIR` 绝对路径调用。
 
@@ -102,12 +102,12 @@ done
 `threshold_comparable` 与 `carry_forward_policy` 两个必填槽、四种缺失哨兵、落单前自检 10 条）。
 **有没有传输层能力，都照这份契约执行**——它定义的是数据形状，不是执行机制。
 
-| 组    | 内容                        | 加载的 governing reference                                                        | 项数 | 写到                     |
-|-------|-----------------------------|-----------------------------------------------------------------------------------|------|--------------------------|
-| **A** | 引爆点 ①②③⑤                | `references/tripwires.md`                                                          | 4    | `/tmp/search/a.json`     |
-| **B** | 宏观利率与 Fed ＋ 技术补数   | `references/data-acquisition.md`                                                   | 9    | `/tmp/search/b.json`     |
-| **C** | 事件日历与因由检索          | `references/data-acquisition.md`（宏观催化段）＋ `drawdown-driver.md` ＋ `perp-overnight.md` | 3    | `/tmp/search/c.json`     |
-| **D** | 债券报价与一级市场          | `references/neocloud-credit.md`                                                    | 5    | `/tmp/search/d.json`     |
+| 组    | 内容                       | 加载的 governing reference                                                                   | 项数 | 写到                 |
+|-------|----------------------------|----------------------------------------------------------------------------------------------|------|----------------------|
+| **A** | 引爆点 ①②③⑤                | `references/tripwires.md`                                                                    | 4    | `/tmp/search/a.json` |
+| **B** | 宏观利率与 Fed ＋ 技术补数 | `references/data-acquisition.md`                                                             | 9    | `/tmp/search/b.json` |
+| **C** | 事件日历与因由检索         | `references/data-acquisition.md`（宏观催化段）＋ `drawdown-driver.md` ＋ `perp-overnight.md` | 3    | `/tmp/search/c.json` |
+| **D** | 债券报价与一级市场         | `references/neocloud-credit.md`                                                              | 5    | `/tmp/search/d.json` |
 
 - **引爆点④ 不在其中**，永远不要把它做成检索项：它的状态由 `neocloud_credit_monitor.py` 产出
   （第三步「唯一例外」那条）。④ 的**输入**（债券报价、一级市场条款、`manual_flags`）是 D 组的检索项——
@@ -203,8 +203,12 @@ echo "── techperp exit=$RC_TECHPERP"
 
 ⚠️ `RC_TECHPERP=TIMEOUT` 代表该 job 还没跑完、**不代表它没数据**，按取数失败处理。
 
-⚠️ **`RC_TECHPERP=3` 代表 yfinance 全灭**（2026-09-07 起 `technicals.py` 对此回 3 取数失败，原本回 1；实测成因就是 **Yahoo 对本环境全面 429 限流**）。此时 **`/tmp/tech.json` 不会被写出**，所以 `&&` 短路、`perp_quotes.py` 根本不会跑——这是对的：它拿不到现货基准，🌙 盘后隐含只能标 ⚪️，**绝不拿别处价格凑数**。
-处置：个股技术面整片 ⚪️（T1/T2/T3 一律不可判定，**不是「未触发」**），两版报告头写明「本轮 Yahoo 限流，个股技术面未取到」，产业评级照常引用（那来自姊妹技能、不受影响），分桶只出 ✅ 未触发以外的**空桶**并说明成因。**绝不沿用昨天的技术面当今天的**——那违反本技能最硬的一条：绝不谎报新收盘数据。
+⚠️ **`RC_TECHPERP=3` 代表 yfinance 全灭**（2026-09-07 起 `technicals.py` 对此回 3 取数失败，原本回 1）。**成因已于 2026-09-11 在 Routines 容器实测更正——原记「实测成因就是 Yahoo 对本环境全面 429 限流」是错的**，真实成因是两层独立叠加：**① 出站代理无法完成 curl_cffi 冒充 Chrome 的 TLS 隧道**（到 `guce.yahoo.com` / `query2.finance.yahoo.com` 约 6 秒后 code 1006 断开，根本走不到能返回 HTTP 状态码的那一层）；**② Yahoo 另按 UA 限流**（裸 `requests` 默认 UA 稳定 429，浏览器 UA 同一代理下 200）。①先死，所以 ② 其实从没咬到 yfinance。`technicals.py` 已改成**两档引擎回退链**：第1档 `requests.Session` + 浏览器 UA，第2档 yfinance 默认 curl_cffi。**两档都必须留着，因为两种故障方向相反、互为对方的解药**——代理环境只有第1档过得去；本机 IP 被 Yahoo 限流时反而只有第2档过得去（429 只挡得住第1档，curl_cffi 复用缓存 cookie、TLS 指纹不同仍取得到数）。回退会记进 `degraded_reasons` 与 `sources.transport`。**症状特征：与批量大小无关**——2 只与 46 只同样 exit 3。若改后仍回 3，说明代理连 `requests` 也拦，或真的断网。
+
+⚠️ **`RC_TECHPERP=2` 代表依赖缺失**（2026-09-11 起 `load_deps()` 回 2，原本回 1）。Routines 容器每次重建、依赖状态不保证一致（实测三次运行分别缺 `numpy`、缺 `yfinance`、依赖齐全），所以这是**独立于限流的第二种故障**。⚠ **当天的报告处置与 `=3` 完全相同**（走下面那段 ⚪️ 路径、绝不沿用昨天的技术面）；补装依赖是**后续动作，不是当天的交付方式**。2026-09-07 之前取数失败也回 1、与缺依赖同码，故**历史上被归因成「Yahoo 限流」的失败中有一部分其实是缺依赖**，已无法回溯区分。
+
+`RC_TECHPERP` **为 2 或 3 时**（两者下游状态字节相同）**`/tmp/tech.json` 都不会被写出**，所以 `&&` 短路、`perp_quotes.py` 根本不会跑——这是对的：它拿不到现货基准，🌙 盘后隐含只能标 ⚪️，**绝不拿别处价格凑数**。
+处置（**2 与 3 同样适用**）：个股技术面整片 ⚪️（T1/T2/T3 一律不可判定，**不是「未触发」**），两版报告头写明「本轮 yfinance 取数全灭（传输层故障，成因见运行输出 `/tmp/techperp.log`），个股技术面未取到」——**只有当次运行真的观测到 429 才可写「限流」**，否则按传输层故障中性表述（见上：实测最常见成因是代理侧 TLS 隧道失败，不是限流），产业评级照常引用（那来自姊妹技能、不受影响），分桶只出 ✅ 未触发以外的**空桶**并说明成因。**绝不沿用昨天的技术面当今天的**——那违反本技能最硬的一条：绝不谎报新收盘数据。
 
 **守则，缺一不可：**
 
@@ -352,10 +356,10 @@ python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --emit both
 
   裁决（不是新规则，是把脚本已经输出的字段用起来）：
 
-  | 脚本字段 | 走论点闸门？ | 依据 |
-  |---|---|---|
-  | `tripwire_4.thesis_side` = 🔴 | **走**：全体买入桶降 👀观察 +「⚠️论点受损」 | 论点侧真的破了 |
-  | `thesis_side` = 🟢/🟡 而 `financing_side` = 🔴 | **不走**：桶位不动，只调节奏 | 就是本红线说的「股东稀释成本上升，非算力需求见顶」 |
+  | 脚本字段                                                                  | 走论点闸门？                                                         | 依据                                                                            |
+  |---------------------------------------------------------------------------|----------------------------------------------------------------------|---------------------------------------------------------------------------------|
+  | `tripwire_4.thesis_side` = 🔴                                             | **走**：全体买入桶降 👀观察 +「⚠️论点受损」                          | 论点侧真的破了                                                                  |
+  | `thesis_side` = 🟢/🟡 而 `financing_side` = 🔴                            | **不走**：桶位不动，只调节奏                                         | 就是本红线说的「股东稀释成本上升，非算力需求见顶」                              |
   | `thesis_side` = ⚪（L2 与 L4 **同时**取不到）**且** `financing_side` = 🔴 | **走**：比照 🔴 降桶，但横幅写「论点侧**不可判定**」而非「论点受损」 | 有一个活着的 🔴，却**无法查它是否已波及论点侧**。按「不可判定不是安全」取保守侧 |
 
   **`tripwire_4.state` 照抄进 🧭 引爆点行与 🚨 横幅逻辑**（第三步：不得与脚本结论冲突），
@@ -404,7 +408,7 @@ python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --emit both
 ## 依赖
 
 - **硬依赖同级安装的 `ai-industry-weekly` 技能**：产业质量参考表（`assets/baseline.md`）、标的清单（`assets/universe.json`）与港股行情脚本（`scripts/hk_quote.py`）都由它单点维护，本技能只读不写。两个技能须装在同一父目录（repo 内 `skills/`，或 `$HOME/.claude/skills/`）；非常规布局可用环境变量 `AI_INDUSTRY_WEEKLY_DIR` 覆盖。
-- `python3` + `yfinance` / `pandas` / `numpy`，以及可联网（FRED / yfinance / Hyperliquid / WebSearch）。
+- `python3` + `yfinance` / `pandas` / `numpy` / `requests`，以及可联网（FRED / yfinance / Hyperliquid / WebSearch）。
 - **检索传输层（可选增强，见「检索传输层」一节）**：缺席时四组检索由本体直接执行，契约、来源顺序、哨兵与报告正文完全不变，只在运行输出里说明一句。
 - Slack MCP（可选，仅第六步推送用）。
 
