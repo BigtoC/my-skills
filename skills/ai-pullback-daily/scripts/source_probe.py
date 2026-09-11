@@ -614,7 +614,20 @@ def probe_sibling_skill():
 # 全标的覆盖率（--coverage）
 # ---------------------------------------------------------------------------
 def probe_coverage(sibling):
-    """把 universe.json 的美股全部过一遍第 1 档。请求会明显变多，默认不跑。"""
+    """
+    全标的覆盖率：universe.json 里**每一只**标的都实测一次它所属市场的第 1 档。
+
+    覆盖范围（默认探测只各抽 1 只，这里是全量）：
+        美股 41 只 -> us.1 stockanalysis
+        韩股  2 只 -> kr.1 Naver（默认探测只测 005930，000660 在这里才被覆盖）
+        港股  3 只 -> hk.1 腾讯（默认探测只测 00700）
+      外加 us.2 的 assetclass 分支实测：api.nasdaq.com 对股票要 assetclass=stocks、
+      对 ETF 要 assetclass=etf，走错分支会 HTTP 200 返回空 rows。池子里有 5 只 ETF，
+      默认探测只用 NVDA 走了 stocks 分支，etf 分支从未被验证过。
+
+    请求数约 51（美股 41 + 韩股 2 + 港股 3 + us.2 抽样 5）。
+    腾讯 kline 只多打 3 个请求，远低于会触发 30 分钟封禁的探测强度。
+    """
     from concurrent.futures import ThreadPoolExecutor
     from pathlib import Path
     import os
@@ -625,12 +638,18 @@ def probe_coverage(sibling):
     cands.append(Path(__file__).resolve().parent.parent.parent / "ai-industry-weekly" / "assets" / "universe.json")
     uni = next((c for c in cands if c.exists()), None)
     if uni is None:
-        return {"ok": False, "detail": "找不到 universe.json，跳过覆盖率探测", "results": None}
+        return {"ok": False, "detail": "找不到 universe.json，跳过覆盖率探测",
+                "us": None, "kr": None, "hk": None, "us2_assetclass": None}
 
-    tickers = [e["ticker"] for e in json.loads(uni.read_text())["tickers"]]
+    entries = json.loads(uni.read_text())["tickers"]
+    tickers = [e["ticker"] for e in entries]
+    etf_set = {e["ticker"] for e in entries if e.get("etf")}
     us = [t for t in tickers if not t.endswith((".HK", ".KS"))]
+    kr = [t for t in tickers if t.endswith(".KS")]
+    hk = [t for t in tickers if t.endswith(".HK")]
 
-    def one(tk):
+    # ---- 美股：us.1 全量
+    def one_us(tk):
         url = f"https://stockanalysis.com/api/symbol/s/{tk.lower()}/history?range=5Y&period=Daily"
         p = http_probe(url, HEADERS_NONE, timeout=25)
         if p["failure_class"] != "ok":
@@ -643,17 +662,87 @@ def probe_coverage(sibling):
             return tk, None, "body_shape"
 
     with ThreadPoolExecutor(max_workers=8) as ex:
-        res = list(ex.map(one, us))
+        us_res = list(ex.map(one_us, us))
+    us_ok = {t: n for t, n, e in us_res if n is not None}
+    us_bad = {t: e for t, n, e in us_res if n is None}
+    # 恰好 252 根是 range 被静默降级的特征（5Y 对上市够久的票应给 ~1255 根）。
+    # 它和「上市太新」长得不一样：真新票是 24 / 61 / 110 这种零散数字。
+    us_sus = {t: n for t, n in us_ok.items() if n == 252}
+    us_thin = {t: n for t, n in us_ok.items() if n < 252}
 
-    ok = {t: n for t, n, e in res if n is not None}
-    bad = {t: e for t, n, e in res if n is None}
-    thin = {t: n for t, n in ok.items() if n < 252}
+    # ---- 韩股：kr.1 全量（默认探测漏掉的那只在这里）
+    today = dt.date.today()
+    start = today - dt.timedelta(days=900)
+
+    def one_kr(tk):
+        sym = tk.replace(".KS", "")
+        url = (f"https://api.finance.naver.com/siseJson.naver?symbol={sym}"
+               f"&requestType=1&startTime={start:%Y%m%d}&endTime={today:%Y%m%d}&timeframe=day")
+        p = http_probe(url, HEADERS_NONE, timeout=25)
+        if p["failure_class"] != "ok":
+            return tk, None, p["failure_class"]
+        body = p["_body"].strip()
+        if len(body) < 120:
+            return tk, None, "empty_header_only"
+        try:
+            rows = ast.literal_eval(body)
+            good = [r for r in rows[1:] if r and str(r[0]).isdigit()
+                    and not (r[1] == 0 and r[2] == 0 and r[3] == 0)]
+            return tk, len(good), None
+        except Exception:  # noqa: BLE001
+            return tk, None, "body_shape"
+
+    kr_res = [one_kr(t) for t in kr]
+    kr_ok = {t: n for t, n, e in kr_res if n is not None}
+    kr_bad = {t: e for t, n, e in kr_res if n is None}
+
+    # ---- 港股：hk.1 全量（腾讯，串行且只有 3 个请求，避开封禁阈值）
+    def one_hk(tk):
+        code = tk.replace(".HK", "").zfill(5)
+        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=hk{code},day,,,300,"
+        p = http_probe(url, HEADERS_BROWSER, timeout=25)
+        if p["failure_class"] != "ok":
+            return tk, None, p["failure_class"]
+        try:
+            d = json.loads(p["_body"])["data"][f"hk{code}"]
+            kl = d.get("day") or d.get("qfqday") or []
+            return tk, len(kl), None
+        except Exception:  # noqa: BLE001
+            return tk, None, "body_shape"
+
+    hk_res = [one_hk(t) for t in hk]
+    hk_ok = {t: n for t, n, e in hk_res if n is not None}
+    hk_bad = {t: e for t, n, e in hk_res if n is None}
+
+    # ---- us.2 的 assetclass 分支：ETF 走 etf、股票走 stocks，走错会 200 + 空 rows
+    def one_us2(tk):
+        ac = "etf" if tk in etf_set else "stocks"
+        url = (f"https://api.nasdaq.com/api/quote/{tk}/historical"
+               f"?assetclass={ac}&fromdate={start:%Y-%m-%d}&todate={today:%Y-%m-%d}&limit=400")
+        p = http_probe(url, HEADERS_EMPTY_UA, timeout=30)
+        if p["failure_class"] != "ok":
+            return tk, ac, None, p["failure_class"]
+        try:
+            rows = (json.loads(p["_body"]).get("data") or {}).get("tradesTable", {}).get("rows") or []
+            return tk, ac, len(rows), None if rows else "empty_rows"
+        except Exception:  # noqa: BLE001
+            return tk, ac, None, "body_shape"
+
+    us2_sample = sorted(etf_set) + ["NVDA"]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        us2_res = list(ex.map(one_us2, us2_sample))
+    us2 = {t: {"assetclass": ac, "bars": n, "error": e} for t, ac, n, e in us2_res}
+
+    all_bad = bool(us_bad or kr_bad or hk_bad or us_sus)
     return {
-        "ok": not bad,
-        "detail": f"{len(ok)}/{len(us)} 美股可取数",
-        "unavailable": bad,
-        "insufficient_history": thin,
-        "bars": ok,
+        "ok": not all_bad,
+        "detail": (f"美股 {len(us_ok)}/{len(us)}｜韩股 {len(kr_ok)}/{len(kr)}｜"
+                   f"港股 {len(hk_ok)}/{len(hk)} 可取数"),
+        "us": {"bars": us_ok, "unavailable": us_bad,
+               "insufficient_history": us_thin, "suspect_range_degraded": us_sus},
+        "kr": {"bars": kr_ok, "unavailable": kr_bad},
+        "hk": {"bars": hk_ok, "unavailable": hk_bad},
+        "us2_assetclass": us2,
     }
 
 
@@ -755,10 +844,26 @@ def render(payload, coverage):
     if coverage:
         print("── 全标的覆盖率（--coverage）" + "─" * 28)
         print(f"   {coverage['detail']}")
-        if coverage.get("unavailable"):
-            print(f"   ❌ 取不到：{', '.join(f'{k}({v})' for k, v in coverage['unavailable'].items())}")
-        if coverage.get("insufficient_history"):
-            print(f"   ⚠ 根数不足 252：{', '.join(f'{k}={v}' for k, v in coverage['insufficient_history'].items())}")
+        for mkt, label in (("us", "美股 us.1"), ("kr", "韩股 kr.1"), ("hk", "港股 hk.1")):
+            blk = coverage.get(mkt)
+            if not blk:
+                continue
+            if blk.get("unavailable"):
+                print(f"   ❌ {label} 取不到："
+                      f"{', '.join(f'{k}({v})' for k, v in blk['unavailable'].items())}")
+            if blk.get("suspect_range_degraded"):
+                print(f"   ⛔ {label} **疑似 range 静默降级**（恰好 252 根，应为 ~1255）："
+                      f"{', '.join(blk['suspect_range_degraded'])}")
+            if blk.get("insufficient_history"):
+                print(f"   ⚠ {label} 根数不足 252（真·上市太新，各源皆然）："
+                      f"{', '.join(f'{k}={v}' for k, v in blk['insufficient_history'].items())}")
+        u2 = coverage.get("us2_assetclass") or {}
+        bad2 = {k: v for k, v in u2.items() if v.get("error")}
+        if bad2:
+            items = ", ".join(f"{k}[{v['assetclass']}]({v['error']})" for k, v in bad2.items())
+            print(f"   ❌ us.2 assetclass 分支失败：{items}")
+        else:
+            print("   ✅ us.2 assetclass 分支全部可用（stocks / etf 各自命中）")
         print()
 
     print("── 禁止事项（口径规则，与 --json 的 prohibitions 同文）" + "─" * 8)
