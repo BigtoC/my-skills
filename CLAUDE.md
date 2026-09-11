@@ -78,11 +78,11 @@ Three things about it are load-bearing and easy to erode:
   the language is not.** The real constraints are **per-host headers, and they are
   language-independent** (all measured 2026-09-05 on this machine):
 
-  | host | rule | evidence |
-  |---|---|---|
-  | FRED | **never** send a browser User-Agent | Chrome UA → 25–30s ReadTimeout, from curl *and* `requests`. curl-like or `requests`' default UA → HTTP 200 in ~0.5s |
-  | Yahoo | **always** send one | a bare `requests.Session` gets throttled (`market.py:303`); `stock_perp.py:29` records a stable 429 from the chart endpoint |
-  | CNN F&G | needs full browser UA **+ Referer + Origin** | otherwise HTTP 418 「I'm a teapot. You're a bot.」 |
+  | host    | rule                                         | evidence                                                                                                                    |
+  |---------|----------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
+  | FRED    | **never** send a browser User-Agent          | Chrome UA → 25–30s ReadTimeout, from curl *and* `requests`. curl-like or `requests`' default UA → HTTP 200 in ~0.5s         |
+  | Yahoo   | **always** send one                          | a bare `requests.Session` gets throttled (`market.py:303`); `stock_perp.py:29` records a stable 429 from the chart endpoint |
+  | CNN F&G | needs full browser UA **+ Referer + Origin** | otherwise HTTP 418 「I'm a teapot. You're a bot.」                                                                          |
 
   These do **not** conflict at the language level — only per-host, which one
   program handles with per-host headers. `stock_perp.py` already straddles both
