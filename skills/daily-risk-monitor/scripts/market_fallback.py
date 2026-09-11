@@ -209,8 +209,11 @@ def fetch_btc():
         return None, TIER_BINANCE, None, f"BTC-USD: {e}"
     try:
         kl = json.loads(body)
+        # dt.UTC 是 3.11+ 才有；用 timezone.utc 保持与本仓库其余脚本同一个解释器下限，
+        # 否则在 3.10 上会抛 AttributeError 并被下面的 except 错报成「结构不符」。
+        _utc = dt.timezone.utc
         pts = sorted(
-            (dt.datetime.fromtimestamp(k[0] / 1000, dt.UTC).date().isoformat(), float(k[4]))
+            (dt.datetime.fromtimestamp(k[0] / 1000, _utc).date().isoformat(), float(k[4]))
             for k in kl)
     except Exception as exc:  # noqa: BLE001
         return None, TIER_BINANCE, None, f"BTC-USD: 结构不符（{scrub(exc)[:100]}）"
@@ -245,13 +248,21 @@ def fetch_closes(tickers, max_workers=6):
             if error:
                 errors.append(error)
                 out[t] = {"tier": tier, "points": None, "bars": 0, "first": None,
-                          "last": None, "note": note, "error": error}
+                          "last": None, "note": note, "error": error,
+                          # 主动拒绝 vs 取数失败：两者处置完全不同
+                          "refused": t.upper() in _REFUSED}
                 continue
             out[t] = {"tier": tier, "points": pts, "bars": len(pts),
-                      "first": pts[0][0], "last": pts[-1][0], "note": note, "error": None}
+                      "first": pts[0][0], "last": pts[-1][0], "note": note,
+                      "error": None, "refused": False}
     meta = {
-        # ok 不是字面量：任一标的失败即 false
-        "ok": bool(out) and all(v["points"] for v in out.values()),
+        # ok 不是字面量。但**主动拒绝不算失败**：DX-Y.NYB / GC=F / ^VIX 是按规则
+        # 明确不取，与「试了但取不到」是两回事，混在一个 false 里会让调用方以为源坏了。
+        "ok": bool(out) and all(
+            v["points"] or v.get("refused") for v in out.values()),
+        "refused": sorted(t for t, v in out.items() if v.get("refused")),
+        "failed": sorted(t for t, v in out.items()
+                         if not v["points"] and not v.get("refused")),
         "requested": len(tickers),
         "fetched": sum(1 for v in out.values() if v["points"]),
         "fallback_order": {
@@ -321,7 +332,7 @@ def main() -> int:
         else:
             with open(args.json, "w", encoding="utf-8") as fh:
                 fh.write(text + "\n")
-            err(f"[{SCRIPT_NAME}] JSON 已写入 {args.json}")
+            err(f"[{SCRIPT_NAME}] JSON 已写入 {scrub(args.json)}")
     return 0
 
 

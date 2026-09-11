@@ -263,7 +263,7 @@ to the rest of the script directory.
 ## Fallback chains — the rule
 
 Several data points in this repo have no single reliable source, so they are
-fetched through an ordered chain. Six exist today: HK prices (`hk_quote.py` →
+fetched through an ordered chain. Seven exist today: HK prices (`hk_quote.py` →
 yfinance, derived indicators only, never the price), VIX (FRED `VIXCLS` →
 yfinance `^VIX`), funding rates (Binance → Hyperliquid → coinglass search), BTC
 dominance (CoinGecko → CoinPaprika), ETF holdings (Alpha Vantage → yfinance
