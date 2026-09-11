@@ -263,7 +263,7 @@ to the rest of the script directory.
 ## Fallback chains — the rule
 
 Several data points in this repo have no single reliable source, so they are
-fetched through an ordered chain. Six exist today: HK prices (`hk_quote.py` →
+fetched through an ordered chain. Seven exist today: HK prices (`hk_quote.py` →
 yfinance, derived indicators only, never the price), VIX (FRED `VIXCLS` →
 yfinance `^VIX`), funding rates (Binance → Hyperliquid → coinglass search), BTC
 dominance (CoinGecko → CoinPaprika), ETF holdings (Alpha Vantage → yfinance
@@ -284,8 +284,29 @@ across all 46 tickers **0 differing T1/T2/T3 verdicts**) but **not** a volume
 caliber, so fallback rows carry `vol_ratio_comparable: false` and the
 「放量 ≥1.5x」 label is suppressed on them — rule 4 in action.
 
+A **seventh** chain, added the same day, is `daily-risk-monitor`'s
+`market.py` → `market_fallback.py` (SPY/RSP/TLT/GLD/UUP → stockanalysis;
+`^GSPC` → Tencent `us.INX`; `BTC-USD` → Binance `BTCUSDT`). It is a **separate
+implementation from `bars_fallback.py` on purpose** — `daily-risk-monitor` is
+standalone by design and must not import from `ai-pullback-daily`, so this is a
+two-place edit in the same sense as the two `TH` dicts. Two things about it are
+load-bearing:
+
+- **It refuses two tickers rather than failing on them.** `DX-Y.NYB` has no
+  same-magnitude substitute (`market.py`'s own docstring already forbids
+  `DTWEXBGS`), and Tencent's `usDX` is a **name-collision trap** — it returns
+  「德尼克斯投资」(DX.N), a company, not the dollar index. `GC=F` has none either
+  (GLD is an ETF with fees and premium/discount, PAXG is tokenized gold; swapping
+  the numerator redefines the Gold/SPX ratio). Both are refused *with the reason
+  written into the module*, so nobody later wires up a wrong-magnitude source.
+- **Its tiers have different as-of dates.** Measured: stockanalysis's ETFs lag
+  Tencent/Binance by one trading day, so signals 21/22 land on D-1 while 19/26
+  land on D. Each signal is internally date-aligned (`anchor` + `pct_change_on`),
+  but cross-signal comparison is not, so the fallback emits an explicit
+  date-skew warning into `degraded_reasons`. This is rule 3 in its sharpest form.
+
 They were each written separately; these constraints are common
-to all of them, and a seventh chain should follow them rather than reinvent one.
+to all of them, and an eighth chain should follow them rather than reinvent one.
 
 1. **The order is fixed and written down.** Not chosen at call time, not
    "whichever answers first".
