@@ -91,9 +91,11 @@ HEADERS_BROWSER = {"User-Agent": BROWSER_UA}
 HEADERS_NONE: dict = {}
 HEADERS_EMPTY_UA = {"User-Agent": ""}
 
-# HTTP 200 + 机器人拦截页的特征串。Cloudflare 挡的就是「机房 IP」这一类流量，
-# 而 Routines 盒子被 Yahoo 全面 429 本身就说明它的出口 IP 属于这一类，
-# 所以这一段是本脚本最该命中的分支，不是理论情况。
+# HTTP 200 + 机器人拦截页的特征串。Cloudflare 挡的就是「机房 IP」这一类流量。
+# ⚠ 2026-09-11 更正：本注释原先写「Routines 盒子被 Yahoo 全面 429 说明其出口 IP 属于这一类」
+# ——该前提已被实测推翻：那台机器带浏览器 UA 请求 Yahoo 是 HTTP 200/461ms，429 只对裸 UA 发生，
+# 不是 IP 级封禁。所以不能据此推断出口 IP 被归类成机房流量。这一分支仍必须保留并优先判定
+# （HTTP 200 的拦截页是所有候选源共有的失败形态），但它是**待验假设，不是已知事实**。
 _CHALLENGE_MARKERS = (
     "just a moment",
     "enable javascript",

@@ -156,6 +156,7 @@ RATE_UP_1D_BP, RATE_UP_5D_BP = 10.0, 25.0
 RATE_DN_1D_BP, RATE_DN_5D_BP = -10.0, -25.0
 
 pd = None  # 延迟导入，见 load_deps()
+requests = None  # 延迟导入，见 load_deps()；make_session() 用它建 Yahoo 会话
 
 
 # ---------------------------------------------------------------- 基础工具
@@ -218,17 +219,25 @@ def rnd(v, d=4):
 
 def load_deps():
     """延迟导入重依赖，让 --help 在没装 yfinance 的环境下也能跑。"""
-    global pd
+    global pd, requests
     try:
         import numpy  # noqa: F401  # 只做依赖存在性检查（pandas 计算依赖它）
         import pandas as _pd
+        import requests as _requests
         import yfinance as _yf
     except ImportError as exc:  # pragma: no cover
         # exc.name 在「库自身的传递依赖缺失」等情况下会是 None，
         # 早先直接内插会打出「缺少依赖 None」——等于什么都没说。
-        missing = getattr(exc, "name", None) or "yfinance / pandas / numpy 之一"
-        err(f"错误：缺少依赖 {missing}（{scrub(exc)}）。请先 `pip install yfinance pandas numpy`。")
-        sys.exit(1)
+        missing = getattr(exc, "name", None) or "yfinance / pandas / numpy / requests 之一"
+        err(f"错误：缺少依赖 {missing}（{scrub(exc)}）。"
+            f"请先 `pip install yfinance pandas numpy requests`。")
+        # 依赖缺失 = 退出码 2（本仓库保留：1 参数错误｜2 依赖缺失｜3 取数失败｜4 量级自检未通过）。
+        # 2026-09-11 前这里回 1，与顶层「未预期异常」同码，调度层分不清「库没装」和「代码炸了」。
+        # 而 2026-09-07 之前**取数失败也回 1**——三件不同的事挤在一个退出码里，
+        # 结果是历史上被归因成「Yahoo 限流」的失败中，有多少其实是容器里缺依赖，已经查不回来了。
+        # 2026-09-11 实测：同一个 Routines 容器三次运行分别缺 numpy、缺 yfinance、依赖齐全，
+        # 依赖状态本身就是不稳定变量，所以这个码必须能单独识别。
+        sys.exit(2)
     # yfinance 取不到某个代码时会往 stderr 吐几行英文（"1 Failed download: ... possibly
     # delisted"、"HTTP Error 404: {...}"），这些噪声会混进日报正文。同一件事本脚本已经用
     # 中文说了一遍——「yfinance 未返回数据的标的（记 N/A，不估算）：...」，所以这里把
@@ -240,7 +249,80 @@ def load_deps():
     except Exception:  # noqa: BLE001 - 抑噪失败无关紧要，绝不能因此挡住取数
         pass
     pd = _pd
+    requests = _requests
     return _yf
+
+
+# ---------------------------------------------------------------- Yahoo 传输层
+#
+# 为什么必须显式给 yfinance 一个 requests.Session（2026-09-11 在 Routines 容器实测定案）：
+#
+#   引擎            UA              代理隧道        Yahoo 服务端     结果
+#   curl_cffi      Chrome(冒充)     ❌ 握手断       （到不了）       yfinance 默认 -> 全灭
+#   requests       python-requests/* ✅ 通          ❌ 429           裸 Session -> 限流
+#   requests       浏览器 UA         ✅ 通          ✅ 200           ← 只有这一种可用
+#
+# ① 代理层：本执行环境出站 HTTPS 走本地代理，curl_cffi 冒充 Chrome 的 TLS 指纹
+#    （ClientHello 约 1.7~1.8KB）在该代理上无法完成到 guce.yahoo.com / query2 的隧道，
+#    ~6 秒后 code 1006 断开、只收到 39 字节，**根本走不到能返回 HTTP 状态码的那一层**。
+#    这正是姊妹脚本 ai-industry-weekly/scripts/fetch_fundamentals.py 开头第 1 条
+#    「必须用 requests.Session 而不是 curl_cffi，本执行环境出站走代理」记录的同一个故障，
+#    那边早就修了，本脚本此前一直没应用同一修法。
+# ② 服务端层：Yahoo 另外按 UA 分层限流，裸 requests 默认 UA 稳定回 429
+#    （body 为 "Edge: Too Many Requests"）。所以只换引擎不换 UA 仍然失败。
+#
+# 两层独立叠加，requests.Session + 浏览器 UA 一次同时绕开。症状是 EXIT=3 且与批量大小无关
+# （2026-09-11 实测：2 只与 46 只同样 exit 3，全量批次耗时 11 分钟；修复后本机实测 46 只 13 秒）。
+
+# 逐字沿用 fetch_fundamentals.py 的那串 Chrome UA——那边记着「换 UA 曾导致 Yahoo
+# 限流返回空 info」。两处必须一致，改一处就要改另一处。
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
+
+# yfinance 版本间 session= 的支持情况不一（Routines 实测 1.7.0，本地 1.4.1 两者都收）。
+# 一旦某个版本不收，退回默认引擎并**显式降级**——绝不静默，否则代理环境下会变成全灭。
+_SESSION_OK = True
+# make_session / 调用点产生的传输层告警，由 main() 汇进 asof_notes。
+# 必须以 ⚠ 开头：apply_degraded() 靠这个前缀把它转成 degraded_reasons 字段。
+_ENGINE_NOTES: list = []
+
+
+def make_session():
+    """建 Yahoo 用的 requests.Session（浏览器 UA）。见上方矩阵，不要改回默认引擎。"""
+    s = requests.Session()
+    s.headers["User-Agent"] = USER_AGENT
+    return s
+
+
+def _engine_fallback(why: str) -> None:
+    """第1档（requests.Session）失败、退到第2档（默认 curl_cffi）时的降级记录。
+
+    与 _session_unsupported 的区别：那个是「版本不支持 session=」，这个是「支持但这一轮
+    没取到」。两者都必须进 degraded_reasons——回退必须响（CLAUDE.md 回退链规则第 6 条），
+    静默降级等于把「不知道」记成「查过了，没事」。
+    """
+    global _SESSION_OK
+    _SESSION_OK = False
+    note = f"⚠ yfinance 引擎回退至第2档(默认 curl_cffi)：{why}"
+    if note not in _ENGINE_NOTES:
+        _ENGINE_NOTES.append(note)
+    err(note)
+
+
+def _session_unsupported(where: str) -> None:
+    """某个 yfinance 版本不收 session= 时的统一降级记录（只记一次）。"""
+    global _SESSION_OK
+    if _SESSION_OK:
+        _SESSION_OK = False
+        # 措辞不写死「已退回 curl_cffi」：YfData 是进程级单例，若 download 已成功装上
+        # requests session，Ticker 这条路径退回后实际仍用着它——那句话在该路径上是假的。
+        note = (f"⚠ 当前 yfinance 不支持 {where}(session=...)，该调用已退回 yfinance 自管引擎；"
+                "若本环境出站走代理且实际用的是 curl_cffi，Yahoo 可能整片取不到数"
+                "（见脚本内传输层矩阵）")
+        _ENGINE_NOTES.append(note)
+        err(note)
 
 
 # ---------------------------------------------------------------- 姊妹技能定位
@@ -465,13 +547,21 @@ def pick_next_earnings(ed, asof_date):
     return future[0].isoformat() if future else None
 
 
-def prefetch_earnings(yf, tickers):
+def prefetch_earnings(yf, tickers, sess=None):
     """并发预取各标的的财报日历，返回 ({ticker: 日历或 None}, 统计 dict)。
 
     为什么可以并发：yfinance 的 YfData 是**进程级单例**（metaclass 上带 threading.Lock，
     crumb/cookie 由 _cookie_lock 守着，一个 session 一份 cookie 由所有线程共用），
-    `_set_session(None)` 是显式 no-op，所以这里不存在 crumb 竞态；而且这条调用**不传
-    session**，走 curl_cffi 的浏览器指纹 TLS，不是被 Yahoo 掐得最狠的裸 requests.Session。
+    `_set_session(None)` 是显式 no-op，所以这里不存在 crumb 竞态。
+
+    ⚠ 2026-09-11 修正：这条调用**原本刻意不传 session**，理由写的是「走 curl_cffi 的
+    浏览器指纹 TLS，不是被 Yahoo 掐得最狠的裸 requests.Session」。该理由**已被实测推翻**
+    ——它只说对了一半：裸 requests.Session 确实会被 Yahoo 按 UA 限流（429），但 curl_cffi
+    在本执行环境的出站代理上**连 TLS 隧道都握不完**，比被限流更早死。正确解是
+    requests.Session **加浏览器 UA**，两层一起绕开。矩阵见 make_session() 上方。
+    共用一个 Session 是有意的：cookie/crumb 的写入由 yfinance 自己的 _cookie_lock 守，
+    连接池由 urllib3 管，6 个线程共用一份 cookie 正是上面那段单例语义要的效果。
+
     并发只做财报日这一件事：港股 hk_quote.py 的 subprocess 路由绝不并发。
 
     单只失败只把这一只降级成 N/A（不估算），绝不掀掉整轮、也绝不把异常漏到顶层；
@@ -486,7 +576,17 @@ def prefetch_earnings(yf, tickers):
 
     def one(t):
         try:
-            return t, yf.Ticker(t).get_earnings_dates(), None
+            if sess is not None and _SESSION_OK:
+                try:
+                    tk = yf.Ticker(t, session=sess)
+                except TypeError as exc:
+                    if "session" not in str(exc):
+                        raise          # 无关的 TypeError 交给外层按单只失败计数
+                    _session_unsupported("Ticker")
+                    tk = yf.Ticker(t)
+            else:
+                tk = yf.Ticker(t)
+            return t, tk.get_earnings_dates(), None
         except Exception as exc:  # noqa: BLE001 - 单只失败只降级这一只，异常绝不外泄
             return t, None, f"{type(exc).__name__}: {scrub(exc)}"
 
@@ -1093,14 +1193,58 @@ def run(args):
     # 指数类必下（宏观/大盘背景 + 美股完整交易日基准 SMH）；与选中标的去重
     dl = list(dict.fromkeys(sel_tickers + INDEX_TICKERS))
 
-    raw = yf.download(dl, period="2y", interval="1d", progress=False,
-                      auto_adjust=False, group_by="ticker", threads=True)
+    # 引擎回退链（顺序写死，见 CLAUDE.md「Fallback chains — the rule」）：
+    #   第1档 requests.Session + 浏览器 UA   第2档 yfinance 默认 curl_cffi 引擎
+    # 两档都必须保留，因为两种故障方向相反、互为对方的解药（实测见 make_session() 上方）：
+    #   代理环境   curl_cffi 握不完 TLS 隧道  -> 只有第1档能过
+    #   IP 被限流  requests.Session 吃 429    -> 只有第2档能过（它复用缓存 cookie、
+    #              TLS 指纹不同，限流窗口内仍取得到数）
+    # ⚠ 绝不要把这里简化成「只用第1档」：2026-09-11 本脚本一度被改成硬切第1档，那在代理
+    # 环境下是对的，但在限流环境下比改之前更差——原本 curl_cffi 能扛的那一轮会变成整片空。
+    sess = make_session()
+
+    def _dl(use_session):
+        kw = dict(tickers=dl, period="2y", interval="1d", progress=False,
+                  auto_adjust=False, group_by="ticker", threads=True)
+        if use_session:
+            kw["session"] = sess
+        return yf.download(**kw)
+
+    raw = None
+    try:
+        raw = _dl(True)
+    except TypeError as exc:           # 可能是「该版本不收 session=」，也可能无关
+        if "session" not in str(exc):
+            # 与 session= 无关的 TypeError：不得吞掉、更不得重跑整轮下载，
+            # 否则真正的 bug 会被记成一次「版本不兼容」降级。
+            raise
+        _session_unsupported("download")
+    except Exception as exc:  # noqa: BLE001 - 第1档任何失败都只降级到第2档，不掀掉整轮
+        _engine_fallback(f"第1档 requests.Session 取数抛错（{type(exc).__name__}）")
+
+    # 空表不等于「没有数据」：限流时第1档回空而第2档仍有数，直接当取数失败会误报。
+    if raw is None or len(raw) == 0:
+        try:
+            raw2 = _dl(False)
+        except Exception as exc:  # noqa: BLE001
+            err(f"✗ 两档引擎均取数失败：{type(exc).__name__}: {scrub(exc)}")
+            raw2 = None
+        if raw2 is not None and len(raw2) > 0:
+            _engine_fallback("第1档 requests.Session 回空表、第2档默认引擎取到数据"
+                             "（多半是本机 IP 被 Yahoo 限流，429 只挡得住第1档）")
+            raw = raw2
     if raw is None or len(raw) == 0:
         # 取数失败 = 退出码 3（本仓库保留：1 参数错误｜2 依赖缺失｜3 取数失败｜4 量级自检未通过）。
-        # 这一支最常见的成因是 Yahoo 对本环境全面 429 限流——那是取数失败，不是参数错误。
+        # 这一支的成因按实测可能性排序：① 出站代理无法完成到 Yahoo 的 TLS 隧道，
+        # ② Yahoo 按 UA 限流 429，③ 断网。（2026-09-11 更正：原注释只写 ②，已被实测推翻，
+        # 详见 make_session() 上方的传输层矩阵。）三者都是取数失败，不是参数错误。
         # 回 1 会让调度层（SKILL.md 第二步逐单元收 .rc）把一次限流读成「命令写错了」。
-        err("错误：yfinance 未返回任何日线数据（全部标的皆空）。"
-            "最常见成因是 Yahoo 对本环境限流（429）；也可能是断网或代码全错。")
+        err("错误：yfinance 未返回任何日线数据（全部标的皆空）。常见成因按可能性排序："
+            "① 出站代理无法完成到 Yahoo 的 TLS 隧道（本脚本已改用 requests.Session+浏览器UA "
+            "绕开 curl_cffi 指纹；若仍失败，代理可能连 requests 也拦）；"
+            "② Yahoo 按 UA 限流 429；③ 断网或代码全错。"
+            "区分方法：带浏览器 UA 直连 query1.finance.yahoo.com/v8/finance/chart/NVDA，"
+            "拿到 200 说明 ①②皆不成立，问题在本脚本；连不上则看是握手断还是 429。")
         err("     本次不写 tech.json——下游 perp_quotes.py 的 --spot 因此拿不到现货基准，"
             "🌙 盘后隐含只能标 ⚪️，**不得拿别处价格凑数**。")
         sys.exit(3)
@@ -1109,7 +1253,9 @@ def run(args):
     missing = [t for t, f in frames.items() if f is None]
 
     # ---- 各市场的完整交易日（美股用 SMH 基准；港股/韩股按自己市场单独判定）
-    asof, asof_notes = {}, []
+    # 传输层降级（yfinance 不收 session= -> 退回 curl_cffi）必须进 asof_notes：
+    # ⚠ 前缀让 apply_degraded() 把它转成 degraded_reasons 字段，--json 才不会少于正文。
+    asof, asof_notes = {}, list(_ENGINE_NOTES)
     markets_needed = {market_of(t) for t in sel_tickers} | {"US"}
     for mkt in markets_needed:
         mk_frames = [frames[t] for t in dl if frames[t] is not None and market_of(t) == mkt]
@@ -1127,7 +1273,8 @@ def run(args):
     if asof.get("US") is None:
         # 同上：基准标的取不到日线是**取数失败**，不是参数错误 → 3。
         err(f"错误：无法确定美股完整交易日（基准 {US_REF_TICKER} 无数据）——"
-            f"取数失败，常见于 Yahoo 限流。")
+            f"取数失败。成因排序同上：代理 TLS 隧道 > UA 限流 429 > 断网，"
+            f"详见 make_session() 上方的传输层矩阵。")
         sys.exit(3)
     if missing:
         asof_notes.append("yfinance 未返回数据的标的（记 N/A，不估算）：" + ", ".join(missing))
@@ -1142,7 +1289,11 @@ def run(args):
             "macro": macro,
             # 顶层 indices：perp_quotes.py --spot 只展开顶层容器键，^GSPC/^NDX 必须放这一层
             "indices": macro.get("indices", {}),
-            "sources": {"prices": "yfinance 本地计算（auto_adjust=False）"},
+            "sources": {
+                "prices": "yfinance 本地计算（auto_adjust=False）",
+                "transport": ("yfinance + requests.Session(浏览器UA)" if _SESSION_OK
+                              else "yfinance：部分或全部调用未能使用 requests.Session(浏览器UA)，已退回自管引擎（哪一处见 degraded_reasons）"),
+            },
         }
         return apply_degraded(result), True
 
@@ -1159,7 +1310,11 @@ def run(args):
             if not m.get("etf") and not m["ticker"].startswith("^")
             and frames.get(m["ticker"]) is not None
         ))
-    earnings_cals, earn_stats = prefetch_earnings(yf, earn_targets)
+    earnings_cals, earn_stats = prefetch_earnings(yf, earn_targets, sess)
+    # asof_notes 在 prefetch_earnings **之前**就已快照 _ENGINE_NOTES；财报那条路径若在此处
+    # 才触发 session= 降级，note 会晚于快照产生 -> degraded 报 false 而 sources.transport
+    # 报「已降级」，两个字段自相矛盾，等于把「不知道」记成「查过了，没事」。补一次合并。
+    asof_notes.extend(n for n in _ENGINE_NOTES if n not in asof_notes)
     earnings, earn_warnings = earnings_block(earn_stats, want_earn)
     asof_notes.extend(earn_warnings)
 
@@ -1227,6 +1382,8 @@ def run(args):
             "industry_table": rel_path(weekly / "assets" / "baseline.md"),
             "hk_quote": rel_path(weekly / "scripts" / "hk_quote.py"),
             "prices": "yfinance 本地计算（auto_adjust=False，原始未复权）",
+            "transport": ("yfinance + requests.Session(浏览器UA)" if _SESSION_OK
+                          else "yfinance：部分或全部调用未能使用 requests.Session(浏览器UA)，已退回自管引擎（哪一处见 degraded_reasons）"),
         },
         # 人读分支打出来的每一条口径/禁令都必须同时是字段（--json 不得少于正文）
         "disclaimers": [
@@ -1240,8 +1397,24 @@ def run(args):
     return apply_degraded(result), False
 
 
+class _ArgParser(argparse.ArgumentParser):
+    """argparse 默认把**用法错误**回 2，而本仓库 2 保留给「依赖缺失」。
+
+    不覆写就会撞码：2026-09-11 起 load_deps() 缺依赖回 2，于是「旗标拼错」和
+    「yfinance 没装」在调度层（SKILL.md 第二步逐单元收 .rc）读起来一模一样，
+    而两者的处置完全不同——一个是改命令，一个是补装依赖。
+    姊妹技能 daily-risk-monitor/scripts/market.py 有同一处未修的撞码（它只改了
+    语义校验那几支的 sys.exit(1)，没覆写 argparse 自身的 error 路径）。
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        err(f"错误：参数错误——{message}")
+        sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
+
+
 def main():
-    ap = argparse.ArgumentParser(
+    ap = _ArgParser(
         description="个股技术面 + 宏观利率取数（T1/T2/T3 触发判定 · yfinance 本地计算）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="标的清单读自姊妹技能 ai-industry-weekly 的 assets/universe.json；"
