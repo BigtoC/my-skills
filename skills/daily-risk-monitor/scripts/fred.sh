@@ -23,6 +23,14 @@
 # │    百万。今天唯一挡着的是 14 行之前那个 `[ -s ]` 守卫；守卫一松，挪位后  │
 # │    仍有料的组合算出来的数字会长得完全正常。一律用 FILENAME 对号入座，    │
 # │    并在 END 做元数自检（桶对不上就退 3，不给「先算出来再说」留活路）。   │
+# │ 8. **ICE BofA 利差家族（BAML*）在本端点只回滚动 3 年，且会静默钳住      │
+# │    `cosd`**（2026-09-14 实测：`cosd=2015-01-01` / `2020-01-01` /        │
+# │    `2023-01-01` 三者回的都是同一份 795 笔、起点 2023-09-12；对照         │
+# │    `DGS10` 同样的 cosd 老实回 3050 / 1746 笔）。没有报错、没有警告，     │
+# │    只是序列变短——**而短序列长得完全正常**。后果是硬阈值第 3 项          │
+# │    （HY >4.5%）所依据的历史，用这个端点**根本取不回来**：近 3 年 HY      │
+# │    最高只到 4.61%。要重新校准这条线必须换 ALFRED/官方档，不能拿这里的    │
+# │    3 年窗口当「历史」。`--credit` 因此把窗口口径写成字段，不留给人记。   │
 # └──────────────────────────────────────────────────────────────────────────┘
 #
 # 依赖：bash（3.2 即可）、curl、awk、sed、date。**不需要 jq**（FRED 回 CSV）。
@@ -43,6 +51,39 @@ BI_MIN_PCT=50
 BI_MAX_PCT=250
 BI_TRIGGER_PCT=200
 
+# ── 信号 1 三条腿（--credit）──
+# HY 的两条线是原文口径，**不动**。IG / BBB 另有自己的尺度，理由见下。
+#
+# ⚠️ **HY 的 50bp 与 4.5% 绝不可以套到 IG / BBB 上**（CLAUDE.md 回退链规则 4
+#    「阈值不随源转移」）。这不是原则问题，是实测问题：3 年窗口内 IG 的 4 周
+#    变动最大只到 +29bp、BBB 最大 +35bp，**两者从来没有、也几乎不可能走出
+#    +50bp**。把 HY 的线套过去，得到的是一个永远回 ❌ 的信号——而「永远不触发」
+#    与「查过了没事」在报告里长得一模一样。所以 IG/BBB 用各自的 p95 当观察线。
+CREDIT_WINDOW=20        # 4 周 ≈ 20 个交易日
+HY_WIDEN_BP=50          # 信号 1 原文触发的利差腿：近 4 周走阔 ≥50bp（另需 SPX 创新高，本脚本不判）
+HY_HARD_PCT=4.5         # 7 项硬阈值第 3 项：HY OAS >4.5%
+HY_P95_BP=46            # HY 自己的 4 周走阔 p95（3 年窗口实测）——只用于分化判定的参照
+IG_WATCH_BP=12          # IG  自己的 4 周走阔 p95（3 年窗口实测，n=766）
+BBB_WATCH_BP=14         # BBB 自己的 4 周走阔 p95（3 年窗口实测，n=767）
+# 分化判定的**身位差**：投资级侧归一化后要比 HY 高出这么多，才算个体压力。
+# 3 年回测：margin 0.3 → 13 天判为个体、其中 11 天是误判（HY 也在走阔）；
+#           margin 0.5 → 2 天；margin ≥0.75 → **0 天**。
+# 取 0.5 是刻意的折中：再严就变成一条 3 年里从没亮过的灯，而「从不触发」与
+# 「查过了没事」在报告里长得一模一样——那正是 IG/BBB 不套用 HY 阈值的同一个理由。
+# ⚠️ 0.5 之下那 2 天（2025-05-01 / 2026-03-12）**并未被确认为真正的投资级个体
+#    事件**，只是没被证伪。这条判定是观察用的，不参与任何计数。
+DIV_MARGIN=0.5
+DIV_INSAMPLE="3 年窗口（n=767）内本判定只成立过 2 天（2025-05-01 / 2026-03-12），且两次都未经确认为真正的投资级个体事件。它天然罕见——读到 none 时不要理解为「查过了、很安全」，要理解为「本月没有出现这种形态」。"
+
+# ── 信号 32 三条腿（--rates）──
+# 恒等式：T10YIE ≡ DGS10 − DFII10（盈亏平衡通膨就是这么定义的）。
+# 2026-09-14 实测 2003-01-02 起 5,927 个同日样本，|残差| 最大 0.000 个百分点，
+# 一天都没超过 0.02 —— 所以残差只要不是 0，就代表**三条腿不同日**（今天
+# T10YIE 就比另外两条多一天）或 FRED 改了定义，两种都不该直接引用。
+RATES_WINDOW=20         # 20 个交易日 ≈ 4 周，用于拆解变动
+DFII10_HIGH_PCT=2.40    # 实质殖利率「历史偏高」线：>2.40% 者 2003 起占 4.4%、2010 起占 0.9%
+RATES_IDENTITY_TOL=0.02 # 恒等式残差容差（百分点）
+
 usage() {
   cat <<EOF
 ${PROG} —— FRED 序列取数（免 API key）
@@ -51,6 +92,8 @@ ${PROG} —— FRED 序列取数（免 API key）
   ${PROG} <SERIES_ID> [SERIES_ID ...] [选项]
   ${PROG} --net-liquidity [选项]
   ${PROG} --buffett [选项]
+  ${PROG} --credit [选项]
+  ${PROG} --rates [选项]
 
 选项:
   --days N          输出最近 N 笔**有值**观测（默认 1）
@@ -67,6 +110,15 @@ ${PROG} —— FRED 序列取数（免 API key）
                     **两序列先按 date 内连接做同季对齐再相除**——各取各的末行会
                     混用不同季度（known-traps 明列的陷阱，见档头第 6 条）。
                     并做 ${BI_MIN_PCT}–${BI_MAX_PCT}% 量级自检与 >${BI_TRIGGER_PCT}% 触发判定。
+  --credit          信号 1 三条腿：HY / IG / BBB OAS，**同日对齐**后并排给出。
+                    HY 保留原口径（4 周走阔 ≥${HY_WIDEN_BP}bp 的利差腿、硬阈值第 3 项 >${HY_HARD_PCT}%）；
+                    IG / BBB 用**各自的 4 周 p95**（+${IG_WATCH_BP}bp / +${BBB_WATCH_BP}bp）当观察线，
+                    **不计入任何触发计数**，也**不得**套用 HY 的两条线（见档头说明）。
+                    另给分化判定（投资级个体压力 vs 全市场风险偏好）。
+  --rates           信号 32 三条腿：DGS10 名目 / DFII10 实质 / T10YIE 盈亏平衡，
+                    **同日对齐**后做 T10YIE ≡ DGS10 − DFII10 恒等式自检（容差 ±${RATES_IDENTITY_TOL}），
+                    并把 4 周变动拆成实质利率驱动 vs 通膨预期驱动。
+                    >${DFII10_HIGH_PCT}% 是历史分位线，**不计入 30 项、不参与触发计数**。
   -h, --help        显示本说明
 
 例子:
@@ -79,12 +131,19 @@ ${PROG} —— FRED 序列取数（免 API key）
   ${PROG} WALCL WTREGEN RRPONTSYD --json   # 净流动性三个原始序列（未做单位对齐）
   ${PROG} --buffett                    # 信号 27：Buffett Indicator（同季对齐后的最新季）
   ${PROG} --buffett --days 8 --json    # 最近 8 个同季对齐季度的序列
+  ${PROG} --credit --json              # 信号 1：HY / IG / BBB 三条腿 + 分化判定
+  ${PROG} --rates --json               # 信号 32：名目 / 实质 / 盈亏平衡 + 恒等式自检
 
 常用序列:
   BAMLH0A0HYM2 HY OAS（百分点）    VIXCLS VIX         VXVCLS VIX3M
+  BAMLC0A0CM IG OAS（百分点）      BAMLC0A4CBBB BBB OAS —— 三条腿请走 --credit（同日对齐）
   WALCL Fed 总资产（百万）          WTREGEN TGA（百万） RRPONTSYD RRP（十亿）
-  T10Y2Y / T10Y3M 收益率曲线        SAHMREALTIME Sahm  DFII10 10Y TIPS 实质殖利率
+  T10Y2Y / T10Y3M 收益率曲线        SAHMREALTIME Sahm
+  DGS10 10Y 名目  DFII10 10Y 实质  T10YIE 盈亏平衡 —— 三条腿请走 --rates（有恒等式自检）
   NCBEILQ027S 股权市值代理（百万）  GDP（十亿）        —— 信号 27 需两者 merge 同季对齐
+
+⚠️ BAML* 家族在本端点只回**滚动 3 年**且静默钳住 --start（实测）；DGS10/DFII10/
+   T10YIE 不受此限。拿 BAML 的 3 年窗口当「历史」去重新校准阈值会得到错的答案。
 EOF
 }
 
@@ -251,12 +310,70 @@ fetch_ok() {  # $1=SERIES_ID
 # 抽出有值观测（跳过 FRED 的 `.` 缺值），输出 `YYYY-MM-DD,值` 每行一笔
 valid_rows() { awk -F, 'NR>1 { sub(/\r$/,""); if ($2 != "" && $2 != ".") print $1 "," $2 }' "$1"; }
 
+# ── 三序列**精确同日**内连接（--credit 与 --rates 共用）──
+# 和 --buffett 的两序列内连接是同一个理由：各取各的末行 = 混用不同日期。
+# 这不是假想——2026-09-14 实测 T10YIE 已有 2026-09-11、DGS10/DFII10 只到
+# 2026-09-10，**三条腿的末行今天就不齐**。跨日期做减法（拆解、分化、恒等式）
+# 得到的数字一样会印得整整齐齐，只是错的。
+# 桶位一律用 FILENAME 对号入座、END 做元数自检（档头踩坑记录第 7 条）。
+join3_exact() {  # $1 $2 $3 = 三个 .rows 档 → stdout `date|v1|v2|v3`，日期升序
+  awk -F, -v f1="$1" -v f2="$2" -v f3="$3" '
+    FILENAME == f1 { v1[$1]=$2+0; ord[++n]=$1; fseen[f1]=1; next }
+    FILENAME == f2 { v2[$1]=$2+0; s2[$1]=1;    fseen[f2]=1; next }
+    FILENAME == f3 { v3[$1]=$2+0; s3[$1]=1;    fseen[f3]=1; next }
+    { printf "错误：合并时收到预期外的档案。\n" > "/dev/stderr"; bad=1; exit 3 }
+    END {
+      if (bad) exit 3
+      k = 0; for (x in fseen) k++
+      if (k != 3 || n == 0) {
+        printf "错误：三序列元数自检未通过 —— 主序列 %d 笔，实际读到 %d 个有内容的档案（传进来 3 个）。\n", n, k > "/dev/stderr"
+        exit 3
+      }
+      for (i = 1; i <= n; i++) {
+        d = ord[i]
+        if (s2[d] && s3[d]) printf "%s|%.4f|%.4f|%.4f\n", d, v1[d], v2[d], v3[d]
+      }
+    }
+  ' "$1" "$2" "$3"
+}
+
+# 取三序列、逐条检查、同日对齐；成功则 $WORK/aligned.txt 就位。失败直接 die。
+# $1=模式中文名  $2=起始日期  $3 $4 $5=SERIES_ID（顺序即输出栏位顺序）
+fetch_join3() {
+  local label="$1" start="$2" a="$3" b="$4" c="$5" id failed="" rc=0
+  fetch_all "$start" "$a" "$b" "$c"
+  for id in "$a" "$b" "$c"; do
+    if fetch_ok "$id"; then
+      valid_rows "$WORK/$id.csv" > "$WORK/$id.rows"
+      [ -s "$WORK/$id.rows" ] || failed="${failed}${failed:+, }${id}(无有值观测)"
+    else
+      failed="${failed}${failed:+, }${id}"
+    fi
+  done
+  if [ -n "$failed" ]; then
+    warn "⚪️ ${label}数据暂缺 —— 已尝试来源：FRED fredgraph.csv（${a} / ${b} / ${c}）"
+    die "以下序列取数失败：${failed}。不得以记忆或推断填补（行为准则第 1 条）。" 3
+  fi
+  join3_exact "$WORK/$a.rows" "$WORK/$b.rows" "$WORK/$c.rows" > "$WORK/aligned.txt" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    warn "⚪️ ${label}数据暂缺 —— 三序列合并元数自检未通过（原因见上一行）"
+    die "桶位对不上就不算：挂错桶的内连接会空手而归，看起来只像「今天还没对齐」。" 3
+  fi
+  if [ ! -s "$WORK/aligned.txt" ]; then
+    warn "三条序列都取到了（末行：${a} $(tail -n 1 "$WORK/$a.rows" | cut -d, -f1)｜${b} $(tail -n 1 "$WORK/$b.rows" | cut -d, -f1)｜${c} $(tail -n 1 "$WORK/$c.rows" | cut -d, -f1)），"
+    warn "但没有任何一天三者同时有观测 → 无法同日对齐。"
+    die "不得改用「各取各的末行」绕过——那正是本模式要挡掉的陷阱。请加大 --days 或用 --start 拉长回看。" 3
+  fi
+}
+
 # ── 参数解析 ──
 DAYS=1
 START=""
 JSON=0
 NETLIQ=0
 BUFFETT=0
+CREDIT=0
+RATES=0
 IDS=""
 
 while [ $# -gt 0 ]; do
@@ -265,6 +382,8 @@ while [ $# -gt 0 ]; do
     --json) JSON=1; shift ;;
     --net-liquidity) NETLIQ=1; shift ;;
     --buffett) BUFFETT=1; shift ;;
+    --credit) CREDIT=1; shift ;;
+    --rates) RATES=1; shift ;;
     --days)
       [ $# -ge 2 ] || die "--days 需要一个数字。" 1
       case "$2" in ''|*[!0-9]*) die "--days 的值必须是正整数，收到「$2」。" 1 ;; esac
@@ -283,8 +402,9 @@ done
 
 # 注意：这里刻意写成 if 而不是 `[ ] && [ ] && die`——后者在条件不成立时
 # 整条 list 回非零，`set -e` 会直接把脚本结束掉。
-if [ "$NETLIQ" -eq 1 ] && [ "$BUFFETT" -eq 1 ]; then
-  die "--net-liquidity 与 --buffett 是两个不同的组合模式，一次只能给一个。" 1
+MODE_COUNT=$(( NETLIQ + BUFFETT + CREDIT + RATES ))
+if [ "$MODE_COUNT" -gt 1 ]; then
+  die "--net-liquidity / --buffett / --credit / --rates 是四个不同的组合模式，一次只能给一个。" 1
 fi
 
 # ── 降级台帐（三个模式共用）──
@@ -587,6 +707,464 @@ if [ "$BUFFETT" -eq 1 ]; then
     warn "   行为准则第 6 条：算出来量级不对，先怀疑单位，不要直接报出来。"
     warn "   最可能的原因：FRED 改了 NCBEILQ027S（百万）或 GDP（十亿）的单位。"
     warn "   请先人工核对再引用这个数字。"
+    exit 4
+  fi
+  exit 0
+fi
+
+# ═══════════════════ 信用利差三条腿模式（信号 1）═══════════════════
+# HY 一条腿看不见投资级发行人的融资压力——而 AI 资本开支的举债主体几乎全是
+# 投资级。所以这个模式把 HY / IG / BBB 三条腿**同日对齐后并排**给出，
+# 但**绝不合并成一个数**（CLAUDE.md 回退链规则 3：不同口径不入同一格）。
+if [ "$CREDIT" -eq 1 ]; then
+  [ -z "$IDS" ] || die "--credit 与序列 ID 不能同时给（组合的三个序列是固定的）。" 1
+
+  # 要算 4 周变动就得有 CREDIT_WINDOW 笔以上；再留一倍缓冲吸收假日。
+  # ⚠️ 拉长回看在这里**有上限**：BAML 家族只回滚动 3 年（档头第 8 条）。
+  if [ -n "$START" ]; then CR_START="$START"; else CR_START="$(days_ago $(( DAYS + CREDIT_WINDOW * 4 + 120 )))"; fi
+
+  # ── 腿的必要性是**分层的**，不能三条一起要 ──
+  # HY 是必需腿：它是 Tier 1 的那一条，也是硬阈值第 3 项的唯一来源。
+  # IG / BBB 是**可选观察腿**，不计入任何计数。
+  #
+  # ⚠️ 这里绝不可以用 fetch_join3（--rates 用的那个三缺一就 die 的版本）。
+  #    那会让**一条不计数的观察腿取不到，就把整个信号 1 打掉**——连 HY 的水平、
+  #    硬阈值第 3 项都一起没有了。改动前 HY 走 fred_series，单条失败只 ⚪️ 它自己；
+  #    若照搬 join3，本次改动会把「观察腿」升级成「单点故障」，等于用新增的
+  #    非关键资料去卡住关键资料。--rates 的三条腿是恒等式的三个项、缺一真的算不出，
+  #    两者不是同一回事。
+  fetch_all "$CR_START" BAMLH0A0HYM2 BAMLC0A0CM BAMLC0A4CBBB
+
+  # 必需腿：取不到就没有信号 1 可言，照旧 die 3。
+  if fetch_ok BAMLH0A0HYM2; then
+    valid_rows "$WORK/BAMLH0A0HYM2.csv" > "$WORK/BAMLH0A0HYM2.rows"
+  else
+    : > "$WORK/BAMLH0A0HYM2.rows"
+  fi
+  if [ ! -s "$WORK/BAMLH0A0HYM2.rows" ]; then
+    warn "⚪️ 信用利差数据暂缺 —— 必需腿 HY（BAMLH0A0HYM2）取不到，信号 1 无法判定"
+    die "HY 是信号 1 的 Tier 1 腿与硬阈值第 3 项的唯一来源，缺它就没有可判定的信号 1。不得以记忆或推断填补（行为准则第 1 条）。" 3
+  fi
+
+  # 可选腿：各自记 available + 原因，缺席不影响 HY。
+  IG_AVAIL=1; BBB_AVAIL=1; IG_REASON=""; BBB_REASON=""
+  for _leg in BAMLC0A0CM BAMLC0A4CBBB; do
+    _st="$(cat "$WORK/$_leg.state" 2>/dev/null || echo '未取数')"
+    if [ "$_st" = "ok" ]; then
+      valid_rows "$WORK/$_leg.csv" > "$WORK/$_leg.rows"
+      [ -s "$WORK/$_leg.rows" ] || _st="回看区间内全是 FRED 缺值符号「.」"
+    else
+      : > "$WORK/$_leg.rows"
+    fi
+    if [ "$_st" != "ok" ]; then
+      case "$_leg" in
+        BAMLC0A0CM)   IG_AVAIL=0;  IG_REASON="$_st" ;;
+        BAMLC0A4CBBB) BBB_AVAIL=0; BBB_REASON="$_st" ;;
+      esac
+      add_degraded "${_leg}：观察腿取数失败（${_st}）——HY 不受影响，本腿记 ⚪️，分化判定按可用腿重算"
+    fi
+  done
+
+  # 以 HY 为主轴，只要求**仍在场**的腿同日有观测。缺席的腿在对齐档里写 NA。
+  awk -F, -v fh="$WORK/BAMLH0A0HYM2.rows" -v fi="$WORK/BAMLC0A0CM.rows" \
+          -v fb="$WORK/BAMLC0A4CBBB.rows" -v hasi="$IG_AVAIL" -v hasb="$BBB_AVAIL" '
+    FILENAME == fh { hv[$1]=$2+0; ord[++n]=$1; next }
+    FILENAME == fi { iv[$1]=$2+0; si[$1]=1; next }
+    FILENAME == fb { bv[$1]=$2+0; sb[$1]=1; next }
+    END {
+      for (k = 1; k <= n; k++) {
+        d = ord[k]
+        if (hasi == 1 && !si[d]) continue
+        if (hasb == 1 && !sb[d]) continue
+        printf "%s|%.4f|%s|%s\n", d, hv[d],
+          (hasi == 1 ? sprintf("%.4f", iv[d]) : "NA"),
+          (hasb == 1 ? sprintf("%.4f", bv[d]) : "NA")
+      }
+    }
+  ' "$WORK/BAMLH0A0HYM2.rows" "$WORK/BAMLC0A0CM.rows" "$WORK/BAMLC0A4CBBB.rows" > "$WORK/aligned.txt"
+
+  [ -s "$WORK/aligned.txt" ] || die "HY 取到了，但没有任何一天与仍在场的观察腿同时有观测 → 无法同日对齐。请加大 --days 或用 --start 拉长回看。" 3
+
+  CR_LEGS_USED='"hy"'
+  [ "$IG_AVAIL"  -eq 1 ] && CR_LEGS_USED="${CR_LEGS_USED},\"ig\""
+  [ "$BBB_AVAIL" -eq 1 ] && CR_LEGS_USED="${CR_LEGS_USED},\"bbb\""
+
+  CR_TOTAL="$(awk 'END{print NR}' "$WORK/aligned.txt")"
+  CR_LAST="$(tail -n 1 "$WORK/aligned.txt")"
+  CR_DATE="$(echo "$CR_LAST" | cut -d'|' -f1)"
+  HY_NOW="$(echo "$CR_LAST" | cut -d'|' -f2)"
+  IG_NOW="$(echo "$CR_LAST" | cut -d'|' -f3)"
+  BBB_NOW="$(echo "$CR_LAST" | cut -d'|' -f4)"
+  CR_LAG="$(lag_days "$CR_DATE")"
+
+  # 三序列各自的末行日期——对齐后若比某一条的末行旧，代表那条已经更新、其余还没。
+  HY_LAST_D="$(tail -n 1 "$WORK/BAMLH0A0HYM2.rows" | cut -d, -f1)"
+  IG_LAST_D="$(tail -n 1 "$WORK/BAMLC0A0CM.rows" | cut -d, -f1)"
+  BBB_LAST_D="$(tail -n 1 "$WORK/BAMLC0A4CBBB.rows" | cut -d, -f1)"
+  # 末行不同日**不算降级**——对齐正是本模式的工作，资料并没有变差（`degraded`
+  # 的语意是「资料变差了」，同 --parallel 退回串行那段注解）。与 --buffett 一致：
+  # 只记 series_last_obs_differ 并在人读分支示警。真正该传递的是「对齐後这一天
+  # 有多旧」，那由 aligned_date 与 lag_days 承担，不必挤进 degraded。
+  # 只比**仍在场**的腿；缺席的腿末行是空字串，拿它去比会假报「不同日」。
+  CR_OBS_DIFFER=false
+  [ "$IG_AVAIL"  -eq 1 ] && [ "$HY_LAST_D" != "$IG_LAST_D" ]  && CR_OBS_DIFFER=true
+  [ "$BBB_AVAIL" -eq 1 ] && [ "$HY_LAST_D" != "$BBB_LAST_D" ] && CR_OBS_DIFFER=true
+
+  # 4 周变动。笔数不够就是**判不了**，不是 0：判不了一律 null（JSON equivalence 第 2 条）。
+  WIN_OK=1
+  [ "$CR_TOTAL" -gt "$CREDIT_WINDOW" ] || WIN_OK=0
+  if [ "$WIN_OK" -eq 1 ]; then
+    CR_BASE="$(awk -v k=$(( CR_TOTAL - CREDIT_WINDOW )) 'NR==k' "$WORK/aligned.txt")"
+    CR_BASE_DATE="$(echo "$CR_BASE" | cut -d'|' -f1)"
+    HY_CHG="$(awk -v a="$HY_NOW"  -v b="$(echo "$CR_BASE" | cut -d'|' -f2)" 'BEGIN{printf "%.0f",(a-b)*100}')"
+    # 缺席的腿不算变动（NA 参与算术会得到 0，而 0 会被读成「没动」）。
+    if [ "$IG_AVAIL" -eq 1 ]; then
+      IG_CHG="$(awk -v a="$IG_NOW" -v b="$(echo "$CR_BASE" | cut -d'|' -f3)" 'BEGIN{printf "%.0f",(a-b)*100}')"
+    else IG_CHG=""; fi
+    if [ "$BBB_AVAIL" -eq 1 ]; then
+      BBB_CHG="$(awk -v a="$BBB_NOW" -v b="$(echo "$CR_BASE" | cut -d'|' -f4)" 'BEGIN{printf "%.0f",(a-b)*100}')"
+    else BBB_CHG=""; fi
+  else
+    CR_BASE_DATE=""
+    HY_CHG=""; IG_CHG=""; BBB_CHG=""
+    add_degraded "同日对齐后只有 ${CR_TOTAL} 笔，不足 ${CREDIT_WINDOW}+1 笔 → 4 周变动与分化判定一律记 ⚪️（不得当成未走阔）"
+  fi
+
+  ge() { awk -v a="$1" -v b="$2" 'BEGIN{exit (a>=b)?0:1}'; }   # $1 >= $2 ?
+  gt() { awk -v a="$1" -v b="$2" 'BEGIN{exit (a>b)?0:1}'; }    # $1 >  $2 ?
+  # 变动量在 JSON 里必须是**裸数字**（`+12` 不是合法 JSON），所以正负号只在人读
+  # 分支印的时候补。printf 的 `+` 旗标也只对数值转换有效，`%+14s` 是错的。
+  sgn() { awk -v v="$1" 'BEGIN{printf "%+d", v}'; }
+
+  # 硬阈值第 3 项只看水平，任何时候都判得了。
+  if gt "$HY_NOW" "$HY_HARD_PCT"; then HT3=true; else HT3=false; fi
+
+  if [ "$WIN_OK" -eq 1 ]; then
+    if ge "$HY_CHG"  "$HY_WIDEN_BP";  then HY_LEG=true;  else HY_LEG=false;  fi
+    if ge "$HY_CHG"  "$HY_P95_BP";    then HY_P95=true;  else HY_P95=false;  fi
+    if [ "$IG_AVAIL" -eq 1 ]; then
+      if ge "$IG_CHG" "$IG_WATCH_BP"; then IG_WATCH=true; else IG_WATCH=false; fi
+      IG_X="$(awk -v v="$IG_CHG" -v p="$IG_WATCH_BP" 'BEGIN{printf "%.3f", v/p}')"
+    else IG_WATCH=null; IG_X=""; fi
+    if [ "$BBB_AVAIL" -eq 1 ]; then
+      if ge "$BBB_CHG" "$BBB_WATCH_BP"; then BBB_WATCH=true; else BBB_WATCH=false; fi
+      BBB_X="$(awk -v v="$BBB_CHG" -v p="$BBB_WATCH_BP" 'BEGIN{printf "%.3f", v/p}')"
+    else BBB_WATCH=null; BBB_X=""; fi
+    # ── 分化判定 ──
+    # 把每条腿的 4 周变动**除以它自己的 p95** 归一化，再比较。
+    #
+    # ⚠️ 不可以用「IG 过线 且 HY 没过线」这种硬闸——**实测会错得很难看**。
+    #    以 3 年历史回测该写法：16 天判为 investment_grade_specific，其中 **14 天
+    #    （88%）HY 自己也在大幅走阔**，只是差几个 bp 没跨过 46 那条线。
+    #    命中的正是 2024-08（日元套息平仓）与 2025-04/05（关税冲击）——两次都是
+    #    教科书级的**全市场** risk-off，却被判成「投资级个体压力」。
+    #    阈值差 1bp 就翻盘的判定，本质上是在报告杂讯。
+    #
+    # 所以改成：投资级侧过了自己的线，**且**归一化后比 HY 高出 MARGIN 个身位，
+    # 才算个体。两条腿都贴着各自的 p95 = 它们在一起走，定义上就不是分化。
+    HY_X="$(awk -v h="$HY_CHG" -v p="$HY_P95_BP" 'BEGIN{printf "%.3f", h/p}')"
+    # 投资级侧取**仍在场**那些腿的最大倍数；两条都缺 → 分化判不了（null，不是 none）。
+    IGBBB_X=""
+    [ -n "$IG_X" ]  && IGBBB_X="$IG_X"
+    if [ -n "$BBB_X" ]; then
+      if [ -z "$IGBBB_X" ] || awk -v a="$BBB_X" -v b="$IGBBB_X" 'BEGIN{exit (a>b)?0:1}'; then IGBBB_X="$BBB_X"; fi
+    fi
+    if [ -z "$IGBBB_X" ]; then
+      DIVERGENCE=null
+      DIV_NOTE="IG 与 BBB 两条观察腿本次都取不到 → 分化无法判定（⚪️，不是「无分化」）。HY 不受影响，仍照常判定。"
+    elif awk -v g="$IGBBB_X" -v h="$HY_X" -v m="$DIV_MARGIN" 'BEGIN{exit (g>=1.0 && (g-h)>=m)?0:1}'; then
+      DIVERGENCE=investment_grade_specific
+      DIV_NOTE="投资级侧过了自己的 4 周 p95，且归一化后比 HY 高出 ${DIV_MARGIN} 个身位以上 → 压力集中在**投资级发行人**（AI 资本开支的举债主体几乎全在这一档），不是全市场风险偏好。"
+    elif [ "$HY_P95" = true ] && { [ "$IG_WATCH" = true ] || [ "$BBB_WATCH" = true ]; }; then
+      DIVERGENCE=broad_risk_appetite
+      DIV_NOTE="各腿同向走阔 → 全市场风险偏好变化，不单独算作 AI 融资链的个体讯号。"
+    elif [ "$HY_P95" = true ]; then
+      DIVERGENCE=high_yield_only
+      DIV_NOTE="只有 HY 走到自己的 p95，投资级侧没跟上 → 压力在低评级端，与投资级发行人的融资成本无关。"
+    elif [ "$IG_WATCH" = true ] || [ "$BBB_WATCH" = true ]; then
+      DIVERGENCE=broad_risk_appetite
+      DIV_NOTE="投资级侧过了自己的线，但 HY 就贴在后面（归一化差距不足 ${DIV_MARGIN} 个身位）→ 各腿在一起走，不算分化。"
+    else
+      DIVERGENCE=none
+      DIV_NOTE="在场的各腿都没到各自的 4 周 p95。"
+    fi
+  else
+    HY_LEG=null; HY_P95=null; IG_WATCH=null; BBB_WATCH=null
+    HY_X=""; IG_X=""; BBB_X=""; IGBBB_X=""
+    DIVERGENCE=null
+    DIV_NOTE="同日对齐后笔数不足 ${CREDIT_WINDOW}+1，4 周变动判不了 → 分化无法判定（⚪️，不是「无分化」）。"
+  fi
+
+  # 这条禁令是常驻的，不随今天的读数变化——所以人读分支与 JSON 都恒有。
+  CR_PROHIBITION="HY 的 ${HY_WIDEN_BP}bp 与 ${HY_HARD_PCT}% 两条线**只属于 HY**，不得套用到 IG / BBB。3 年窗口实测 IG 的 4 周变动最大 +29bp、BBB 最大 +35bp，套过去等于造一个永远不会触发的信号，而「永远不触发」与「查过了没事」在报告里长得一模一样。IG/BBB 用各自的 p95（+${IG_WATCH_BP}bp / +${BBB_WATCH_BP}bp）当观察线，且**不计入任何触发计数**。"
+  CR_WINDOW_NOTE="ICE BofA 家族在 fredgraph.csv 只回**滚动 3 年**并静默钳住 cosd（2026-09-14 实测）。所以本模式给的百分位带一律是 3 年口径；硬阈值第 3 项（>${HY_HARD_PCT}%）所依据的长历史**不在这个端点上**，不可用这里的 3 年窗口重新校准它。"
+
+  if [ "$JSON" -eq 1 ]; then
+    jnum() { [ -n "$1" ] && printf '%s' "$1" || printf 'null'; }
+    {
+      printf '{"ok":%s,"mode":"credit_spreads","signal":1,"unit":"百分点","source":"FRED fredgraph.csv",' \
+        "$([ "$DEGRADED" -eq 0 ] && echo true || echo false)"
+      printf '"aligned_on":"date（三序列精确内连接，同日对齐）","aligned_date":"%s","aligned_rows":%s,' \
+        "$CR_DATE" "$CR_TOTAL"
+      printf '"series_last_obs":{"BAMLH0A0HYM2":"%s","BAMLC0A0CM":"%s","BAMLC0A4CBBB":"%s"},' \
+        "$HY_LAST_D" "$IG_LAST_D" "$BBB_LAST_D"
+      printf '"alignment":{"method":"以 HY 为主轴，与仍在场的观察腿按 date 内连接（同日对齐）后取末行","legs_used":[%s],"series_last_obs_differ":%s,' \
+        "$CR_LEGS_USED" "$CR_OBS_DIFFER"
+      printf '"prohibition":"**不要**各取各的末行相减——跨日相减一样印得整整齐齐，只是错的。"},'
+      printf '"window":{"lookback_obs":%s,"change_unit":"bp","history_caliber":"rolling_3y","note":"%s"},' \
+        "$CREDIT_WINDOW" "$CR_WINDOW_NOTE"
+      printf '"legs":{'
+      printf '"hy":{"id":"BAMLH0A0HYM2","name":"HY OAS","level_pct":%s,"change_4w_bp":%s,"own_p95_bp":%s,"x_own_p95":%s,"at_own_p95":%s,"available":true,"unavailable_reason":null,"required_leg":true,"counts_toward_tier1":true},' \
+        "$HY_NOW" "$(jnum "$HY_CHG")" "$HY_P95_BP" "$(jnum "$HY_X")" "$HY_P95"
+      printf '"ig":{"id":"BAMLC0A0CM","name":"IG OAS","level_pct":%s,"change_4w_bp":%s,"watch_line_bp":%s,"x_own_p95":%s,"watch_exceeded":%s,"available":%s,"unavailable_reason":%s,"required_leg":false,"counts_toward_tier1":false},' \
+        "$([ "$IG_AVAIL" -eq 1 ] && printf '%s' "$IG_NOW" || printf 'null')" \
+        "$(jnum "$IG_CHG")" "$IG_WATCH_BP" "$(jnum "$IG_X")" "$IG_WATCH" \
+        "$([ "$IG_AVAIL" -eq 1 ] && echo true || echo false)" \
+        "$([ "$IG_AVAIL" -eq 1 ] && printf 'null' || printf '"%s"' "$IG_REASON")"
+      printf '"bbb":{"id":"BAMLC0A4CBBB","name":"BBB OAS","level_pct":%s,"change_4w_bp":%s,"watch_line_bp":%s,"x_own_p95":%s,"watch_exceeded":%s,"available":%s,"unavailable_reason":%s,"required_leg":false,"counts_toward_tier1":false}},' \
+        "$([ "$BBB_AVAIL" -eq 1 ] && printf '%s' "$BBB_NOW" || printf 'null')" \
+        "$(jnum "$BBB_CHG")" "$BBB_WATCH_BP" "$(jnum "$BBB_X")" "$BBB_WATCH" \
+        "$([ "$BBB_AVAIL" -eq 1 ] && echo true || echo false)" \
+        "$([ "$BBB_AVAIL" -eq 1 ] && printf 'null' || printf '"%s"' "$BBB_REASON")"
+      # 信号 1 的触发要 SPX 创新高，本脚本不判 SPX → fired 恒 null，利差腿单独给。
+      printf '"trigger":{"signal":1,"rule":"近 4 周走阔 ≥%sbps 且 SPX 同期创新高","fired":null,' "$HY_WIDEN_BP"
+      printf '"spread_leg_met":%s,"reason":"利差腿由本脚本判定；SPX 创新高那一腿本脚本不判。"},' "$HY_LEG"
+      printf '"hard_threshold_3":{"rule":"HY OAS >%s%%","fired":%s,"observed_pct":%s},' \
+        "$HY_HARD_PCT" "$HT3" "$HY_NOW"
+      printf '"divergence":{"verdict":%s,"method":"每条腿的 4 周变动各自除以自己的 p95 後比较；投资级侧 >=1.0 且比 HY 高出 margin 个身位才算个体","margin":%s,"ig_bbb_x":%s,"hy_x":%s,"in_sample_rarity":"%s","note":"%s"},' \
+        "$([ "$DIVERGENCE" = null ] && echo null || printf '"%s"' "$DIVERGENCE")" \
+        "$DIV_MARGIN" "$(jnum "$IGBBB_X")" "$(jnum "$HY_X")" "$DIV_INSAMPLE" "$DIV_NOTE"
+      printf '"caliber_prohibition":"%s",' "$CR_PROHIBITION"
+      # points 只给最近 --days 笔（默认 1）；4 周变动用的是完整对齐序列，与这里无关。
+      printf '"points":['
+      tail -n "$DAYS" "$WORK/aligned.txt" \
+        | awk -F'|' '{ if (NR>1) printf ","
+             printf "{\"date\":\"%s\",\"hy_pct\":%.2f,\"ig_pct\":%s,\"bbb_pct\":%s}", $1, $2,
+               ($3=="NA" ? "null" : sprintf("%.2f",$3)), ($4=="NA" ? "null" : sprintf("%.2f",$4)) }'
+      printf '],"latest":{"date":"%s","lag_days":%s,"base_date":%s},' \
+        "$CR_DATE" "$CR_LAG" "$([ -n "$CR_BASE_DATE" ] && printf '"%s"' "$CR_BASE_DATE" || printf 'null')"
+      printf '"degraded":%s,"degraded_reasons":[%s]}\n' \
+        "$([ "$DEGRADED" -eq 1 ] && echo true || echo false)" "$DEG_JSON"
+    }
+  else
+    echo "信用利差三条腿（信号 1）—— 同日对齐 @${CR_DATE}，$(lag_text "$CR_LAG")"
+    _used="HY"; [ "$IG_AVAIL" -eq 1 ] && _used="${_used} + IG"; [ "$BBB_AVAIL" -eq 1 ] && _used="${_used} + BBB"
+    echo "来源：FRED fredgraph.csv｜对齐：以 HY 为主轴，与仍在场的观察腿按 date 内连接后取末行（本次在场：${_used}）"
+    echo
+    printf '%-22s %10s %14s %14s %9s %8s\n' "腿" "水平(%)" "4周变动(bp)" "自己的线(bp)" "倍数" "状态"
+    if [ "$WIN_OK" -eq 1 ]; then
+      printf '%-22s %10.2f %14s %14s %9s %8s\n' "HY  BAMLH0A0HYM2" "$HY_NOW" "$(sgn "$HY_CHG")" "≥${HY_WIDEN_BP}（触发腿）" "${HY_X}x" "$([ "$HY_LEG" = true ] && echo ✅ || echo ❌)"
+      if [ "$IG_AVAIL" -eq 1 ]; then
+        printf '%-22s %10.2f %14s %14s %9s %8s\n' "IG  BAMLC0A0CM" "$IG_NOW" "$(sgn "$IG_CHG")" "≥${IG_WATCH_BP}（观察）" "${IG_X}x" "$([ "$IG_WATCH" = true ] && echo ⚠️ || echo ❌)"
+      else
+        printf '%-22s %10s %14s %14s %9s %8s\n' "IG  BAMLC0A0CM" "⚪️" "⚪️" "≥${IG_WATCH_BP}（观察）" "⚪️" "⚪️"
+      fi
+      if [ "$BBB_AVAIL" -eq 1 ]; then
+        printf '%-22s %10.2f %14s %14s %9s %8s\n' "BBB BAMLC0A4CBBB" "$BBB_NOW" "$(sgn "$BBB_CHG")" "≥${BBB_WATCH_BP}（观察）" "${BBB_X}x" "$([ "$BBB_WATCH" = true ] && echo ⚠️ || echo ❌)"
+      else
+        printf '%-22s %10s %14s %14s %9s %8s\n' "BBB BAMLC0A4CBBB" "⚪️" "⚪️" "≥${BBB_WATCH_BP}（观察）" "⚪️" "⚪️"
+      fi
+      echo "  （倍数 = 该腿 4 周变动 ÷ 它自己的 4 周 p95：HY ${HY_P95_BP} / IG ${IG_WATCH_BP} / BBB ${BBB_WATCH_BP} bp。分化判定比的是倍数，不是 bp。）"
+      echo "  ⚠️ HY 的 p95 ${HY_P95_BP}bp 与上表那条 ≥${HY_WIDEN_BP}bp 触发线是**两条不同的线**：p95 只是分化判定的分母，**不是阈值、不计入任何计数**。"
+      echo "  4 周基准日：${CR_BASE_DATE}（同日对齐后往回第 ${CREDIT_WINDOW} 笔）"
+    else
+      printf '%-22s %10.2f %14s %14s %9s %8s\n' "HY  BAMLH0A0HYM2" "$HY_NOW" "⚪️" "≥${HY_WIDEN_BP}（触发腿）" "⚪️" "⚪️"
+      printf '%-22s %10.2f %14s %14s %9s %8s\n' "IG  BAMLC0A0CM" "$IG_NOW" "⚪️" "≥${IG_WATCH_BP}（观察）" "⚪️" "⚪️"
+      printf '%-22s %10.2f %14s %14s %9s %8s\n' "BBB BAMLC0A4CBBB" "$BBB_NOW" "⚪️" "≥${BBB_WATCH_BP}（观察）" "⚪️" "⚪️"
+    fi
+    echo
+    echo "  各腿末行：HY ${HY_LAST_D}｜IG ${IG_LAST_D:-⚪️}｜BBB ${BBB_LAST_D:-⚪️}"
+    [ "$IG_AVAIL"  -eq 1 ] || echo "  ⚪️ IG（BAMLC0A0CM）观察腿取不到：${IG_REASON}　——HY 与硬阈值第 3 项不受影响。"
+    [ "$BBB_AVAIL" -eq 1 ] || echo "  ⚪️ BBB（BAMLC0A4CBBB）观察腿取不到：${BBB_REASON}　——HY 与硬阈值第 3 项不受影响。"
+    if [ "$CR_OBS_DIFFER" = true ]; then
+      echo "  ⚠️ 三者末行不同日 —— 上面的数字已用同日对齐算出，**不要**各取各的末行相减。"
+    fi
+    printf '  硬阈值第 3 项（HY >%s%%）... %s\n' "$HY_HARD_PCT" "$([ "$HT3" = true ] && echo "✅ 触发" || echo "❌ 未触发")"
+    printf '  信号 1 触发（近 4 周走阔 ≥%sbps 且 SPX 创新高）：利差腿 %s ｜ SPX 腿本脚本不判\n' \
+      "$HY_WIDEN_BP" "$([ "$HY_LEG" = true ] && echo "✅ 成立" || { [ "$HY_LEG" = null ] && echo "⚪️ 判不了" || echo "❌ 未成立"; })"
+    echo "  分化判定：${DIVERGENCE}（身位差门槛 ${DIV_MARGIN}）"
+    echo "    ${DIV_NOTE}"
+    echo "    稀有度：${DIV_INSAMPLE}"
+    echo
+    echo "  ⚠️ 口径禁令：${CR_PROHIBITION}"
+    echo "  ⚠️ 窗口口径：${CR_WINDOW_NOTE}"
+  fi
+
+  # 观察腿缺席 → 退出码 3（取数失败），但**整份输出已经印完**，与
+  # --buffett / --net-liquidity 的 exit 4 同一约定：退出码是冗余通道，不是唯一通道。
+  # HY 仍然完整，所以这不是「信号 1 没有了」，而是「三条腿里少了不计数的那几条」。
+  if [ "$IG_AVAIL" -ne 1 ] || [ "$BBB_AVAIL" -ne 1 ]; then exit 3; fi
+  exit 0
+fi
+
+# ═══════════════════ 利率环境三条腿模式（信号 32）═══════════════════
+# 只看 DFII10 一条腿，分不出「实质利率在涨」和「通膨预期在涨」——两者对高估值
+# 资产的含义完全相反。三条腿同日对齐後，Δ名目 = Δ实质 + Δ盈亏平衡 才拆得开。
+if [ "$RATES" -eq 1 ]; then
+  [ -z "$IDS" ] || die "--rates 与序列 ID 不能同时给（组合的三个序列是固定的）。" 1
+
+  if [ -n "$START" ]; then RT_START="$START"; else RT_START="$(days_ago $(( DAYS + RATES_WINDOW * 4 + 120 )))"; fi
+
+  fetch_join3 "利率环境" "$RT_START" DGS10 DFII10 T10YIE
+
+  RT_TOTAL="$(awk 'END{print NR}' "$WORK/aligned.txt")"
+  RT_LAST="$(tail -n 1 "$WORK/aligned.txt")"
+  RT_DATE="$(echo "$RT_LAST" | cut -d'|' -f1)"
+  NOM_NOW="$(echo "$RT_LAST" | cut -d'|' -f2)"
+  REAL_NOW="$(echo "$RT_LAST" | cut -d'|' -f3)"
+  BE_NOW="$(echo "$RT_LAST" | cut -d'|' -f4)"
+  RT_LAG="$(lag_days "$RT_DATE")"
+
+  NOM_LAST_D="$(tail -n 1 "$WORK/DGS10.rows" | cut -d, -f1)"
+  REAL_LAST_D="$(tail -n 1 "$WORK/DFII10.rows" | cut -d, -f1)"
+  BE_LAST_D="$(tail -n 1 "$WORK/T10YIE.rows" | cut -d, -f1)"
+  # 同 --credit：末行不同日不算降级，对齐正是本模式的工作。今天（2026-09-14）
+  # T10YIE 就比另外两条多一天，这是常态而非故障。
+  if [ "$NOM_LAST_D" = "$REAL_LAST_D" ] && [ "$REAL_LAST_D" = "$BE_LAST_D" ]; then
+    RT_OBS_DIFFER=false
+  else
+    RT_OBS_DIFFER=true
+  fi
+
+  # ── 恒等式自检：T10YIE ≡ DGS10 − DFII10 ──
+  # 这是**定义**，不是经验关系。残差不为 0 只有两种可能：三条腿不同日（本模式
+  # 已经挡掉），或 FRED 改了某条序列的定义/单位。两种都不该直接引用。
+  RESID="$(awk -v n="$NOM_NOW" -v r="$REAL_NOW" -v b="$BE_NOW" 'BEGIN{printf "%.4f", n-r-b}')"
+  ID_OK=1
+  awk -v v="$RESID" -v t="$RATES_IDENTITY_TOL" 'BEGIN{ exit ((v<0?-v:v)<=t)?0:1 }' || ID_OK=0
+  [ "$ID_OK" -eq 1 ] || add_degraded "恒等式自检未通过：DGS10 − DFII10 − T10YIE = ${RESID}，超出容差 ${RATES_IDENTITY_TOL} 个百分点"
+
+  RT_WIN_OK=1
+  [ "$RT_TOTAL" -gt "$RATES_WINDOW" ] || RT_WIN_OK=0
+  if [ "$RT_WIN_OK" -eq 1 ]; then
+    RT_BASE="$(awk -v k=$(( RT_TOTAL - RATES_WINDOW )) 'NR==k' "$WORK/aligned.txt")"
+    RT_BASE_DATE="$(echo "$RT_BASE" | cut -d'|' -f1)"
+    NOM_CHG="$(awk  -v a="$NOM_NOW"  -v b="$(echo "$RT_BASE" | cut -d'|' -f2)" 'BEGIN{printf "%.0f",(a-b)*100}')"
+    REAL_CHG="$(awk -v a="$REAL_NOW" -v b="$(echo "$RT_BASE" | cut -d'|' -f3)" 'BEGIN{printf "%.0f",(a-b)*100}')"
+    BE_CHG="$(awk   -v a="$BE_NOW"   -v b="$(echo "$RT_BASE" | cut -d'|' -f4)" 'BEGIN{printf "%.0f",(a-b)*100}')"
+    # 驱动源：谁贡献得多，这轮名目利率的**变动**就是谁驱动的。
+    # ⚠️ 下面这段只用 |Δ| 比大小，所以它判得出「是谁驱动」、**判不出「往哪边」**。
+    #    方向必须单独判：实质利率**下行**是对高估值资产最有利的一件事，
+    #    与上行的含义完全相反，两者共用一句解读就会把利多写成利空。
+    DRIVER="$(awk -v r="$REAL_CHG" -v b="$BE_CHG" 'BEGIN{
+      ar=(r<0?-r:r); ab=(b<0?-b:b)
+      if (ar+ab < 5) { print "no_material_move"; exit }
+      if (ar >= ab*2) { print "real_rate_driven"; exit }
+      if (ab >= ar*2) { print "inflation_expectation_driven"; exit }
+      print "mixed" }')"
+    # 驱动腿的**符号**——注意这不是名目的符号。驱动腿确定时它不可能为 0：
+    # ar>=ab*2 且 ar=0 会逼出 ab=0，而 ar+ab<5 早已被上面的守卫接走。
+    case "$DRIVER" in
+      real_rate_driven)             _DRV_SIGN="$REAL_CHG" ;;
+      inflation_expectation_driven) _DRV_SIGN="$BE_CHG" ;;
+      *)                            _DRV_SIGN="" ;;
+    esac
+    if [ -z "$_DRV_SIGN" ]; then DIRECTION=null
+    elif [ "$_DRV_SIGN" -gt 0 ]; then DIRECTION=up
+    else DIRECTION=down; fi
+  else
+    RT_BASE_DATE=""; NOM_CHG=""; REAL_CHG=""; BE_CHG=""; DRIVER=null; DIRECTION=null
+    add_degraded "同日对齐后只有 ${RT_TOTAL} 笔，不足 ${RATES_WINDOW}+1 笔 → 4 周变动与驱动源拆解一律记 ⚪️"
+  fi
+
+  if awk -v v="$REAL_NOW" -v t="$DFII10_HIGH_PCT" 'BEGIN{exit (v>t)?0:1}'; then RT_HIGH=true; else RT_HIGH=false; fi
+
+  case "$DRIVER" in
+    real_rate_driven)
+      if [ "$DIRECTION" = up ]; then
+        DRIVER_NOTE="名目利率的变动主要由**实质利率**贡献，且实质利率**上行** —— 这是高估值资产（成长股 / AI 股）压力最大的那一种，因为它抬高的是所有资产的机会成本底线，而不是被通膨一起推高的名目值。"
+      else
+        DRIVER_NOTE="名目利率的变动主要由**实质利率**贡献，且实质利率**下行** —— 机会成本底线在下降，这是对高估值资产最有利的一种利率变动，与实质利率上行的含义**完全相反**，不要套用上行那句解读。"
+      fi ;;
+    inflation_expectation_driven)
+      DRIVER_NOTE="名目利率的变动主要由**通膨预期**贡献（$([ "$DIRECTION" = up ] && echo 上行 || echo 下行)）—— 与实质利率驱动是完全不同的一件事，对实质折现率的影响小得多。" ;;
+    mixed)                        DRIVER_NOTE="实质利率与通膨预期各贡献一部分，拆不出单一驱动源。" ;;
+    no_material_move)             DRIVER_NOTE="4 周内两边合计变动不足 5bp，没有值得归因的移动。" ;;
+    *)                            DRIVER_NOTE="窗口笔数不足，驱动源判不了（⚪️，不是「没有移动」）。" ;;
+  esac
+
+  RT_COUNT_NOTE="信号 32 属「周一附加 / 宏观定价环境」一族：**不计入 30 个信号，也不参与任何触发计数**，不得写进 snapshot.py 的 signals。本模式给的 >${DFII10_HIGH_PCT}% 是历史分位线，用来回答「现在这个估值被什么撑住」，不是卖出触发。"
+
+  if [ "$JSON" -eq 1 ]; then
+    jnum() { [ -n "$1" ] && printf '%s' "$1" || printf 'null'; }
+    {
+      printf '{"ok":%s,"mode":"rate_environment","signal":32,"unit":"百分点","source":"FRED fredgraph.csv",' \
+        "$([ "$DEGRADED" -eq 0 ] && echo true || echo false)"
+      printf '"aligned_on":"date（三序列精确内连接，同日对齐）","aligned_date":"%s","aligned_rows":%s,' \
+        "$RT_DATE" "$RT_TOTAL"
+      printf '"series_last_obs":{"DGS10":"%s","DFII10":"%s","T10YIE":"%s"},' \
+        "$NOM_LAST_D" "$REAL_LAST_D" "$BE_LAST_D"
+      printf '"alignment":{"method":"三序列按 date 内连接（同日对齐）后取末行","series_last_obs_differ":%s,' "$RT_OBS_DIFFER"
+      printf '"prohibition":"**不要**各取各的末行相减——本模式的拆解与恒等式自检都只在同日上成立。"},'
+      printf '"legs":{'
+      printf '"nominal":{"id":"DGS10","name":"10Y 名目殖利率","level_pct":%s,"change_4w_bp":%s},' "$NOM_NOW" "$(jnum "$NOM_CHG")"
+      printf '"real":{"id":"DFII10","name":"10Y TIPS 实质殖利率","level_pct":%s,"change_4w_bp":%s,"high_line_pct":%s,"above_high_line":%s},' \
+        "$REAL_NOW" "$(jnum "$REAL_CHG")" "$DFII10_HIGH_PCT" "$RT_HIGH"
+      printf '"breakeven":{"id":"T10YIE","name":"10Y 盈亏平衡通膨","level_pct":%s,"change_4w_bp":%s}},' "$BE_NOW" "$(jnum "$BE_CHG")"
+      printf '"identity":{"formula":"T10YIE ≡ DGS10 − DFII10","residual_pct":%s,"tolerance_pct":%s,"pass":%s,' \
+        "$RESID" "$RATES_IDENTITY_TOL" "$([ "$ID_OK" -eq 1 ] && echo true || echo false)"
+      printf '"note":"这是定义不是经验关系；2003 起 5927 个同日样本实测最大残差 0.000。残差不为 0 = 三条腿不同日，或 FRED 改了定义。"},'
+      printf '"decomposition":{"window_obs":%s,"base_date":%s,"driver":%s,"direction":%s,"note":"%s"},' \
+        "$RATES_WINDOW" \
+        "$([ -n "$RT_BASE_DATE" ] && printf '"%s"' "$RT_BASE_DATE" || printf 'null')" \
+        "$([ "$DRIVER" = null ] && echo null || printf '"%s"' "$DRIVER")" \
+        "$([ "$DIRECTION" = null ] && echo null || printf '"%s"' "$DIRECTION")" "$DRIVER_NOTE"
+      printf '"points":['
+      tail -n "$DAYS" "$WORK/aligned.txt" \
+        | awk -F'|' '{ if (NR>1) printf ","; printf "{\"date\":\"%s\",\"nominal_pct\":%.2f,\"real_pct\":%.2f,\"breakeven_pct\":%.2f}", $1,$2,$3,$4 }'
+      printf '],'
+      printf '"calibration":{"high_line_pct":%s,"share_of_days_above_since_2003_pct":4.4,"share_of_days_above_since_2010_pct":0.9,' "$DFII10_HIGH_PCT"
+      printf '"note":"2026-09-14 实测 DFII10 全样本 n=5927（2003-01-02 起）。与 BAML 家族不同，DGS10/DFII10/T10YIE 的 cosd 不被钳制，长历史取得回来。"},'
+      printf '"counts_toward":{"tier_count":false,"hard_threshold":false,"snapshot_signals":false,"note":"%s"},' "$RT_COUNT_NOTE"
+      # 本模式有 exit 4 的自检闸（恒等式），所以照 --net-liquidity / --buffett 的
+      # 约定给 do_not_quote：只读 stdout 的调用方也看得到禁令，不必去捞 stderr。
+      if [ "$ID_OK" -eq 1 ]; then
+        printf '"do_not_quote":null,'
+      else
+        printf '"do_not_quote":{"reason":"恒等式自检未通过：DGS10 − DFII10 − T10YIE = %s，超出容差 %s 个百分点。T10YIE 是**定义为** DGS10 − DFII10 的，残差不该存在。最可能的原因：三条腿不是同一天（本模式已对齐，若仍不为 0 则是 FRED 改了定义或单位）。请先人工核对再引用这三个数字。","observed_residual_pct":%s,"tolerance_pct":%s},' \
+          "$RESID" "$RATES_IDENTITY_TOL" "$RESID" "$RATES_IDENTITY_TOL"
+      fi
+      printf '"latest":{"date":"%s","lag_days":%s},' "$RT_DATE" "$RT_LAG"
+      printf '"degraded":%s,"degraded_reasons":[%s]}\n' \
+        "$([ "$DEGRADED" -eq 1 ] && echo true || echo false)" "$DEG_JSON"
+    }
+  else
+    echo "利率环境三条腿（信号 32）—— 同日对齐 @${RT_DATE}，$(lag_text "$RT_LAG")"
+    echo "来源：FRED fredgraph.csv｜对齐：三序列按 date 内连接后取末行"
+    echo
+    printf '%-20s %10s %14s\n' "腿" "水平(%)" "4周变动(bp)"
+    if [ "$RT_WIN_OK" -eq 1 ]; then
+      sgn() { awk -v v="$1" 'BEGIN{printf "%+d", v}'; }   # 同 --credit：`+` 旗标对 %s 无效
+      printf '%-20s %10.2f %14s\n' "DGS10  名目利率" "$NOM_NOW"  "$(sgn "$NOM_CHG")"
+      printf '%-20s %10.2f %14s\n' "DFII10 实质利率" "$REAL_NOW" "$(sgn "$REAL_CHG")"
+      printf '%-20s %10.2f %14s\n' "T10YIE 盈亏平衡" "$BE_NOW"   "$(sgn "$BE_CHG")"
+      echo "  4 周基准日：${RT_BASE_DATE}（同日对齐后往回第 ${RATES_WINDOW} 笔）"
+    else
+      printf '%-20s %10.2f %14s\n' "DGS10  名目利率" "$NOM_NOW"  "⚪️"
+      printf '%-20s %10.2f %14s\n' "DFII10 实质利率" "$REAL_NOW" "⚪️"
+      printf '%-20s %10.2f %14s\n' "T10YIE 盈亏平衡" "$BE_NOW"   "⚪️"
+    fi
+    echo
+    echo "  三序列各自末行：DGS10 ${NOM_LAST_D}｜DFII10 ${REAL_LAST_D}｜T10YIE ${BE_LAST_D}"
+    if [ "$RT_OBS_DIFFER" = true ]; then
+      echo "  ⚠️ 三者末行不同日 —— 上面的数字已用同日对齐算出，**不要**各取各的末行相减。"
+    fi
+    printf '  恒等式自检 T10YIE ≡ DGS10 − DFII10：残差 %s（容差 ±%s）... %s\n' \
+      "$RESID" "$RATES_IDENTITY_TOL" "$([ "$ID_OK" -eq 1 ] && echo "✅ 通过" || echo "❌ 未通过")"
+    printf '  实质殖利率历史偏高线（>%s%%）... %s\n' \
+      "$DFII10_HIGH_PCT" "$([ "$RT_HIGH" = true ] && echo "✅ 在线上（2003 起仅 4.4% 的交易日、2010 起仅 0.9%）" || echo "❌ 未达")"
+    echo "  驱动源：${DRIVER}（方向：${DIRECTION}）"
+    echo "    ${DRIVER_NOTE}"
+    echo
+    echo "  ⚠️ 计数口径：${RT_COUNT_NOTE}"
+  fi
+
+  if [ "$ID_OK" -ne 1 ]; then
+    warn ""
+    warn "⚠️ 恒等式自检未通过：DGS10 − DFII10 − T10YIE = ${RESID}，超出容差 ${RATES_IDENTITY_TOL}。"
+    warn "   T10YIE 是**定义为** DGS10 − DFII10 的，残差不该存在。"
+    warn "   最可能的原因：三条腿不是同一天（本模式已对齐，若仍不为 0 则是 FRED 改了定义或单位）。"
+    warn "   请先人工核对再引用这三个数字。"
     exit 4
   fi
   exit 0
