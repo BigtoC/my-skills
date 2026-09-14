@@ -175,7 +175,7 @@ bg() { u=$1; out=$2; shift 3
 bg fred_series  fred_series.json  -- "$SKILL_DIR/scripts/fred.sh" VIXCLS VXVCLS T10Y2Y T10Y3M SAHMREALTIME --days 30 --json
 # 信号 5：要看「连 4 周下降」，故取 5 笔
 bg fred_netliq  fred_netliq.json  -- "$SKILL_DIR/scripts/fred.sh" --net-liquidity --days 5 --json
-# 信号 27：**同季对齐**后取末行 + 50–250% 量级自检
+# 信号 27：**同季对齐**后取末行 + 50–300% 量级自检（上限 2026-09-14 由 250 放宽，见 signals-e-cycle-valuation.md 编者注）
 bg fred_buffett fred_buffett.json -- "$SKILL_DIR/scripts/fred.sh" --buffett --json
 # 信号 1 的三条腿：HY / IG / BBB OAS，**同日对齐**后并排 + 分化判定
 # （HY 的口径不变、仍是唯一计入 Tier 1 的腿；IG/BBB 只是观察腿，用各自的 p95）
@@ -296,7 +296,7 @@ done
 
 其余高频坑（脚本已内建，人工补数时同样适用）：yfinance `^VIX3M`/`^VIX9D`/`^VIX6M` 已停更 → 信号 4 改用 FRED `VXVCLS`；`WALCL`/`WTREGEN` 单位是百万、`RRPONTSYD` 是十亿 → 前两者 ÷1000；Buffett 两序列末行常不同季 → 必须 `merge(on="date")` 后取末行（**`fred.sh --buffett` 已内建这一步并会把两序列各自的末行日期一并印出**；人工补数或换源时这条仍然适用）。
 
-**单位量级自检（算出来量级不对，先怀疑单位，不要直接报出来）**：净流动性 5–7 兆美元｜HY OAS 2–10%｜Sahm −1–2｜Buffett 50–250%｜CAPE 5–50。
+**单位量级自检（算出来量级不对，先怀疑单位，不要直接报出来）**：净流动性 5–7 兆美元｜HY OAS 2–10%｜Sahm −1–2｜Buffett 50–300%（2026-09-14 由 250 放宽；触发线仍是 >200%，放宽的是量程不是标准）｜CAPE 5–50。
 
 ## 第 2 步 · 判定 30 个信号档位
 

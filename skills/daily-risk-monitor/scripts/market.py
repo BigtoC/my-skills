@@ -40,7 +40,7 @@ references/signals-f-monday.md 与 references/data-cadence.md 的「yfinance 通
     DX-Y.NYB 取不到时本脚本只标 N/A，绝不换源顶替。
   * **缺失一律 N/A，不估算。** 一个看起来合理的数字比一个明显的空格危险得多。
   * 单位/量级自检见 MAGNITUDE_CHECKS；算出来量级不对先怀疑单位，不要直接报出来。
-    （净流动性 5–7兆｜HY OAS 2–10%｜Sahm −1–2｜Buffett 50–250%｜CAPE 5–50
+    （净流动性 5–7兆｜HY OAS 2–10%｜Sahm −1–2｜Buffett 50–300%｜CAPE 5–50
      这五项不在本脚本，归 fred.sh 与长期估值取数。）
 
 分档取值全部来自 references，唯一一处由实测基线推出的是信号 20 的 🟡 带：
