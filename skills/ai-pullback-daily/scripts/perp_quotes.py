@@ -94,6 +94,13 @@ PREFIX = f"{DEX}:"
 # —— 分档门槛（名义 OI = markPx × openInterest）——
 # references/perp-overnight.md 里那张 2026-07-27 实测表是**基线不是定论**，
 # 因此这里只保留门槛，每次运行都用当天的 OI 现场分档。
+#
+# ⚠️ **这两个门槛不随盘口状态重新标定，这是刻意的。** 名义 OI = markPx × openInterest
+# 是一个**存量**（未平仓合约的总额），不是流量：它不在一天之内累积、也不在收盘时结算。
+# 一档 OI $12M 的永续，上午十点和傍晚六点同样值得信。相较之下 |≥2%|/|≥5%| 的隐含变动
+# 阈值标定在「收盘→下次开盘」那个**窗口**上，所以盘中必须记 N/A（已在 evaluate 里处理）——
+# 两者性质不同，别把後者的处理方式套到这里。
+# 美股盘中反而是 OI 读数**最**可信的时段：现货在交易，与永续之间的套利是活的。
 OI_MAIN = 10_000_000.0      # 主用：读数可信
 OI_THIN = 3_000_000.0       # 薄盘：$3–10M，须标注「（薄盘 $X.XM，仅参考）」
                             # < $3M 过薄：直接跳过，不输出
@@ -853,8 +860,21 @@ def main():
         m = markets.get(mname) if mname else None
         if m and m["mark"]:
             fx_rates[cur] = m["mark"]
-            if m["delisted"] or m["notional_oi"] in (0, None) or m["day_ntl_vlm"] == 0:
-                fx_notes[cur] = f"{PREFIX}{mname} 已下架/无持仓，仅 oracle 报价，折算结果仅参考"
+            # 「已下架」与「有市场但没人持仓」是两回事，分开写。
+            # 实测 2026-09-15（xyz 池）：xyz:KRW **确实带 isDelisted=true**，OI 与
+            # dayNtlVlm 皆 0，仅剩 mark=1360.7 这个 oracle 报价；xyz:DXY(97.15)、
+            # xyz:VIX(20.0) 同型。下架市场的 oracle **有可能**停更，所以实测过：
+            # 2026-09-15 xyz:KRW = 1360.9 对 yfinance `KRW=X` 1360.95，偏离 −0.00%，
+            # 且两次查询之间 1360.7→1360.9 有跳动 → **这条 oracle 是活的**，韩股折算无碍。
+            # 但它仍是韩股两档 USD 折算的单点依赖、且已下架，所以每次都要标注；
+            # 若哪天偏离拉开，先查这里（拿 xyz:KRW 的 markPx 对照 yfinance KRW=X 即可）。
+            # （同池 xyz:VIX 的 20.0 是整数且两次查询未变，可疑；本技能不用它。CLAUDE.md
+            #  已记录腾讯 .VIX 冻结七个月的同类陷阱：HTTP 200 + 合理数字 ≠ 活数据。）
+            if m["delisted"]:
+                fx_notes[cur] = f"{PREFIX}{mname} 已下架，折算结果仅参考"
+            elif m["notional_oi"] in (0, None) or m["day_ntl_vlm"] == 0:
+                fx_notes[cur] = (f"{PREFIX}{mname} 无持仓/无成交（本池 FX 为 oracle 报价、不撮合，"
+                                 f"零 OI 属常态），汇率可用，折算结果标注来源即可")
             fx_lines.append(f"汇率：1 USD = {fmt_px(m['mark'])} {cur}（同池 {PREFIX}{mname}）"
                             + (f" · {fx_notes[cur]}" if cur in fx_notes else ""))
         elif mname:

@@ -1261,6 +1261,10 @@ def main():
                          "both 的两份渲染源自同一个判定对象，不可能对引爆点④ 有分歧")
     ap.add_argument("--compact-also", metavar="FILE", default=None,
                     help="额外把精简版一行写进 FILE（stdout 内容不变），供同一次取数两处引用")
+    ap.add_argument("--json-also", metavar="FILE", default=None,
+                    help="额外把完整 JSON 写进 FILE（stdout 内容不变）。"
+                         "第六步的 run_state.py --credit-json 读它，让引爆点④/T4 直接取自本脚本，"
+                         "而不是由人再手打一遍——output-format.md 规则② 要求④「不得与脚本结论冲突」")
     ap.add_argument("--bonds", default=BONDS_PATH, help="债券登记表路径")
     ap.add_argument("--max-quote-age", type=int, default=5, help="报价过期天数（默认5，超过判⚪不参与触发）")
     ap.add_argument("--no-history", action="store_true", help="不写入历史档")
@@ -1381,6 +1385,21 @@ def main():
             # 路径先折叠家目录 —— 本脚本的输出会被贴进日报并推 Slack。
             err(f"⚠️ 精简版一行写入失败（{tilde_path(args.compact_also)}）：{type(e).__name__}；"
                 f"该行改印于 stderr：{line}")
+
+    # 同一个 res 对象另存一份 JSON。与 --compact-also 同一理由：放在渲染分支之前，
+    # 渲染失败不该连带丢掉已经算出来的判定；且它与 stdout 的任何渲染出自**同一次取数、
+    # 同一个判定对象**，所以第六步据此判闸门不可能与报告正文的④各说各话。
+    if args.json_also:
+        try:
+            p = Path(args.json_also)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            payload = dict(res)
+            payload.pop("cfg", None)          # 与 emit==json 同口径：cfg 不进 JSON
+            p.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n",
+                         encoding="utf-8")
+        except OSError as e:
+            err(f"⚠️ JSON 另存失败（{tilde_path(args.json_also)}）：{type(e).__name__}；"
+                f"第六步的推送闸门将拿不到本脚本的④，须改以 ⚪ 沿用处理，不得手打顶替")
 
     # 渲染分支。both 的两份渲染共用同一个 res / ev 对象：compact 行与完整 markdown
     # 在结构上不可能对引爆点④ 各说各话，也不会是两轮独立取数。

@@ -134,6 +134,62 @@ def parse_pairs(s, allowed, what):
     return out
 
 
+def load_credit_json(path):
+    """从 `neocloud_credit_monitor.py --json-also` 的产物取**权威**状态。
+
+    `references/output-format.md:93` 规则② 写得很死：引爆点④ 的状态**只由脚本产出**，
+    日报不另行人工判读、**不得与脚本结论冲突**。所以 ④ 与 L1–L4/T4 本来就不是手打项，
+    它们只有一个来源。手打一遍等于给同一个事实造第二个出处——这个仓库把「两处持有
+    同一事实而彼此不一致」列为本技能最贵的失败（见 CLAUDE.md 的两份 TH 字典）。
+
+    回传 (states, err)：states = {"tripwires": {...}, "credit": {...}}。
+    取不到（脚本这轮失败、档案缺失、JSON 坏掉）不是错误——SKILL.md 规定此时该节写
+    「本次未取到信用层数据，引爆点④ 沿用上次状态并标⚪」，所以回 ⚪ 让沿用机制接手，
+    **绝不**让它变成阻断推送的硬错误。
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        return None, (f"信用层 JSON 读取失败（{rel_display(path)}）：{type(e).__name__}；"
+                      f"引爆点④ 与 L1–L4/T4 按 ⚪ 沿用上次状态处理（不手打顶替）")
+    ev = (d or {}).get("eval") or {}
+    t4 = ((ev.get("tripwire_4") or {}).get("state"))
+    if not t4:
+        return None, (f"信用层 JSON 里没有 eval.tripwire_4.state（{rel_display(path)}）；"
+                      f"引爆点④ 与 L1–L4/T4 按 ⚪ 沿用上次状态处理")
+    out = {"tripwires": {}, "credit": {}}
+    v = norm_state(t4)
+    if v in STATES:
+        out["tripwires"]["4"] = v
+        out["credit"]["T4"] = v
+    for lay in ("L1", "L2", "L3", "L4"):
+        s = norm_state((ev.get(lay) or {}).get("state") or "")
+        if s in STATES:
+            out["credit"][lay] = s
+    return out, None
+
+
+def merge_authoritative(tw, cr, auth):
+    """把信用层 JSON 的权威值并进手打值。**脚本赢**，冲突逐条记录。
+
+    不阻断：一次打字冲突不该拦下当天那份权威报告。但也绝不静默——冲突进
+    `credit_json_conflicts` 字段、进 degraded_reasons、进 stderr，三个频道都有。
+    """
+    conflicts = []
+    if not auth:
+        return tw, cr, conflicts
+    for grp, incoming, authblk in (("引爆点", tw, auth.get("tripwires") or {}),
+                                   ("信用层", cr, auth.get("credit") or {})):
+        for k, v in authblk.items():
+            typed = incoming.get(k)
+            if typed is not None and typed != v:
+                conflicts.append({"group": grp, "key": k, "typed": typed, "script": v,
+                                  "resolved_to": v})
+            incoming[k] = v
+    return tw, cr, conflicts
+
+
 def load_state():
     """读状态档。缺档 = 首次运行（不是错误）；读坏了要**响亮**且**不得当成首次**。
 
@@ -280,7 +336,8 @@ def escalated(baseline_block, current):
     return out
 
 
-def compute_gate(state, tw_raw, cr_raw, today, read_err):
+def compute_gate(state, tw_raw, cr_raw, today, read_err,
+                 credit_notes=None, credit_conflicts=None):
     """闸门判定。gate 与 run 共用这一份，避免两条路各判各的。"""
     baseline = pick_baseline(state or {}, today) or {}
     base_tw, base_cr = baseline.get("tripwires"), baseline.get("credit")
@@ -327,6 +384,8 @@ def compute_gate(state, tw_raw, cr_raw, today, read_err):
     if tw_carried or cr_carried:
         degraded.append(f"⚪ 沿用上次状态后参与判定：引爆点 {tw_carried or '无'}、"
                         f"信用层 {cr_carried or '无'}（报告印什么，闸门就判什么）")
+    for n in (credit_notes or []):
+        degraded.append(n)
     never = sorted(k for k, v in (base_tw or {}).items() if (v or {}).get("never_evidenced"))
     if never:
         degraded.append(f"基准里从未有过实据的引爆点：{'、'.join(never)}")
@@ -370,6 +429,9 @@ def compute_gate(state, tw_raw, cr_raw, today, read_err):
         "carried_forward_credit": cr_carried,
         "not_supplied_tripwires": missing_tw,
         "not_supplied_credit": missing_cr,
+        # 引爆点④/L1–L4/T4 若由 --credit-json 提供，这里记它与手打值的冲突。
+        # 空清单 = 比对过、一致；null = 没给 --credit-json，根本没比对。
+        "credit_json_conflicts": credit_conflicts,
         "baseline": {
             "source": "postclose_history（date < today 的最近一笔）",
             "date": baseline.get("date"),
@@ -381,6 +443,8 @@ def compute_gate(state, tw_raw, cr_raw, today, read_err):
         "degraded_reasons": degraded,
         "degraded": bool(degraded),
         "prohibitions": [
+            "引爆点④ 与 L1–L4/T4 只由 neocloud_credit_monitor.py 产出，手打值不得与之冲突"
+            "（output-format.md 规则②）；冲突时一律以脚本为准",
             "基准只能是**日期早于今天**的 postclose 运行；同日重跑不得把基准换成自己",
             "⚪ 先解析成沿用后的生效状态再判，不得直接跳过",
             "无基准时 newly_amber / credit_l2_l4_escalated 是 null，不得读成空清单「没有新增」",
@@ -407,13 +471,44 @@ def cmd_gate(args):
     if read_err:
         err("⚠ " + read_err)
     today = parse_date(args.date)
-    res = compute_gate(state or {}, parse_pairs(args.tripwires, TRIPWIRES, "引爆点"),
-                       parse_pairs(args.credit, CREDIT_KEYS, "信用层"), today, read_err)
+    tw, cr, notes, conflicts = resolve_inputs(args)
+    for n in notes:
+        err(n)
+    res = compute_gate(state or {}, tw, cr, today, read_err,
+                       credit_notes=notes, credit_conflicts=conflicts)
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     else:
         print_gate(res)
     return 0 if res["ok"] else 3
+
+
+def resolve_inputs(args):
+    """手打值 + （可选）信用层 JSON 的权威值 → (tw, cr, notes, conflicts)。
+
+    conflicts 为 None 表示「没给 --credit-json，没比对过」；[] 表示「比对过、一致」。
+    这两者不是同一件事，字段上必须分得开。
+    """
+    tw = parse_pairs(args.tripwires, TRIPWIRES, "引爆点")
+    cr = parse_pairs(args.credit, CREDIT_KEYS, "信用层")
+    notes, conflicts = [], None
+    path = getattr(args, "credit_json", None)
+    if path:
+        auth, cerr = load_credit_json(path)
+        if cerr:
+            notes.append("⚠ " + cerr)
+            # 脚本没给 → 这几项记 ⚪，交给沿用机制；**不**保留手打值顶替
+            for k in ("4",):
+                tw[k] = "⚪"
+            for k in CREDIT_KEYS:
+                cr[k] = "⚪"
+            conflicts = None
+        else:
+            tw, cr, conflicts = merge_authoritative(tw, cr, auth)
+            for c in conflicts:
+                notes.append(f"⚠ {c['group']} {c['key']} 手打 {c['typed']} 与脚本 {c['script']} 冲突，"
+                             f"已以脚本为准（output-format.md 规则②：④ 不得与脚本结论冲突）")
+    return tw, cr, notes, conflicts
 
 
 def parse_date(s):
@@ -473,8 +568,9 @@ def cmd_write(args, _gate_res=None):
                              ensure_ascii=False, indent=2))
         return 3
 
-    tw = parse_pairs(args.tripwires, TRIPWIRES, "引爆点")
-    cr = parse_pairs(args.credit, CREDIT_KEYS, "信用层")
+    tw, cr, wnotes, _ = resolve_inputs(args)
+    for n in wnotes:
+        err(n)
     run_date = parse_date(args.date)
     entry = do_write(state, args.mode, tw, cr, run_date, args.pushed)
     if _gate_res is not None:
@@ -526,10 +622,12 @@ def cmd_run(args):
     state, read_err = load_state()
     if read_err:
         err("⚠ " + read_err)
-    tw = parse_pairs(args.tripwires, TRIPWIRES, "引爆点")
-    cr = parse_pairs(args.credit, CREDIT_KEYS, "信用层")
+    tw, cr, notes, conflicts = resolve_inputs(args)
+    for n in notes:
+        err(n)
     today = parse_date(args.date)
-    gate_res = compute_gate(state or {}, tw, cr, today, read_err)
+    gate_res = compute_gate(state or {}, tw, cr, today, read_err,
+                            credit_notes=notes, credit_conflicts=conflicts)
     rc = cmd_write(args, _gate_res=gate_res) if not args.gate_only else 0
     if args.json:
         if not args.gate_only:
@@ -592,6 +690,10 @@ def main(argv=None):
         p.add_argument("--tripwires", default="", metavar="1=🟢,2=🟡,…")
         p.add_argument("--credit", default="", metavar="L1=🟡,L2=🟢,…,T4=🟡")
         p.add_argument("--date", default=None, metavar="YYYY-MM-DD")
+        p.add_argument("--credit-json", default=None, metavar="FILE",
+                       help="neocloud_credit_monitor.py --json-also 的产物。"
+                            "引爆点④ 与 L1–L4/T4 从这里取（权威），手打值只作交叉检查；"
+                            "档案缺失/坏掉 → 该几项按 ⚪ 沿用，不阻断推送")
         p.add_argument("--json", action="store_true")
 
     r = sub.add_parser("run", help="判闸门并落盘（**推荐**：状态只输入一次）")

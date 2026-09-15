@@ -145,10 +145,14 @@ INDEX_NAMES_CN = {SPX_TICKER: "标普500", NDX_TICKER: "纳斯达克100"}
 # 10Y 合理区间（用于 ^TNX 单位侦测：yfinance 有时给 % 有时给 %x10）
 TNX_MIN_PCT, TNX_MAX_PCT = 0.5, 8.0
 
+# open 只用于**标签诚实度**（盘前 vs 盘中），不参与 asof 判定：
+# 两者都是「当日 K 线未完成」，回退与 RUN_MODE 完全一致。之所以要分，是因为
+# yfinance 在开盘前就会送出一根日期为今天的日 bar（实测 06:11 ET 已有 09-15 的
+# bar），此时若印「盘中」，报告就在市场还没开的时候声称自己在看盘中价。
 MARKETS = {
-    "US": {"tz": "America/New_York", "close": dt.time(16, 0), "label": "美股"},
-    "HK": {"tz": "Asia/Hong_Kong", "close": dt.time(16, 0), "label": "港股"},
-    "KR": {"tz": "Asia/Seoul", "close": dt.time(15, 30), "label": "韩股"},
+    "US": {"tz": "America/New_York", "open": dt.time(9, 30), "close": dt.time(16, 0), "label": "美股"},
+    "HK": {"tz": "Asia/Hong_Kong", "open": dt.time(9, 30), "close": dt.time(16, 0), "label": "港股"},
+    "KR": {"tz": "Asia/Seoul", "open": dt.time(9, 0), "close": dt.time(15, 30), "label": "韩股"},
 }
 
 # 折现率信号阈值（references/data-acquisition.md「折现率信号」）
@@ -534,6 +538,43 @@ def fallback_frames(tickers):
     return frames, tiers, notes
 
 
+def us_early_close(d):
+    """美股 13:00 ET 提前收盘日（每年约 3 天）。不是该日 → None。
+
+    为什么非有不可：收盘时间写死 16:00 时，半日市当天 14:00 ET 的一次运行会认为
+    「还没收盘」而退到前一日——**丢掉一个真实完整交易日的收盘**。实测 SMH 十年里
+    成交量最低的那批日子几乎全是这三种半日市（2016-11-25 比值 0.146、2025-12-24
+    0.263、2019-07-03 0.307…），旧的成交量启发式也正是在这些日子误判。两个判定
+    栽在同一批日子上，根因都是「当天其实 13:00 就收了」。
+
+    三条规则（NYSE/Nasdaq 惯例）：
+      · 感恩节（11 月第 4 个周四）次日
+      · 12-24，落在工作日时（周末则非交易日，落在观察假日也非交易日 → 无 bar，无害）
+      · 07-03，落在工作日时（同上）
+    非交易日本来就没有 bar，所以「是不是交易日」不必在这里判——多判一天不会有副作用。
+    """
+    if d.weekday() >= 5:
+        return None
+    if d.month == 11:
+        nov1 = dt.date(d.year, 11, 1)
+        first_thu = 1 + (3 - nov1.weekday()) % 7
+        if d.day == first_thu + 21 + 1:          # 第 4 个周四的次日
+            return dt.time(13, 0)
+    if (d.month, d.day) in ((12, 24), (7, 3)):
+        return dt.time(13, 0)
+    return None
+
+
+def close_time_for(market: str, d):
+    """该市场在 d 这一天的实际收盘时间（唯一出处，时钟判定与盘口判定共用）。"""
+    meta = MARKETS[market]
+    if market == "US":
+        early = us_early_close(d)
+        if early is not None:
+            return early, True
+    return meta["close"], False
+
+
 def resolve_asof(ref_frame, union_index, market: str):
     """按「完整交易日判定」定该市场的数据日期。
 
@@ -550,7 +591,8 @@ def resolve_asof(ref_frame, union_index, market: str):
     notes = []
     incomplete = False
     if last.date() == now.date():
-        if now.time() < meta["close"]:
+        close_t, is_early = close_time_for(market, now.date())
+        if now.time() < close_t:
             incomplete = True
             # ⚠ 前缀是**必须**的：apply_degraded() 只把 ⚠ 开头的 note 转成
             # degraded_reasons，没有它这条回退就只活在 asof_notes 的中文散文里，
@@ -559,28 +601,21 @@ def resolve_asof(ref_frame, union_index, market: str):
             # JSON 等价规则第 4 条：stderr/正文是冗余频道，不能是唯一频道）。
             notes.append(
                 f"⚠ {meta['label']}运行时点（{now:%H:%M} {meta['tz']}）早于收盘 "
-                f"{meta['close']:%H:%M}，当日 K 线未完成，按完整交易日规则取前一日"
+                f"{close_t:%H:%M}{'（半日市提前收盘）' if is_early else ''}，"
+                f"当日 K 线未完成，按完整交易日规则取前一日"
             )
-        elif ref_frame is not None and last in ref_frame.index and "Volume" in ref_frame.columns:
-            try:
-                pos = ref_frame.index.get_loc(last)
-            except KeyError:
-                pos = None
-            if pos is not None and pos >= 21:
-                cur = float(ref_frame["Volume"].iloc[pos])
-                base = float(ref_frame["Volume"].iloc[pos - 20:pos].mean())
-                if base > 0 and cur < base * 0.5:
-                    incomplete = True
-                    # 同上，⚠ 前缀不可省。注意本分支是 elif：收盘前恒被时钟分支
-                    # 抢先，**盘中不可达**；它只在收盘后触发，而收盘后成交量低于
-                    # 20日均量一半的，实测 10 年 2491 个完整交易日里有 132 次
-                    # （5.30%），其中包含 2025-12-24 这类真实半日市（比值 0.263）
-                    # ——即它把一个真实完整交易日的收盘丢掉了。见 references 与
-                    # MARKETS 的半日市待办。
-                    notes.append(
-                        f"⚠ {meta['label']}基准 {US_REF_TICKER if market == 'US' else '标的'} "
-                        f"当日量 {cur:,.0f} < 20日均量 {base:,.0f} 的 50%，判为未完成盘中 K 线，剔除退到前一日"
-                    )
+        elif is_early:
+            notes.append(f"{meta['label']}本日为半日市（13:00 ET 收盘），"
+                         f"当日 K 线已完整，按当日取数")
+    # 註：这里**曾经**还有一条成交量启发式（当日量 < 20 日均量 50% → 判为未完成盘中
+    # K 线并回退）。已删除，理由是实测的：
+    #   · 它挂在时钟分支的 elif 下，**收盘前永远轮不到它**，所以从来没有当过盘中检测器；
+    #   · 收盘后回放 SMH 十年 2491 个完整交易日，它触发 132 次（5.30%），**全是误判**
+    #     ——每一次都是一个真实的完整交易日，其中最低的那批正是半日市
+    #     （2016-11-25 0.146／2020-12-24 0.246／2025-12-24 0.263／2019-07-03 0.307）；
+    #   · 真正的正例次数是 0。
+    # 半日市那一类现在由 us_early_close() 正面处理，不再靠成交量反推。
+    # 想重新引入类似启发式前，先回放这段历史：把一个真实收盘丢掉，比晚一天拿到它贵。
     if incomplete:
         if len(union_index) < 2:
             return None, notes + ["回退后无可用交易日"]
@@ -605,25 +640,31 @@ def market_session(market: str, union_index, asof_ts):
     now = dt.datetime.now(ZoneInfo(meta["tz"]))
     last = union_index[-1] if union_index is not None and len(union_index) else None
     has_today = bool(last is not None and last.date() == now.date())
-    before_close = now.time() < meta["close"]
+    # 与 resolve_asof 共用同一个收盘时间来源：半日市当天 14:00 ET 是**盘后**，
+    # 不是盘中。两处各写各的会让 RUN_MODE 与 asof 在这三天互相矛盾。
+    close_t, is_early = close_time_for(market, now.date())
+    before_close = now.time() < close_t
+    before_open = now.time() < meta.get("open", dt.time(0, 0))
     if has_today:
-        state = "intraday" if before_close else "post_close"
+        # 盘前也有当日 bar（yfinance 提前送出），但那不是盘中价。
+        state = ("pre_market" if before_open else "intraday") if before_close else "post_close"
     else:
         state = "pre_open" if before_close else "closed"
     asof_date = asof_ts.date().isoformat() if asof_ts is not None else None
     return {
         "state": state,
-        "label": {"intraday": "盘中", "post_close": "盘后",
+        "label": {"intraday": "盘中", "pre_market": "盘前", "post_close": "盘后",
                   "pre_open": "开盘前", "closed": "休市"}[state],
         "now": now.isoformat(timespec="seconds"),
         "tz": meta["tz"],
-        "close_time": meta["close"].strftime("%H:%M"),
+        "close_time": close_t.strftime("%H:%M"),
+        "early_close": bool(is_early),
         "latest_bar": last.date().isoformat() if last is not None else None,
         # 当日 bar 是否已完结。intraday 时为 False——这正是 asof 回退的原因。
-        "bar_complete": state != "intraday",
+        "bar_complete": state not in ("intraday", "pre_market"),
         "asof": asof_date,
         # asof 是否因当日 bar 未完成而被推回前一日（回退链规则第 2 条：标明档位）
-        "rolled_back": bool(state == "intraday" and last is not None and asof_date
+        "rolled_back": bool(state in ("intraday", "pre_market") and last is not None and asof_date
                             and asof_date != last.date().isoformat()),
     }
 
@@ -1125,7 +1166,19 @@ def apply_hk(row, q):
     qt = q.get("quote_time")
     if qt:
         row["quote_time"] = qt
+        # 覆写前先留下**指标**那一侧的日期。港股这一行本来就是两个口径拼起来的：
+        # 价格/52周高来自 hk_quote（腾讯·原始未复权），MA/RSI/20日高 仍来自 yfinance
+        # 日线——两者可以落在不同日期（data-acquisition.md 的〔编者注〕已承认这点）。
+        # 只留一个 asof 会让报告头与该行各说各话：2026-09-14 实测头部印「港股 09-11」
+        # 而三行用的都是 09-14 的价。
+        row["asof_indicators"] = row.get("asof")
         row["asof"] = qt.split(" ")[0]
+        if row["asof_indicators"] and row["asof_indicators"] != row["asof"]:
+            row["asof_split"] = True
+            row["notes"].append(
+                f"价格口径日期 {row['asof']}（hk_quote 收盘）与指标口径日期 "
+                f"{row['asof_indicators']}（yfinance 日线：MA/RSI/20日高）不同日；"
+                f"T1 用 52周高(hk_quote)、T2/RSI 用 yfinance —— 两者不得当成同一天的读数")
     row["market_status"] = q.get("market_status")
     if is_num(row.get("volume")) and is_num(row.get("vol_ma20")) and row["vol_ma20"]:
         row["vol_ratio"] = rnd(row["volume"] / row["vol_ma20"], 3)
@@ -1344,7 +1397,23 @@ def print_report(result):
     print("=" * 96)
     print("📊 个股技术面（yfinance 本地计算 · auto_adjust=False）")
     print("=" * 96)
-    parts = [f"{MARKETS[m]['label']} {asof[m]}" for m in ("US", "HK", "KR") if asof.get(m)]
+    # 报告头的日期必须与各行实际使用的日期一致。港股行的价格可能来自比 yfinance
+    # 日线更新的 hk_quote 收盘（apply_hk 覆写），此时只印 union 那个日期就是谎报。
+    rows_all = result.get("tickers") or []
+    price_dates = {}
+    for r in rows_all:
+        if r.get("asof"):
+            price_dates.setdefault(r["market"], set()).add(r["asof"])
+    parts = []
+    for m in ("US", "HK", "KR"):
+        if not asof.get(m):
+            continue
+        pset = price_dates.get(m) or set()
+        newest = max(pset) if pset else None
+        if newest and newest != asof[m]:
+            parts.append(f"{MARKETS[m]['label']} 价 {newest}／指标 {asof[m]}")
+        else:
+            parts.append(f"{MARKETS[m]['label']} {asof[m]}")
     print("数据日期：" + "；".join(parts) if parts else "数据日期：N/A")
     # 交易状态逐市场给：三个市场的盘口天天不同步，一个全局 token 说不清楚。
     sess = result.get("session") or {}
@@ -1355,7 +1424,7 @@ def print_report(result):
             if not s:
                 continue
             tag = f"{MARKETS[m]['label']} {s['label']}"
-            if s.get("state") == "intraday":
+            if s.get("state") in ("intraday", "pre_market"):
                 tag += f"（{s['now'][11:16]} {s['tz'].split('/')[-1]}，收盘 {s['close_time']}）"
             sparts.append(tag)
         print("交易状态：" + "；".join(sparts))
@@ -1504,6 +1573,13 @@ def apply_degraded(result):
     # 2026-09-11 的教训：新增了「日线来自回退档…」与「yfinance 与回退档均未返回」两条 note
     # 之后，子串匹配把 42 档美股/韩股全打成「港股价格回退」，provenance 字段整体说谎
     # （回退链规则第 2 条：来源必须标对；第 3 条：不同档不得并成一张表）。
+    split = [r["ticker"] for r in rows if r.get("asof_split")]
+    if split:
+        reasons.append(
+            "⚠ 价格口径与指标口径不同日（价来自 hk_quote 收盘、MA/RSI/20日高 来自 yfinance 日线）："
+            + "、".join(f"{r['ticker']}(价 {r.get('asof')}／指标 {r.get('asof_indicators')})"
+                        for r in rows if r.get("asof_split"))
+            + "；两者不得当成同一天的读数比较")
     hk_fb = [r["ticker"] for r in rows if r.get("hk_price_fallback")]
     if hk_fb:
         reasons.append("港股价格回退 yfinance 未复权日线（口径次优）：" + ", ".join(hk_fb))
@@ -1541,9 +1617,11 @@ def apply_degraded(result):
     # 不把它写成 degraded_reasons，只读该字段的下游会把一份昨日快照当成今日读数。
     sess = result.get("session") or {}
     for mkt, s in sess.items():
-        if s.get("state") == "intraday":
+        if s.get("state") in ("intraday", "pre_market"):
             reasons.append(
-                f"⚠ {MARKETS[mkt]['label']}此刻为盘中（{s.get('now')}，收盘 {s.get('close_time')}）："
+                f"⚠ {MARKETS[mkt]['label']}此刻为{s.get('label') or '盘中'}"
+                f"（{s.get('now')}，收盘 {s.get('close_time')}"
+                f"{'·半日市' if s.get('early_close') else ''}）："
                 f"本行所有技术面字段（收盘/52周高/20日高/T1·T2触发价/RSI/均线/量比）"
                 f"均为最近完整交易日 {s.get('asof')} 之值，非今日")
     live = result.get("live") or {}
@@ -1823,7 +1901,7 @@ def run(args):
                 continue
             mkt = r["market"]
             sess = sessions.get(mkt) or {}
-            if sess.get("state") != "intraday":
+            if sess.get("state") not in ("intraday", "pre_market"):
                 continue
             attach_live_overlay(r, frames.get(r["ticker"]), asof.get(mkt + "_ts"), sess)
             if r.get("live_price") is not None:
@@ -1865,7 +1943,7 @@ def run(args):
             "enabled": bool(want_live),
             "rows": len(live_rows),
             "markets_intraday": sorted(m for m, s in sessions.items()
-                                       if s.get("state") == "intraday"),
+                                       if s.get("state") in ("intraday", "pre_market")),
             "touched_live": sorted(r["ticker"] for r in live_rows if r.get("touched_live") is True),
             "t1_touch_live": sorted(r["ticker"] for r in live_rows if r.get("t1_touch_live") is True),
             "t2_touch_live": sorted(r["ticker"] for r in live_rows if r.get("t2_touch_live") is True),

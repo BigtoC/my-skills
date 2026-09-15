@@ -210,7 +210,8 @@ S="$SKILL_DIR/scripts"
 mkdir -p /tmp/search                       # 检索分组自己的命名空间，与脚本产物分开
 rm -f /tmp/check.json /tmp/check.err /tmp/tech.json /tmp/perp.json \
       /tmp/techperp.log /tmp/credit.md /tmp/credit.err /tmp/*.rc \
-      /tmp/search/a.json /tmp/search/b.json /tmp/search/c.json /tmp/search/d.json
+      /tmp/search/a.json /tmp/search/b.json /tmp/search/c.json /tmp/search/d.json \
+      /tmp/credit.json
 #      ^ /tmp/sess.json **故意不在这一行**：后面每一个新 shell 都要重新从它读回
 #        RUN_MODE / RUN_DATE（见下方 re-derive 片段）。第零步已经 rm-then-write 过，
 #        所以它一定是本轮的。删掉它，后面的块就没有盘口状态可依。
@@ -262,7 +263,10 @@ fi
 RUN_MODE=$(python3 -c "import json;s=json.load(open('/tmp/sess.json'))['session']['US'];print('intraday' if s['state']=='intraday' else 'postclose')" 2>/dev/null)
 [ -n "$RUN_MODE" ] || { echo "✗ 停线：RUN_MODE 未定（/tmp/sess.json 缺失或不可解析）"; exit 3; }
 HIST_FLAG=""; [ "$RUN_MODE" = "intraday" ] && HIST_FLAG="--no-history"
-python3 "$S/neocloud_credit_monitor.py" --emit both $HIST_FLAG >/tmp/credit.md 2>/tmp/credit.err
+# --json-also：同一次取数另存一份机读档，供第六步的推送闸门取引爆点④/L1–L4/T4。
+# stdout 仍是 --emit both，报告正文照旧。
+python3 "$S/neocloud_credit_monitor.py" --emit both $HIST_FLAG \
+  --json-also /tmp/credit.json >/tmp/credit.md 2>/tmp/credit.err
 RC_CREDIT=$?; echo "── credit exit=$RC_CREDIT"
 
 # 收 t=0 那条背景 job（它多半早就跑完了）
@@ -297,8 +301,10 @@ echo "── techperp exit=$RC_TECHPERP"
     `/tmp/tech.json` 不存在而退出码是 0，join 必须按「缺档」响亮失败，**不得读成「该单元无数据」**；
   - `perp_quotes.py --json ... --quiet` 只关 stdout 的人读正文（并发下正文会交织），
     **stderr 照常喊、降级照常进 JSON 的 `degraded` / `degraded_reasons`**；
-  - `neocloud_credit_monitor.py --emit both` **只有 stdout 一种出口**：`--emit` 只取一个值，
+  - `neocloud_credit_monitor.py --emit both` 的 **`--emit` 只取一个值**（渲染形式只能选一种），
     `--emit both` 与 `--json` 同给会被响亮拒绝并 exit 1。所以这一路重定向 stdout 落档。
+    要机读 JSON 用 **`--json-also FILE`**（与 `--compact-also` 同性质：另存一份，stdout 不变，
+    且与正文出自**同一次取数、同一个判定对象**）。
     **不要为了拿机读 JSON 再跑一次**——那是第二轮网络取数，还会同日写第二笔历史档
     （明天的⑩跨档比对的是第二次，而报告引用的是第一次）。
 - **逐单元读 `<unit>.rc` 收退出码，绝不裸 `wait`、也不要靠 `$!` / `wait $PID`。**
@@ -501,9 +507,22 @@ RUN_DATE=$(python3 -c "import json;print(json.load(open('/tmp/sess.json'))['sess
 [ -n "$RUN_MODE" ] && [ -n "$RUN_DATE" ] || { echo "✗ 停线：RUN_MODE/RUN_DATE 未定"; exit 3; }
 
 python3 "$S/run_state.py" run --mode "$RUN_MODE" --date "$RUN_DATE" --json \
+  --credit-json /tmp/credit.json \
   --tripwires '1=🟢,2=🟡,3=⚪,4=🟡,5=🟢' \
   --credit 'L1=🟡,L2=🟢,L3=🟡,L4=⚪,T4=🟡'
 ```
+
+**`--credit-json` 不是可选的方便功能。** `output-format.md` 规则② 写明引爆点④ 的状态
+**只由 `neocloud_credit_monitor.py` 产出**、日报不另行人工判读、**不得与脚本结论冲突**——
+所以 ④ 与 L1–L4/T4 本来就只有一个出处。手打一遍等于给同一个事实造第二个来源，
+正是本仓库列为最贵的那类失败（两份 TH 字典、两份 search-contract）。传了这个旗标之后：
+
+- ④ 与 L1–L4/T4 **一律取自脚本**；你在 `--tripwires`/`--credit` 里写的对应值只当交叉检查。
+- 不一致时**以脚本为准**，并逐条记进 `credit_json_conflicts` 字段 + `degraded_reasons` + stderr。
+  不阻断推送（一个打字错误不该拦下当天的权威报告），但报告里要说明。
+- `credit_json_conflicts` 为 `[]` = 比对过、一致；为 `null` = **没给这个旗标、根本没比对**。
+- 信用层脚本这轮失败 / 档案缺失 → 这几项自动记 ⚪ 走沿用（SKILL.md 既有规定），
+  **手打值不会顶替**，也不会变成硬错误。
 
 **`--date` 用美东日历日（`session.US.now[:10]`），不是本机日期。** 两个理由：
 ① 重跑幂等——状态档以日期为键，同一轮的重跑必须落回同一个键，否则第二次会
