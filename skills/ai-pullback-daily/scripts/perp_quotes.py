@@ -23,6 +23,10 @@ T1/T2/T3 永远只用「最近一个完整交易日收盘价」计算。
     python3 scripts/perp_quotes.py --json out.json       # 同时落盘结构化结果
     python3 scripts/perp_quotes.py --spot tech.json      # 用 technicals.py --json 的现货收盘价
                                                          # 未提供 --spot 时只输出 perp 价与 OI 分档
+    python3 scripts/perp_quotes.py --json out.json --quiet   # 只落盘，stdout 不打人类正文
+
+--quiet 只关 stdout 的人类可读正文（并发调度下多个单元同时跑，正文会交织在一起），
+**不是**关警告：stderr 照常喊，降级照常写进 JSON 的 degraded / degraded_reasons。
 
 标的清单读姊妹技能 ai-industry-weekly 的 assets/universe.json（不内联 ticker 列表、
 不硬编码标的数）。姊妹技能的定位顺序 / 探针 / 环境变量语义由共享模块 `_weekly.py`
@@ -97,6 +101,16 @@ OI_THIN = 3_000_000.0       # 薄盘：$3–10M，须标注「（薄盘 $X.XM，
 MIN_ABS_MOVE = 2.0          # 只输出 |隐含变动| ≥ 2%
 MAJOR_MOVE = 5.0            # ≥ 5% 视为重大异动，须 WebSearch 查起因
 RATIO_LO, RATIO_HI = 0.9, 1.1   # 1:1 核对区间，落区间外 → 判定取错市场并跳过
+
+# 取数失败与正常两条路径都要吐同一份阈值/同一句硬约束，写成常量免得两边各说各话。
+THRESHOLDS = {"oi_main": OI_MAIN, "oi_thin": OI_THIN, "min_abs_move_pct": MIN_ABS_MOVE,
+              "major_move_pct": MAJOR_MOVE, "ratio_band": [RATIO_LO, RATIO_HI]}
+OBSERVATION_NOTE = "纯观察节点：绝不产生 T1/T2/T3 触发、绝不改变分桶；跨阈值只能写成预告。"
+
+# 未提供 --spot 会把整个「🌙 盘后隐含」掏空（隐含变动、科技相对强弱、跨阈值预告全没了），
+# 是本脚本最大的一档降级，必须显式喊出来而不是让读者从空区块自己猜。
+NO_SPOT_REASON = ("未提供 --spot：无现货基准，本节退化为只输出 perp 价与 OI 分档，"
+                  "隐含变动 / 科技相对强弱 / 跨阈值预告全部 N/A")
 
 # 非同名标的 → xyz 市场名。其余标的默认同名（NVDA → xyz:NVDA）。
 MARKET_ALIASES = {
@@ -388,6 +402,35 @@ def thin_suffix(row):
     return ""
 
 
+# 每个 status 的中文说明：正文【跳过】区块与 JSON 的 status_reason 共用这一份，
+# 免得同一件事在正文里叫「过薄·不输出」、在 JSON 里叫别的名字。
+STATUS_REASON_CN = {
+    "ok": None,
+    "no_spot": "无现货基准，仅报 perp 价",
+    "too_thin": f"过薄·不输出（OI < {fmt_money(OI_THIN)}，池子迁移或停摆，报价不可信）",
+    "ratio_fail": f"疑似取错市场（perp/现货 比值超出 {RATIO_LO}–{RATIO_HI}）",
+    "delisted": "已下架 / 无报价",
+    "no_fx": "缺同池汇率，无法折算",
+    "unlisted": "xyz 池未上架（不要硬找替代）",
+    "forbidden": "命中禁用市场",
+}
+
+
+def finalize_row(row, *, triggers: bool = True):
+    """把「没算出来」显式写成 null + 一句中文原因，而不是让这些键干脆消失。
+
+    约定：算不出来的判定写 null，False 只表示「算过、没触发」——这就是 ⚪️ / ❌
+    在 JSON 里的形态。键缺失时下游 .get() 也拿到 None，但缺失读不出「为什么」，
+    所以一律补上 status_reason。
+    """
+    row.setdefault("implied_pct", None)
+    if triggers:
+        row.setdefault("major", None)     # None = 隐含变动没算出来；False 才是「算了，没到 5%」
+        row.setdefault("forecast", None)  # ok 行的 None = 没跨阈值；其余行的 None = 没算，看 status_reason
+    row["status_reason"] = STATUS_REASON_CN.get(row.get("status"))
+    return row
+
+
 def forecast_note(row):
     """跨阈值只能写成预告，绝不记为已触发。"""
     perp, spot = row.get("perp_usd_equiv"), row.get("spot_close")
@@ -476,6 +519,12 @@ def evaluate(ticker, currency, markets, spot_flat, fx_rates, fx_notes):
 # --------------------------------------------------------------------------
 TIER_CN = {"main": "主用", "thin": "薄盘·仅参考", "too_thin": "过薄", "unknown": "OI未知"}
 
+MAJOR_ACTION = ("⚠️ ≥5%：须 WebSearch 查起因，并在风险提示明细单列"
+                "（若为盘后财报，注明「财报已出，盘后 ±X.X%」）。")
+FORECAST_NOT_TRIGGER = "这些**不是**触发。T1/T2/T3 仍只用最近一个完整交易日收盘价判定，分桶不变。"
+RATIO_FAIL_HINT = ("真实的隔夜 >10% 跳空也会落在这里。先 WebSearch 核实是财报/事件还是取错市场，"
+                   "核实前一律按取错市场处理，不得输出该标的的隐含变动。")
+
 FOOTER = [
     "",
     "— 硬约束（本节为纯观察节点）—",
@@ -485,6 +534,22 @@ FOOTER = [
     f"· 只输出 |隐含变动| ≥ {MIN_ABS_MOVE:.0f}%；≥ {MAJOR_MOVE:.0f}% 为重大异动，须 WebSearch 查起因并在风险提示单列。",
     "· 带 ⚠️EARN 且当日盘后已发布财报的标的，其隐含变动即为财报反应，须点名注明「财报已出，盘后 ±X.X%」。",
 ]
+
+
+def prohibitions_block():
+    """正文里全部禁止性文字的结构化副本。
+
+    --quiet 下正文根本不打，JSON 就是这次运行唯一的载体；硬约束不能只活在
+    人类可读分支里，否则并发调度跑出来的那份结果读不到「这不是触发」。
+    措辞一律引用上面的常量，不另起炉灶。
+    """
+    return {
+        "observation_only": OBSERVATION_NOTE,
+        "footer": [ln for ln in FOOTER if ln.startswith("·")],
+        "major_move": MAJOR_ACTION,
+        "forecast_not_triggered": FORECAST_NOT_TRIGGER,
+        "ratio_fail_handling": RATIO_FAIL_HINT,
+    }
 
 
 def render(result):
@@ -521,7 +586,7 @@ def render(result):
         elif row["status"] == "ratio_fail":
             line += f" · 疑似取错市场（perp/现货 = {row['ratio']:.3f}，超出 {RATIO_LO}–{RATIO_HI}），跳过"
         else:
-            line += " · 无现货基准，仅报 perp 价"
+            line += f" · {STATUS_REASON_CN['no_spot']}"
         A(line + f"  [{row['name_cn']}]")
     rs = result.get("tech_rel_strength")
     if rs is not None:
@@ -553,7 +618,7 @@ def render(result):
             A(f"    汇率：1 USD = {fmt_px(r['fx_rate'])} {r['fx_currency']}（同池 {PREFIX}{FX_MARKETS[r['fx_currency']]}）"
               + (f" · {r['fx_note']}" if r.get("fx_note") else ""))
         if r["major"]:
-            A("    ⚠️ ≥5%：须 WebSearch 查起因，并在风险提示明细单列（若为盘后财报，注明「财报已出，盘后 ±X.X%」）。")
+            A(f"    {MAJOR_ACTION}")
         if r.get("forecast"):
             A(f"    {r['forecast']}")
 
@@ -566,7 +631,7 @@ def render(result):
         A("【跨阈值预告 · 非已触发】")
         for r in fc:
             A(f"· {r['ticker']:<10} {r['forecast']}{thin_suffix(r)}")
-        A("  ↑ 这些**不是**触发。T1/T2/T3 仍只用最近一个完整交易日收盘价判定，分桶不变。")
+        A(f"  ↑ {FORECAST_NOT_TRIGGER}")
 
     # —— 全部在架标的（含未达 2% 的，供交叉核对）——
     listed = [r for r in result["stocks"] if r["status"] in ("ok", "no_spot")]
@@ -587,14 +652,8 @@ def render(result):
     # —— 跳过 ——
     A("")
     A("【跳过】")
-    groups = [
-        ("too_thin", f"过薄·不输出（OI < {fmt_money(OI_THIN)}，池子迁移或停摆，报价不可信）"),
-        ("ratio_fail", f"疑似取错市场（perp/现货 比值超出 {RATIO_LO}–{RATIO_HI}）"),
-        ("delisted", "已下架 / 无报价"),
-        ("no_fx", "缺同池汇率，无法折算"),
-        ("unlisted", "xyz 池未上架（不要硬找替代）"),
-        ("forbidden", "命中禁用市场"),
-    ]
+    groups = [(st, STATUS_REASON_CN[st]) for st in
+              ("too_thin", "ratio_fail", "delisted", "no_fx", "unlisted", "forbidden")]
     for status, label in groups:
         group = [r for r in result["stocks"] if r["status"] == status]
         if not group:
@@ -604,8 +663,7 @@ def render(result):
             for r in group:
                 A(f"    {r['ticker']:<10} {r['market']:<12} perp {fmt_px(r['mark'])}"
                   f" / 现货折USD {fmt_px(r.get('spot_usd_equiv'))} = {r['ratio']:.3f} → 不输出隐含变动")
-            A("    （提示：真实的隔夜 >10% 跳空也会落在这里。先 WebSearch 核实是财报/事件还是取错市场，"
-              "核实前一律按取错市场处理，不得输出该标的的隐含变动。）")
+            A(f"    （提示：{RATIO_FAIL_HINT}）")
         elif status == "too_thin":
             A(f"· {label}：" + "、".join(f"{r['ticker']}({fmt_money(r['notional_oi'])})" for r in group))
         else:
@@ -616,12 +674,76 @@ def render(result):
 
 
 # --------------------------------------------------------------------------
+# 降级汇总
+# --------------------------------------------------------------------------
+def compute_degraded(result):
+    """把本次运行的所有降级收敛成 (degraded, reasons)。
+
+    降级 = 自检没过 / 走了兜底档 / 数据源取不到 / 任何字段因缺数据记成 N/A。
+    正文里这些话本来就有，但 --quiet 时正文不打，所以必须同时是结构化字段。
+    「xyz 池未上架」不算降级：池子本来就只上一部分标的，不是这次运行坏了。
+    """
+    reasons = []
+
+    if not result.get("spot_given"):
+        reasons.append(NO_SPOT_REASON)
+    elif not result.get("spot_path"):
+        reasons.append(f"--spot {result.get('spot_arg_name') or ''} 读取失败（文件读不出、"
+                       "不是合法 JSON、或里面没有任何现货收盘价）：退化为只输出 perp 价与 OI 分档")
+    elif not result.get("spot_date_hint"):
+        reasons.append("现货基准没带数据日期：无法核对它是不是最近一个完整交易日的收盘价")
+
+    if not result.get("indices"):
+        reasons.append("未取到 SP500 / XYZ100 报价：大盘层留空")
+    for row in result.get("indices", []):
+        if row.get("status") == "ratio_fail":
+            reasons.append(f"大盘 {row['market']} 1:1 核对失败（perp/现货 = {row['ratio']:.3f}，"
+                           f"超出 {RATIO_LO}–{RATIO_HI}）：疑似取错市场，不输出隐含变动")
+    if result.get("tech_rel_strength") is None:
+        reasons.append("科技相对强弱 N/A：SP500 / XYZ100 两腿隐含变动未同时取到")
+
+    for cur, note in sorted((result.get("fx") or {}).get("notes", {}).items()):
+        reasons.append(f"汇率 {cur}：{note}")
+
+    stocks = result.get("stocks") or []
+    for status in ("ratio_fail", "too_thin", "delisted", "no_fx", "forbidden"):
+        group = [r["ticker"] for r in stocks if r.get("status") == status]
+        if group:
+            reasons.append(f"{STATUS_REASON_CN[status]}：" + "、".join(group))
+    if result.get("spot_path"):
+        # --spot 读到了，但这些标的在里面没有收盘价——逐个都是 N/A，不能算「查过没事」
+        group = [r["ticker"] for r in stocks if r.get("status") == "no_spot"]
+        if group:
+            reasons.append(f"{STATUS_REASON_CN['no_spot']}（--spot 里没有这些标的的收盘价）："
+                           + "、".join(group))
+
+    return bool(reasons), reasons
+
+
+def write_json(result, dest, quiet):
+    """落盘结构化结果。写失败只警告不中断——正文/落盘互不绑架。"""
+    out = Path(dest)
+    try:
+        if out.parent and str(out.parent) not in ("", "."):
+            out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        err(f"警告：写入 {out.name} 失败：{scrub(exc)}")
+    else:
+        if not quiet:
+            print(f"\n已写入 {rel_display(out)}")
+
+
+# --------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(
         description="24/7 永续隐含变动（Hyperliquid xyz 池）· 纯观察节点，绝不改变 T1/T2/T3 与分桶",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--json", metavar="OUT", help="把结构化结果写到该文件")
+    ap.add_argument("--quiet", action="store_true",
+                    help="stdout 不打人类可读正文（并发调度下多个单元同时跑，正文会交织）；"
+                         "**不关警告**：stderr 照常喊，降级照常进 JSON 的 degraded/degraded_reasons")
     ap.add_argument("--spot", metavar="PATH",
                     help="technicals.py --json 的输出，提供各标的最近完整交易日收盘价；不给则只输出 perp 价与 OI 分档")
     ap.add_argument("--timeout", type=float, default=20.0, help="单次请求超时秒数（默认 20）")
@@ -629,25 +751,63 @@ def main():
 
     universe, universe_path = load_universe()
 
-    payload, reason = fetch_meta_and_ctxs(args.timeout, retries=2)   # 最多重试 2 次
-    if payload is None:
-        # 硬约束 6：整节写这句，不影响其余所有部分
-        print("== 第二步之二：盘后 / 休市期间隐含变动（24/7 永续）==")
-        print(f"本次未取到 24/7 永续数据（{reason}；已重试 2 次）。")
-        print("按规则：本节留空，不影响其余所有部分；不得因此改变任何 T1/T2/T3 判定或分桶。")
-        sys.exit(0)
-
-    markets = build_markets(payload)
-
-    spot_flat, spot_path = {}, None
     # spot_given / spot_arg_name 与 spot_path 是三件不同的事：
     #   spot_given    = 用户给没给 --spot
     #   spot_arg_name = 给的那个文件名（只回显文件名，不带绝对路径）
     #   spot_path     = 真的读出现货价了（None = 本次没有现货基准）
     # 早先只有 spot_path，报告头据此打「未提供 --spot」——于是「给了但读取失败」
     # 会被如实性反了地写成「没给」，读者以为是自己漏了参数，实际是 tech.json 坏了/空了。
+    # 前两个在取数之前就算好：取数失败那条路径也要如实报告 --spot 给没给。
     spot_given = bool(args.spot)
     spot_arg_name = Path(args.spot).name if args.spot else None
+
+    payload, reason = fetch_meta_and_ctxs(args.timeout, retries=2)   # 最多重试 2 次
+    if payload is None:
+        # 硬约束 6：整节写这句，不影响其余所有部分
+        lines = [
+            "== 第二步之二：盘后 / 休市期间隐含变动（24/7 永续）==",
+            f"本次未取到 24/7 永续数据（{reason}；已重试 2 次）。",
+            "按规则：本节留空，不影响其余所有部分；不得因此改变任何 T1/T2/T3 判定或分桶。",
+        ]
+        # --quiet 只关 stdout 的正文，绝不关警告：这三句改走 stderr。
+        # 否则并发调度下这次运行会一声不吭地 exit 0，读者以为「查过，没事」。
+        for line in lines:
+            print(line, file=sys.stderr if args.quiet else sys.stdout)
+        if args.json:
+            # 取数失败也要落盘：--json 指定了却没有文件，下游只会读到上一次的陈旧结果。
+            reasons = [f"未取到 24/7 永续数据（{reason}；已重试 2 次）：本节留空"]
+            if not spot_given:
+                reasons.append(NO_SPOT_REASON)
+            write_json({
+                "section": "第二步之二·24/7 永续隐含变动",
+                "observation_only": True,
+                "note": OBSERVATION_NOTE,
+                "degraded": True,
+                "degraded_reasons": reasons,
+                "prohibitions": prohibitions_block(),
+                "source": {"url": API_URL, "type": "metaAndAssetCtxs", "dex": DEX},
+                "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "fetch_error": reason,
+                "market_count": 0,
+                "market_listed": 0,
+                "universe_path": universe_path,
+                "universe_count": len(universe),
+                "spot_path": None,
+                "spot_given": spot_given,
+                "spot_arg_name": spot_arg_name,
+                "spot_date_hint": None,
+                "thresholds": THRESHOLDS,
+                "fx": {"rates": {}, "notes": {}},
+                "fx_lines": [],
+                "indices": [],
+                "tech_rel_strength": None,       # null = 没算成，不是 0
+                "stocks": [],
+            }, args.json, args.quiet)
+        sys.exit(0)
+
+    markets = build_markets(payload)
+
+    spot_flat, spot_path = {}, None
     if args.spot:
         spot_flat = load_spot(Path(args.spot))
         if spot_flat:
@@ -670,7 +830,8 @@ def main():
             fx_lines.append(f"汇率：{cur} 计价标的在 {DEX} 池无对应汇率市场 → 本次跳过。")
 
     # 个股
-    stocks = [evaluate(t, c, markets, spot_flat, fx_rates, fx_notes) for t, c in universe]
+    stocks = [finalize_row(evaluate(t, c, markets, spot_flat, fx_rates, fx_notes))
+              for t, c in universe]
 
     # 大盘层
     indices = []
@@ -695,7 +856,7 @@ def main():
                 row["status"] = "ok"
             else:
                 row["status"] = "ratio_fail"
-        indices.append(row)
+        indices.append(finalize_row(row, triggers=False))
 
     by_market = {r["market"]: r for r in indices}
     sp = by_market.get(f"{PREFIX}SP500", {}).get("implied_pct")
@@ -706,7 +867,11 @@ def main():
     result = {
         "section": "第二步之二·24/7 永续隐含变动",
         "observation_only": True,
-        "note": "纯观察节点：绝不产生 T1/T2/T3 触发、绝不改变分桶；跨阈值只能写成预告。",
+        "note": OBSERVATION_NOTE,
+        # 降级汇总在下面回填（要先有完整 result 才算得出来），放在这里是为了排在头部显眼处。
+        "degraded": None,
+        "degraded_reasons": [],
+        "prohibitions": prohibitions_block(),
         "source": {"url": API_URL, "type": "metaAndAssetCtxs", "dex": DEX},
         "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "market_count": len(markets),
@@ -717,8 +882,7 @@ def main():
         "spot_given": spot_given,
         "spot_arg_name": spot_arg_name,
         "spot_date_hint": max(set(spot_dates), key=spot_dates.count) if spot_dates else None,
-        "thresholds": {"oi_main": OI_MAIN, "oi_thin": OI_THIN, "min_abs_move_pct": MIN_ABS_MOVE,
-                       "major_move_pct": MAJOR_MOVE, "ratio_band": [RATIO_LO, RATIO_HI]},
+        "thresholds": THRESHOLDS,
         "fx": {"rates": fx_rates, "notes": fx_notes},
         "fx_lines": fx_lines,
         "indices": indices,
@@ -726,18 +890,18 @@ def main():
         "stocks": stocks,
     }
 
-    print(render(result))
+    result["degraded"], result["degraded_reasons"] = compute_degraded(result)
+
+    if args.quiet:
+        # 正文关了，降级就没人念了——逐条补到 stderr。不 quiet 时正文本身已经写清楚，
+        # 再往 stderr 抄一遍只会把同一件事说两遍。
+        for line in result["degraded_reasons"]:
+            err(f"警告：降级 · {line}")
+    else:
+        print(render(result))
 
     if args.json:
-        out = Path(args.json)
-        try:
-            if out.parent and str(out.parent) not in ("", "."):
-                out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        except OSError as exc:
-            err(f"警告：写入 {out.name} 失败：{scrub(exc)}")
-        else:
-            print(f"\n已写入 {rel_display(out)}")
+        write_json(result, args.json, args.quiet)
     return 0
 
 

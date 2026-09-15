@@ -30,7 +30,7 @@ references/signals-f-monday.md 与 references/data-cadence.md 的「yfinance 通
 
 硬约束（弄错会直接改变判定，改代码前先读 references/known-traps.md）：
   * **必须用 `requests.Session` + UA**——urllib 走 yfinance 会 SSL 验证失败。
-    注意这条与 FRED **相反**：FRED 必须用 `curl`，python `requests` 在该环境会超时。
+    注意这条与 FRED **相反**：FRED **绝不能送浏览器 UA**（送了会超时）。方向差在 header，不在语言。
     所以本脚本只负责 yfinance 那一半，FRED 那一半在 scripts/fred.sh。
   * **不要用 yfinance 取 `^VIX3M` / `^VIX9D` / `^VIX6M`**——三个序列全部停更，
     而 `^VIX` 是当日的，拿它们算期限结构会静默地用几周前的远月值比今天的近月值，
@@ -40,7 +40,7 @@ references/signals-f-monday.md 与 references/data-cadence.md 的「yfinance 通
     DX-Y.NYB 取不到时本脚本只标 N/A，绝不换源顶替。
   * **缺失一律 N/A，不估算。** 一个看起来合理的数字比一个明显的空格危险得多。
   * 单位/量级自检见 MAGNITUDE_CHECKS；算出来量级不对先怀疑单位，不要直接报出来。
-    （净流动性 5–7兆｜HY OAS 2–10%｜Sahm −1–2｜Buffett 50–250%｜CAPE 5–50
+    （净流动性 5–7兆｜HY OAS 2–10%｜Sahm −1–2｜Buffett 50–300%｜CAPE 5–50
      这五项不在本脚本，归 fred.sh 与长期估值取数。）
 
 分档取值全部来自 references，唯一一处由实测基线推出的是信号 20 的 🟡 带：
@@ -230,9 +230,10 @@ def load_deps():
         import yfinance as _yf
     except ImportError as exc:
         missing = getattr(exc, "name", None) or "yfinance / pandas / numpy / requests 之一"
+        # 依赖缺失 = 2（本仓库保留：1 参数错误｜2 依赖缺失｜3 取数失败｜4 量级自检未通过）。
         err(f"错误：缺少依赖 {missing}（{scrub(exc)}）。"
             f"请先 `pip install yfinance pandas numpy requests`。")
-        sys.exit(1)
+        sys.exit(2)
     try:
         import logging
 
@@ -260,13 +261,50 @@ def make_session():
     """必须是 requests.Session + UA。
 
     references/known-traps.md：`yfinance via urllib` → SSL 验证失败 →
-    必须用 `requests.Session` + UA。这条与 FRED（必须用 curl）方向相反，最容易搞混。
+    必须用 `requests.Session` + UA。这条与 FRED（绝不能送浏览器 UA）方向相反，最容易搞混。
     """
     import requests
 
     s = requests.Session()
     s.headers["User-Agent"] = USER_AGENT
     return s
+
+
+# 实际用到的取数引擎。fallback 规则第 2 条：哪一层出的数，人读与 --json 都要标出来。
+# 写死成 "requests.Session + UA" 会在限流回退时说谎——那正是本栏位存在的意义。
+_ENGINE_USED = "requests.Session + UA"
+_ENGINE_NOTES: list[str] = []
+
+
+# 逐标的实际档位（回退链规则第 2 条：哪一层出的数要能逐个查）。
+_TIER_BY_TICKER: dict[str, str] = {}
+# 跨口径替换提示（如 BTC 的 USDT 计价），由各 calc_* 挂进自己那个信号的 warnings
+_CALIBER_NOTE_BY_TICKER: dict[str, str] = {}
+
+
+def _source_label(short: bool = False) -> str:
+    """按实际档位统计出一句 provenance，**不含字面量上游名**。
+
+    short=True 给标题用（档位明细另有专门一行，标题塞全量会长到没法读）。
+    """
+    if not _TIER_BY_TICKER:
+        return f"yfinance ({_ENGINE_USED})"
+    tally: dict[str, int] = {}
+    for t in _TIER_BY_TICKER.values():
+        tally[t] = tally.get(t, 0) + 1
+    n = sum(tally.values())
+    if short:
+        return f"混合来源：yfinance + 第3档非Yahoo上游 {n} 档"
+    parts = "；".join(f"{k} {v} 档" for k, v in sorted(tally.items(), key=lambda kv: -kv[1]))
+    return f"混合来源（{parts}）；yfinance 引擎={_ENGINE_USED}"
+
+
+def _set_engine(name: str, why: str) -> None:
+    """记录本次实际用到的引擎与回退原因，供 meta.source / degraded_reasons 照实写。"""
+    global _ENGINE_USED
+    _ENGINE_USED = name
+    _ENGINE_NOTES.append(f"yfinance 取数回退到{name}：{why}")
+
 
 
 def download_closes(tickers: list[str], period: str):
@@ -290,8 +328,10 @@ def download_closes(tickers: list[str], period: str):
         raw = _dl(True)
     except TypeError:
         err("⚠ 当前 yfinance 不支持 download(session=...)，改用默认引擎。")
+        _set_engine("默认引擎(curl_cffi)", "当前 yfinance 不支持 download(session=...)")
     except Exception as exc:
         err(f"⚠ requests.Session 路径取数失败（{type(exc).__name__}），改用默认引擎重试。")
+        _set_engine("默认引擎(curl_cffi)", f"requests.Session 路径取数失败（{type(exc).__name__}）")
 
     if raw is None or len(raw) == 0:
         try:
@@ -302,16 +342,147 @@ def download_closes(tickers: list[str], period: str):
         if raw2 is not None and len(raw2) > 0:
             err("⚠ requests.Session 路径回空表、默认引擎(curl_cffi)取到数据 —— "
                 "多半是 Yahoo 限流挡了裸 Session。本次采用默认引擎结果。")
+            _set_engine("默认引擎(curl_cffi)",
+                        "requests.Session 路径回空表、默认引擎取到数据——多半是 Yahoo 限流挡了裸 Session")
             raw = raw2
 
-    if raw is None or len(raw) == 0:
+    closes = None
+    if raw is not None and len(raw) > 0:
+        try:
+            closes = raw["Close"]
+        except Exception:  # noqa: BLE001
+            closes = None
+        if closes is not None and not hasattr(closes, "columns"):
+            closes = closes.to_frame(name=tickers[0])   # 单代码时会退化成 Series
+
+    # ---- 第3档：换**上游**（不是换引擎）。
+    # 2026-09-11 实测：yfinance 的数据 host 写死 query2.finance.yahoo.com，而本执行环境的
+    # 出站代理会切断到 query2 的隧道——前两档打的是同一个被封的 host，所以会一起死。
+    # 这正是「market.py 三次全败」的成因，只有换上游才有救。
+    # 逐标的补空，不是「整片失败才回退」：部分缺票与全灭走同一条路径，少一个分支就少一处
+    # 会漏测的行为。
+    # 触发条件不只是「缺列/全 NaN」，还包括「短到算不出」：限流下 yfinance 常回几根就断，
+    # 而信号 26 的 200DMA + 20日斜率至少要 220 根。姊妹脚本 technicals.py 同样修过这一支。
+    _MIN_BARS = 220
+    if closes is None:
+        need = list(tickers)
+    else:
+        need = []
+        for t in tickers:
+            if t not in getattr(closes, "columns", []):
+                need.append(t)
+                continue
+            n = len(closes[t].dropna())
+            if n == 0 or n < _MIN_BARS:
+                need.append(t)
+    if need:
+        closes = _apply_market_fallback(closes, need, tickers)
+
+    if closes is None or not len(closes.columns):
         return None
+    _warn_date_skew(closes, tickers)
+    return closes
+
+
+# 7×24 交易的标的：它们有周末 bar，与股票交易日天然不同步，单独归类免得误报
+_ALWAYS_ON = {"BTC-USD"}
+
+
+def _warn_date_skew(closes, tickers) -> None:
+    """按**最终 closes 每一列**的末日比较，而不是只比第3档内部。
+
+    只比第3档内部会漏掉最常见的那一种：只有 5 只 ETF 回退时，第3档内部只有
+    stockanalysis 一个源、末日集合长度为 1，于是不告警——可此时 tier0(yfinance) 与
+    tier3 之间正好差一个交易日，信号 21/22 落 D-1 而 19/26 落 D。
+    CLAUDE.md 把这条告警写成了保证，所以它必须覆盖混合档的情形。
+    """
+    last = {}
+    for t in tickers:
+        s = series_of(closes, t)
+        if s is None or t in _ALWAYS_ON:
+            continue
+        last[t] = as_of(s)
+    dates = {d for d in last.values() if d}
+    if len(dates) <= 1:
+        return
+    by_date = {}
+    for t, d in last.items():
+        if d:
+            by_date.setdefault(d, []).append(t)
+    detail = "；".join(f"{d}: {'、'.join(sorted(ts))}" for d, ts in sorted(by_date.items()))
+    tiers = {t: _TIER_BY_TICKER.get(t, "yfinance") for t in last}
+    msg = (f"⚠ 各标的数据日期不一致（{detail}）——档位：{tiers}。"
+           f"各信号的 as_of 会不同，**跨信号比较前务必逐个看 as_of**，"
+           f"不要把两天的读数并排当成同一天")
+    _ENGINE_NOTES.append(msg)
+    err(msg)
+
+
+def _apply_market_fallback(closes, need, tickers):
+    """把第3档取到的收盘序列并进 closes。取不到的标的保持缺失（记 N/A，绝不估算）。"""
+    # 本脚本此前不需要同目录 import（fred.sh 走 subprocess），所以 SCRIPT_DIR 从没进过
+    # sys.path。-P / PYTHONSAFEPATH / runpy 等场景下 script 目录不会自动在路径里，
+    # 不显式加就会静默走进「第3档不可用」——姊妹脚本 technicals.py 同样显式加了。
+    _sd = str(SCRIPT_DIR)
+    if _sd not in sys.path:
+        sys.path.insert(0, _sd)
     try:
-        closes = raw["Close"]
-    except Exception:
-        return None
-    if not hasattr(closes, "columns"):          # 单代码时可能退化成 Series
-        closes = closes.to_frame(name=tickers[0])
+        import market_fallback
+    except ImportError as exc:
+        _ENGINE_NOTES.append(f"第3档不可用（无法导入 market_fallback：{scrub(exc)}），"
+                             f"{len(need)} 个标的保持 N/A")
+        return closes
+    try:
+        results, meta = market_fallback.fetch_closes(need)
+    except Exception as exc:  # noqa: BLE001 - 第3档自身失败只降级，绝不掀掉整轮
+        _ENGINE_NOTES.append(f"第3档取数抛错（{type(exc).__name__}: {scrub(exc)}），"
+                             f"{len(need)} 个标的保持 N/A")
+        return closes
+
+    import pandas as _pd
+    got = {}
+    for t, r in (results or {}).items():
+        if not r.get("points"):
+            continue
+        idx = _pd.to_datetime([d for d, _ in r["points"]])      # tz-naive，别 localize
+        got[t] = _pd.Series([c for _, c in r["points"]], index=idx).sort_index()
+        # 回退链规则第 2 条：哪一层出的数，人读与 --json 都要标出来
+        _TIER_BY_TICKER[t] = r["tier"]
+        msg = f"{t} 由第3档 {r['tier']} 提供（yfinance 未返回）"
+        _ENGINE_NOTES.append(msg)
+        err(f"⚠ {msg}")          # 回退必须响（规则第 6 条）：第0→1档有 err()，这里也要有
+        if r.get("note"):
+            note = f"{t} 口径提示：{r['note']}"
+            _ENGINE_NOTES.append(note)
+            err(f"⚠ {note}")
+            # 跨口径提示必须落到**该信号自己的 warnings**，不能只躺在 meta 里
+            _CALIBER_NOTE_BY_TICKER[t] = r["note"]
+    for e in (meta or {}).get("degraded_reasons", []):
+        # 过本脚本自己的 scrub：第3档的错误串可能带路径，而本仓库是公开仓库
+        line = f"第3档：{scrub(e)}"
+        if line not in _ENGINE_NOTES:
+            _ENGINE_NOTES.append(line)
+    if not got:
+        return closes
+
+    # 不同档是**不同时点的快照**（回退链规则第 3 条）。实测 stockanalysis 的 ETF 比
+    # 腾讯指数/Binance 晚一个交易日，于是信号 21/22（ETF）会落在 D-1、而信号 19/26
+    # （^GSPC/BTC）落在 D——同一份报告里各信号的 as_of 不同。每个信号自己是同日对齐的
+    # （market.py 用 anchor + pct_change_on 保证），但跨信号比较会踩空，必须响。
+    scope = ("yfinance 两档引擎均未返回" if len(need) >= len(tickers)
+             else f"yfinance 缺 {len(need)}/{len(tickers)} 档")
+    _set_engine("第3档 非Yahoo上游", f"{scope}，已换上游取数")
+    add = _pd.DataFrame(got)
+    if closes is None:
+        return add
+    # 只填缺的列，绝不覆盖 yfinance 已给出的列——不同档的数不并进同一列
+    for t in add.columns:
+        cur = len(closes[t].dropna()) if t in closes.columns else 0
+        if cur == 0 or len(add[t].dropna()) > cur:
+            closes = closes.join(add[[t]], how="outer", rsuffix="_fb")
+            if f"{t}_fb" in closes.columns:
+                closes[t] = closes[f"{t}_fb"]
+                closes = closes.drop(columns=[f"{t}_fb"])
     return closes
 
 
@@ -416,7 +587,7 @@ def fred_vixcls() -> tuple[float | None, str | None, str | None]:
     """经 subprocess 调**同目录**的 fred.sh 取 FRED VIXCLS，回 (值, 数据日期, 失败原因)。
 
     为什么必须绕 fred.sh 而不在本脚本里直接打 FRED：references/known-traps.md 实测
-    「FRED 必须用 curl、且**不能加自订 UA**」，python requests 打 FRED 在本环境会超时。
+    「FRED **不能加浏览器 UA**」（加了 25–30s 超时）；用什么语言取都行，实测 requests 0.50s 正常。
     本脚本只管 yfinance 那一半，FRED 一律走 fred.sh，不另开第二条 FRED 取数路径。
 
     任何失败（脚本不存在 / 不可执行 / 超时 / 非 0 退出 / JSON 解析不了）都回
@@ -460,6 +631,17 @@ def fred_vixcls() -> tuple[float | None, str | None, str | None]:
 # ---------------------------------------------------------------- 各信号计算
 
 
+def _tier_of(label: str) -> str | None:
+    """从腿标签里取出代码，查它这轮实际走的档位。标签形如 "BTC (BTC-USD)"。"""
+    m = re.search(r"\(([^)]+)\)", label or "")
+    return _TIER_BY_TICKER.get(m.group(1)) if m else None
+
+
+def _caliber_of(label: str) -> str | None:
+    m = re.search(r"\(([^)]+)\)", label or "")
+    return _CALIBER_NOTE_BY_TICKER.get(m.group(1)) if m else None
+
+
 def sigma_block(s, label: str) -> dict:
     """信号 19 的单个标的块：当日涨跌% / RV20 / 单日1σ / σ倍数。"""
     v = rv20(s)
@@ -477,8 +659,16 @@ def sigma_block(s, label: str) -> dict:
     else:
         state, verdict = "🟢", "<2σ 正常波动"
     warns = [w for w in (magnitude_flag("RV20(%)", v), magnitude_flag("σ倍数", mult)) if w]
+    # 档位与跨口径提示必须进**这条腿自己的** source/warnings：
+    # 只躺在 meta.degraded_reasons 里的话，窄读信号 19 的调用方无从得知 BTC 其实是
+    # Binance 的 USDT 计价序列。market_fallback 的 note 明写「必须写进 warnings」。
+    tier = _tier_of(label)
+    cal = _caliber_of(label)
+    if cal:
+        warns = warns + [f"⚠ 跨口径替换：{cal}"]
     return {
         "标的": label,
+        "source": tier or "yfinance",
         "当日涨跌%": chg,
         "RV20年化%": v,
         "单日1σ%": one_sigma,
@@ -622,11 +812,21 @@ def calc_21(closes) -> dict:
     legs = {}
     for sym, label in (("SPY", "股 SPY"), ("TLT", "债 TLT"), ("GLD", "金 GLD"), ("UUP", "美元 UUP")):
         s = series_of(closes, sym)
+        # ⚠ as_of 必须是**数值实际所在的那一天**，即 anchor，而不是该列自己的末日。
+        # 两者在 diff 之前不可能错开（所有列来自同一次 download），第3档按列补空之后
+        # 就会错开：SPY 走 stockanalysis（晚一个交易日）而 TLT/GLD/UUP 仍是 yfinance，
+        # 于是数值是 D-1 的、旁边却印着 D——实测 GLD 会印成 −1.73%(as of 09-11)，
+        # 而 09-11 真实是 +0.90%，连正负号都反。另存 series_last 供核对。
         legs[sym] = {
             "标的": label,
             "当日涨跌%": last_pct(s) if sym == "SPY" else pct_change_on(s, anchor),
-            "as_of": as_of(s),
+            "as_of": anchor,
+            "series_last": as_of(s),
         }
+        if as_of(s) and anchor and as_of(s) != anchor:
+            legs[sym]["warning"] = (
+                f"该列最新 bar 为 {as_of(s)}，但本值取自基准日 {anchor}（与 SPY 对齐）；"
+                f"两者不同源/不同步，跨腿比较以 as_of 为准")
     spy = legs["SPY"]["当日涨跌%"]
     tlt, gld = legs["TLT"]["当日涨跌%"], legs["GLD"]["当日涨跌%"]
 
@@ -745,6 +945,47 @@ def above_200dma_streak(s, window: int = MA200_WINDOW, need: int = STREAK_NEED):
     return streak, note
 
 
+# 硬阈值第 5 项（信号 6 A/D 线顶背离）与信号 2（站上 200DMA 比例）的触发条件
+# 都是「**SPX 创新高，但 X 未同步**」——两者都被同一个布尔闸住，而在此之前
+# 本仓库没有任何脚本产出它，`references/search-contract.md` 只能写「由父级供给」。
+# 结果是硬阈值第 5 项**每一天都结构性 ⚪️**、分母恒为 6、最坏情况恒被抬高 1。
+#
+# ⚠️ 口径声明（signals-a-macro.md:76 只写「创新高」，没写窗口，故在此定死并标注）：
+#   · 窗口 = 252 个交易日（约 52 周）；
+#   · 用**收盘价**比收盘价——yfinance 的日线 Close，不是盘中最高价。所以这是
+#     「收盘创 52 周新高」，不是「触及 52 周新高」。引用时照抄这个口径。
+def spx_new_high(closes, window: int = 252) -> dict:
+    s = series_of(closes, "^GSPC")
+    if s is None or len(s) < 2:
+        return {"at_new_high": None, "caliber": "252 交易日收盘新高（收盘价对收盘价）",
+                "note": "取不到 ^GSPC 收盘序列，无法判定；信号 2 / 信号 6 的前置布尔记 ⚪️，"
+                        "**不得据此断言「未创新高」**——不知道不等于否。"}
+    s = s.dropna()
+    if len(s) < 2:
+        return {"at_new_high": None, "caliber": "252 交易日收盘新高（收盘价对收盘价）",
+                "note": "^GSPC 收盘序列有效点不足，无法判定；前置布尔记 ⚪️。"}
+    tail = s.iloc[-window:]
+    last = float(tail.iloc[-1])
+    peak = float(tail.max())
+    idx = tail.idxmax()
+    short = len(tail) < window
+    return {
+        "at_new_high": bool(last >= peak),
+        "close": last,
+        "high": peak,
+        "high_date": str(getattr(idx, "date", lambda: idx)()),
+        "pct_from_high": (last / peak - 1.0) * 100.0 if peak else None,
+        "bars_used": len(tail),
+        "window_bars": window,
+        "history_short": short,
+        "caliber": "252 交易日收盘新高（收盘价对收盘价，非盘中高点）",
+        "note": ("可用日线仅 %d 根 < %d，窗口不足 52 周，「创新高」的分母偏小、"
+                 "会**高估**创新高的可能——引用前须注明。" % (len(tail), window)) if short else
+                ("信号 2 与信号 6 的触发都以此为前置：at_new_high 为 false 时两者一律 ❌ 未触发"
+                 "（前提不成立），为 true 时才去比对 A/D 线 / 站上 200DMA 比例；为 null 时记 ⚪️。"),
+    }
+
+
 def calc_26(closes) -> dict:
     s = series_of(closes, "^GSPC")
     price = ma200 = dev = slope = None
@@ -849,9 +1090,17 @@ CALCULATORS = {19: calc_19, 20: calc_20, 21: calc_21, 22: calc_22,
 
 def print_report(result: dict) -> None:
     meta = result["meta"]
-    print(f"# 行情取数（yfinance）· {meta['generated_at']}")
+    print(f"# 行情取数（{meta.get('source_short') or meta.get('source') or 'yfinance'}）"
+          f"· {meta['generated_at']}")
     print(f"信号：{'、'.join(str(i) for i in meta['signals'])}"
           f"｜历史窗口 {meta['period']}｜代码 {'、'.join(meta['tickers'])}")
+    # JSON 有的，人读也得有：一轮 100% 靠第3档出数的运行，人读端不能看不出来。
+    per = meta.get("source_per_ticker") or {}
+    if per:
+        print(f"⚠️ 第3档非Yahoo上游供数 {len(per)} 档："
+              + "、".join(f"{t}[{v}]" for t, v in sorted(per.items())))
+    for r in (meta.get("degraded_reasons") or []):
+        print(f"  · {r}")
     if meta.get("missing_tickers"):
         print(f"⚠️ yfinance 未返回数据的代码（记 N/A，不估算）：{'、'.join(meta['missing_tickers'])}")
         for line in meta.get("fetch_errors") or []:
@@ -944,7 +1193,7 @@ def parse_signals(raw: str | None) -> list[int]:
         # 显式给了空的 --signals 就报错，不要静默当成「全部」：
         # 那会让一次本想只跑子集的调用悄悄跑满，多打十次 Yahoo 请求。
         err("错误：--signals 为空。省略该参数才是「跑全部」。")
-        sys.exit(2)
+        sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
     out: list[int] = []
     for chunk in re.split(r"[,\s，、]+", raw.strip()):
         if not chunk:
@@ -952,21 +1201,21 @@ def parse_signals(raw: str | None) -> list[int]:
         if not chunk.isdigit():
             err(f"错误：--signals 只接受信号编号，实际「{chunk}」。"
                 f"本脚本支持：{','.join(str(i) for i in sorted(SIGNAL_SPECS))}。")
-            sys.exit(2)
+            sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
         n = int(chunk)
         if n in ELSEWHERE:
             err(f"错误：{ELSEWHERE[n]}")
-            sys.exit(2)
+            sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
         if n not in SIGNAL_SPECS:
             err(f"错误：信号 {n} 不由本脚本负责。"
                 f"本脚本支持：{','.join(str(i) for i in sorted(SIGNAL_SPECS))}"
                 f"（其余信号见 scripts/fred.sh 等取数脚本与 references/）。")
-            sys.exit(2)
+            sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
         if n not in out:
             out.append(n)
     if not out:
         err("错误：--signals 为空。")
-        sys.exit(2)
+        sys.exit(1)   # 参数错误=1（2 保留给依赖缺失）
     return sorted(out)
 
 
@@ -979,13 +1228,18 @@ def run(signals: list[int], period: str) -> dict:
 
     closes = download_closes(tickers, period)
     if closes is None:
-        err("错误：yfinance 未返回任何数据。"
+        err("错误：yfinance **与第3档非Yahoo上游** 均未返回任何数据。"
             "本次不产出任何数值——宁可整片 N/A，也不用记忆或估算值填充。")
         for line in yf_reasons():
             err(f"  yfinance 报告：{line}")
-        err("  若是 Too Many Requests（限流），等几分钟再跑；"
-            "仍失败则这几项在报告里写「⚪️ 数据暂缺」+ 尝试过的来源 + 滞后周数。")
-        sys.exit(1)
+        # 第3档的失败原因必须一起报出来：只说「可能是 Yahoo 限流」会把人指向错的方向，
+        # 而这一支已经说明换上游也没救（例如代理连 stockanalysis 也拦）。
+        for line in _ENGINE_NOTES:
+            err(f"  第3档报告：{line}")
+        err("  分诊：单跑 `python3 scripts/market_fallback.py --tickers SPY,^GSPC` 看第3档死在哪；"
+            "若它也回「HTTP 200 但返回 HTML」，是本机被拦截页挡了，不是 Yahoo 限流。")
+        # 取数失败 = 3。限流是取数失败，回 1 会让调度层读成「参数写错了」。
+        sys.exit(3)
 
     missing = [t for t in tickers if series_of(closes, t) is None]
 
@@ -1002,14 +1256,28 @@ def run(signals: list[int], period: str) -> dict:
     if spx_asof and spx_asof != today:
         stale_note = (f"TradFi 最新交易日为 {spx_asof}（今天 {today}）："
                       f"200DMA / σ倍数 / VRP / 广度 均为上一交易日数据，报告须注明。")
+        if _TIER_BY_TICKER:
+            # 混档时各信号的 as_of 并不相同，用一个日期概括全部 5 个信号是假陈述
+            stale_note += ("　⚠ 本轮有第3档供数，**各信号 as_of 可能不同**，"
+                           "以每个信号自己的 as_of 为准，勿用本行日期一概而论。")
 
     return {
         "meta": {
             "generated_at": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
-            "source": "yfinance (requests.Session + UA)",
-            "period": period,
+            # 不含字面量上游名：零行来自 Yahoo 时仍写 "yfinance (...)" 正是回退链规则
+            # 第 2 条要防的事。per_ticker 由实际填列时记录。
+            "source": _source_label(),
+            "source_short": _source_label(short=True),
+            "source_per_ticker": dict(_TIER_BY_TICKER),
+            "period": (period if not _TIER_BY_TICKER
+                       else f"{period}（仅 yfinance 列；第3档列的历史长度由各源决定，"
+                            f"--period 对其不起作用）"),
             "signals": signals,
             "tickers": tickers,
+            "spx_new_high": spx_new_high(closes),
+            "degraded": bool(_ENGINE_NOTES or missing),
+            "degraded_reasons": list(_ENGINE_NOTES)
+            + ([f"以下代码取不到收盘价，记 N/A：{'、'.join(missing)}"] if missing else []),
             "missing_tickers": missing,
             "fetch_errors": yf_reasons() if missing else [],
             "stale_note": stale_note,
@@ -1051,6 +1319,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="输出 JSON；带文件名则写文件，不带则打到 stdout")
     ap.add_argument("--period", default="2y", metavar="2y",
                     help="yfinance 历史窗口（默认 2y；200DMA + 20日斜率至少需要 220 根）")
+    # argparse 默认把用法错误回 2，而本仓库 2 保留给依赖缺失——不覆写的话
+    # 「旗标拼错」会被调度层读成「yfinance 没装」。姊妹脚本 technicals.py 已修同一处。
+    ap.error = lambda m: (ap.print_usage(sys.stderr),
+                          err(f"错误：参数错误——{m}"), sys.exit(1))
     args = ap.parse_args(argv)
 
     signals = parse_signals(args.signals)

@@ -22,6 +22,15 @@
       否则该价为盘中/延迟价，不得当收盘价使用。
     - stale=true 表示：当前为港股交易时段但报价已超过 5 分钟未更新，
       或今天为工作日且已过收盘、但报价日期不是今天（假期/数据未更新）。
+
+--json 的口径/降级字段（表格模式的末行口径声明与 ⚠ 行的 JSON 等价物）：
+    顶层仍是裸数组（fetch_fundamentals.py / technicals.py 按数组消费，不得改成信封），
+    故以下字段挂在**每一项**上：
+    - caliber           口径声明，与表格末行同文；
+    - prohibitions      禁止事项列表，与表格里的 ⚠ 行同文（不过时则为空列表）；
+    - stale_reason      stale 为 true 时给出原因；stale 为 null（无法判定）时给出无法判定的原因；
+    - degraded          本行是否降级（自检失败 / 回退档触发 / 源不可达 / 字段因缺数记 N/A）；
+    - degraded_reasons  降级原因列表，短句，与 degraded 同步。
 """
 
 import csv
@@ -37,6 +46,15 @@ import requests
 
 HKT = ZoneInfo("Asia/Hong_Kong")
 DISP_W = 0
+
+# 表格末行的口径声明 / ⚠ 行；表格与 --json 共用同一份文本，避免两边漂移
+CALIBER = "口径：原始未复权。52周高/低 = 252交易日不复权日K线自算（来源见 --json 的 hi52_source）。"
+STALE_PROHIBITION = "⚠ {code} 报价可能过时（stale=true），不得当最新收盘价使用"
+
+# 52 周高/低的固定回退链标签（顺序写死，不按谁先应答挑），即 hi52_source 的取值
+KLINE_PRIMARY = "腾讯日K线(不复权)"
+KLINE_FALLBACK = "东财日K线(不复权)"
+KLINE_FAIL = "取数失败"
 
 
 def disp_w(s):
@@ -136,7 +154,7 @@ def eastmoney_kline_raw(code):
 
 def hi52_lo52(code):
     """252 交易日窗口的 52 周高/低（原始未复权），返回 (hi, lo, source) 或 (None, None, src)。"""
-    for fetch, src in ((tencent_kline_raw, "腾讯日K线(不复权)"), (eastmoney_kline_raw, "东财日K线(不复权)")):
+    for fetch, src in ((tencent_kline_raw, KLINE_PRIMARY), (eastmoney_kline_raw, KLINE_FALLBACK)):
         try:
             rows = fetch(code)
             if len(rows) < 30:
@@ -147,7 +165,7 @@ def hi52_lo52(code):
             return hi, lo, src
         except Exception:
             continue
-    return None, None, "取数失败"
+    return None, None, KLINE_FAIL
 
 
 def market_status(qt_dt, now_hkt):
@@ -177,14 +195,27 @@ def fetch(codes):
         item = {"code": f"{c}.HK"}
         r = rt.get(c)
         if not r:
-            item.update({"error": "实时行情取数失败", "stale": None})
+            # stale 无法判定 -> null（不是 false），并给出原因；口径字段照挂，消费者不必分支
+            item.update({
+                "error": "实时行情取数失败",
+                "stale": None,
+                "stale_reason": "实时行情取数失败，stale 无法判定",
+                "caliber": CALIBER,
+                "prohibitions": [],
+                "degraded": True,
+                "degraded_reasons": ["实时行情取数失败（腾讯 qt.gtimg.cn），本行全部字段记 N/A"],
+            })
             out.append(item)
             continue
         item.update(r)
+        degraded_reasons = []
         try:
             qt = datetime.datetime.strptime(r["quote_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=HKT)
         except ValueError:
             qt = now_hkt - datetime.timedelta(days=30)
+            degraded_reasons.append(
+                f"quote_time 无法解析（{r['quote_time']!r}），age_min/market_status/stale 按 30 天前的假定时间推算"
+            )
         age = now_hkt - qt
         item["age_min"] = round(age.total_seconds() / 60, 1)
         item["market_status"] = market_status(qt, now_hkt)
@@ -193,12 +224,27 @@ def fetch(codes):
         item["lo52"] = lo
         item["hi52_source"] = ksrc
         item["pct_from_hi52"] = round((r["last"] / hi - 1) * 100, 1) if hi else None
+        if ksrc == KLINE_FAIL:
+            degraded_reasons.append("52周高/低取数失败（腾讯/东财日K线均不可用），hi52/lo52/pct_from_hi52 记 N/A")
+        elif ksrc != KLINE_PRIMARY:
+            degraded_reasons.append(f"52周高/低回退至{ksrc}（{KLINE_PRIMARY}不可用）")
         stale = False
+        stale_reasons = []
         if is_hk_trading_window(now_hkt) and age > datetime.timedelta(minutes=5):
             stale = True
+            stale_reasons.append("当前为港股交易时段但报价已超过 5 分钟未更新")
         if now_hkt.weekday() < 5 and now_hkt.time() > datetime.time(16, 30) and qt.date() < now_hkt.date():
             stale = True
+            stale_reasons.append("今天为工作日且已过收盘、但报价日期不是今天（假期/数据未更新）")
         item["stale"] = stale
+        item["stale_reason"] = "；".join(stale_reasons) if stale_reasons else None
+        item["caliber"] = CALIBER
+        # 表格模式里那行 ⚠ 的 JSON 等价物，同文照搬
+        item["prohibitions"] = [STALE_PROHIBITION.format(code=item["code"])] if stale else []
+        if stale:
+            degraded_reasons.append(f"报价可能过时（stale=true）：{item['stale_reason']}")
+        item["degraded"] = bool(degraded_reasons)
+        item["degraded_reasons"] = degraded_reasons
         out.append(item)
     return out
 
@@ -232,8 +278,8 @@ def print_table(items):
         print(" | ".join(pad(r[i], widths[i]) for i in range(len(headers))))
     for it in items:
         if it.get("stale"):
-            print(f"⚠ {it['code']} 报价可能过时（stale=true），不得当最新收盘价使用")
-    print("口径：原始未复权。52周高/低 = 252交易日不复权日K线自算（来源见 --json 的 hi52_source）。")
+            print(STALE_PROHIBITION.format(code=it["code"]))
+    print(CALIBER)
 
 
 def main():

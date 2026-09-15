@@ -58,7 +58,15 @@ AV 只给一笔货币基金 2.93% 外加一笔 CASH OFFSET −35.03%，两者是
     etf_holdings.py --tickers LYTE,NCLD   # 只取部分（调试/重跑用）
     etf_holdings.py --json out.json       # 额外把结构化结果写一份
     etf_holdings.py --check               # 只验 key 可用性与配额，不取全部
+    etf_holdings.py --check --json c.json # --check 的逐 key 判定同样落盘（内容与屏幕一致）
     etf_holdings.py --sleep 2.0           # 调每档之间的主动限速（默认 1.2 秒）
+
+--json 与人类输出是同一份内容
+------------------------------
+凡屏幕上说过的告警、禁令、口径声明，`--json` 里都有对应字段；顶层还有
+`degraded` / `degraded_reasons[]`（未设 key 而跳过第一级、回退到 top-N、某档三级全落空、
+key 判为耗尽——每一种降级都在里面）与 `ok`（与退出码同源）。
+`--quiet` 只关掉人类可读渲染，**不关告警**：降级理由改从 stderr 出。
 
 API key
 -------
@@ -200,6 +208,14 @@ DAILY_MARKERS = (
     "requests per day",
 )
 
+# 「日配额耗尽」这个判定自带的歧义声明（实测依据见 classify 里的注释）：AV 对
+# **无效 key 与配额耗尽返回完全相同的消息**，响应里没有任何字段能区分二者。
+# 同一句话既拼进限流详情（stdout / warnings），也作为 --check --json 的
+# `daily_verdict_ambiguity` 字段单独出一份——判定的局限只印在屏幕上等于没留痕。
+DAILY_AMBIGUITY_NOTE = (
+    "⚠️ 注意：AV 对无效 key 与配额耗尽返回相同消息，无法区分，请顺带核对该 key 是否拼写正确"
+)
+
 # 现金 / 国库券 / 货币类成分的识别词。rating-rules.md 明确警告过
 # 「行销页把 36% 国库券当成持仓」这个陷阱，所以这一类必须单独拎出来报。
 CASH_MARKERS = (
@@ -245,6 +261,12 @@ def _configure_streams() -> None:
 
 def err(msg: str = "") -> None:
     print(msg, file=sys.stderr)
+
+
+def err_warn(reason: str) -> None:
+    """--quiet 下把降级理由送去 stderr：`--quiet` 只关人类可读渲染，**不关告警**。
+    理由本身自带 ⚠/✗ 时不再叠一个符号。"""
+    err(reason if reason[:1] in ("⚠", "✗") else f"⚠ {reason}")
 
 
 def rel_path(path) -> str:
@@ -398,7 +420,7 @@ def classify(payload) -> tuple[str, str]:
             #   （打字打错、复制漏字符）。响应里没有任何字段能区分。
             #   处置上两者都该换下一个 key，但**报告措辞必须把歧义说出来**，
             #   否则一个手滑打错的 key 会被静默记成「今日配额已用尽」。
-            return "daily", text + "｜⚠️ 注意：AV 对无效 key 与配额耗尽返回相同消息，无法区分，请顺带核对该 key 是否拼写正确"
+            return "daily", text + "｜" + DAILY_AMBIGUITY_NOTE
         # 两者都不匹配（如 demo key 的提示）→ 保守当瞬时，原文完整带出去。
         return "transient", text
 
@@ -724,15 +746,22 @@ def _w(h) -> float:
     return h.get("weight") or 0.0
 
 
-def derive(holdings: list[dict], full: bool = True) -> dict:
+def derive(holdings: list[dict], full: bool = True, unavailable: bool = False) -> dict:
     """算 rating-rules 真正用得上的几个派生量。全部以小数口径存，展示时 ×100。
 
-    `full` 说明入参是不是**全量持仓**：
-    - `True`（Alpha Vantage）：所有派生量都算得出来。
-    - `False`（yfinance top-N）：**只有集中度算得出来**，其余一律置 None 并把原因写进
-      返回值的 `na_reasons`。这不是保守，是口径问题：top-N 里根本没有现金/国库券/swap
-      那几行，硬算会得到 0.00% 这种「看起来是数据、其实是缺失」的读数——
-      rating-rules.md 里「行销页把 36% 国库券当成持仓」的陷阱就会被原样复现。
+    口径由 `unavailable` / `full` 两个开关决定，对应 `coverage` 的三态
+    （与 serialize() 的 `coverage` 同一套取值，两处必须一致）：
+    - `unavailable=True` → `coverage="none"`（三级全落空）：**每个派生量都记 N/A，
+      且每一个都必须挂上原因**。这是唯一一个「每个值都是 N/A」的情形，此前也是唯一一个
+      没有原因附着的情形（旧代码走 `derive([], full=True)`，给出 `full_coverage=true`
+      加一个空的 `na_reasons`）——全 N/A 而不说为什么，读者只能猜是「算不出来」
+      还是「这档恰好没有持仓」，而后者正是本脚本反复禁止的读法。
+    - `full=True`（Alpha Vantage）→ `coverage="full"`：所有派生量都算得出来。
+    - `full=False`（yfinance top-N）→ `coverage="top-N"`：**只有集中度算得出来**，
+      其余一律置 None 并把原因写进返回值的 `na_reasons`。这不是保守，是口径问题：
+      top-N 里根本没有现金/国库券/swap 那几行，硬算会得到 0.00% 这种
+      「看起来是数据、其实是缺失」的读数——rating-rules.md 里
+      「行销页把 36% 国库券当成持仓」的陷阱就会被原样复现。
 
     字段一律用 .get 取（yfinance 那级构造的行少几个派生字段也不会炸）。
     """
@@ -771,7 +800,9 @@ def derive(holdings: list[dict], full: bool = True) -> dict:
     neg_w = sum(_w(h) for h in usable if _w(h) < 0)
 
     out = {
-        "full_coverage": bool(full),
+        # coverage 三态与 serialize() 的 `coverage` 同义，两处不可各说各话。
+        "coverage": "none" if unavailable else ("full" if full else f"top-{len(holdings)}"),
+        "full_coverage": bool(full) and not unavailable,
         "count": len(holdings),
         "count_weighted": len(usable),
         "weight_total": sum(_w(h) for h in usable) if usable else None,
@@ -801,6 +832,19 @@ def derive(holdings: list[dict], full: bool = True) -> dict:
         "ranked": ranked,
         "merged_ranked": merged_ranked,
     }
+    if unavailable:
+        # 三级全落空：**每个**派生量都记 N/A，且每一个都挂原因。
+        # `count` / `count_weighted` 也一并记 N/A——0 笔会被读成「该档没有持仓」，
+        # 而本次的事实是「没取到」，两者不是一回事（文件头与 SOURCE_NOTE_NONE 都写死了这条）。
+        # 遍历 out 自身的 key，新增字段自动被覆盖，不会再漏掉一个没写原因的派生量。
+        for k in list(out.keys()):
+            if k in ("coverage", "full_coverage", "na_reasons", "ranked", "merged_ranked"):
+                continue
+            out[k] = None
+            out["na_reasons"][k] = (
+                f"本次 AV 与 yfinance 均未取到，须到发行商官方持仓页人工补（记 {NA}，绝不估算，"
+                f"也不得当成「该档没有持仓」）")
+        return out
     if not full:
         n = len(holdings)
         need_full = ("swap", "physical", "no_symbol", "no_symbol_ex_cash",
@@ -1024,11 +1068,38 @@ def atomic_write(path: Path, content: str) -> None:
         raise
 
 
+def dump_json(path_str: str, payload: dict, ring: KeyRing) -> None:
+    """把结构化结果写到用户自传的 --json 路径。取数与 --check 共用这一处，
+    免得两条路径的落盘行为（脱敏、原子写、失败不影响本次输出）各写一份、日后走样。"""
+    out = Path(path_str).expanduser()
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(out, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        # 用户自传的路径同样含用户名，而本脚本输出会被贴进报告并推 Slack。
+        # 折叠家目录（~/...）而不是只留文件名：既不泄漏，又还能让人找到文件。
+        err(f"JSON 已写入 {scrub_paths(out)}")
+    except Exception as exc:
+        err(f"⚠ JSON 写入失败（不影响本次输出）：{type(exc).__name__}: {ring.safe(exc)}")
+
+
 # ---------------------------------------------------------------- 子流程
-def cmd_check(sess, ring: KeyRing, probe: str, gap: float) -> int:
-    """只验 key 可用性与配额：每个 key 打一次，不取全部标的。"""
-    print(f"AV_API_KEYS 解析出 {len(ring.keys)} 个 key（已去重、去空白）。"
-          f"探针标的：{probe}")
+def cmd_check(sess, ring: KeyRing, probe: str, gap: float,
+              json_path: str | None = None, quiet: bool = False) -> int:
+    """只验 key 可用性与配额：每个 key 打一次，不取全部标的。
+
+    人类分支与 `--json` 必须是同一份内容：每个 key 的判定
+    （✓ 可用 / ⚠ 瞬时限流 / ✗ 日配额已耗尽 / ✗ API 参数错误 / ✗ 无效响应）
+    正是本脚本最容易搞错的 burst-vs-daily 判定的结论（见文件头「限流处置」第 2 条），
+    只印在屏幕上等于没留痕。此前本函数在 main 的 `if args.json:` 之前就 return，
+    `--check --json` 会静默只打人类文本、一个字节都不落盘。
+    `--quiet` 只关掉人类可读渲染，**不关告警**：降级理由改走 stderr。
+    key 在任何一条输出里都只以遮罩串出现，落盘的也是遮罩串。
+    """
+    header = (f"AV_API_KEYS 解析出 {len(ring.keys)} 个 key（已去重、去空白）。"
+              f"探针标的：{probe}")
+    if not quiet:
+        print(header)
+    results: list[dict] = []
     usable = 0
     for idx in range(len(ring.keys)):
         mask = ring.mask_of(idx)
@@ -1040,31 +1111,91 @@ def cmd_check(sess, ring: KeyRing, probe: str, gap: float) -> int:
             )
             payload = resp.json()
         except Exception as exc:
-            print(f"  {mask}  ✗ 请求异常：{ring.safe(f'{type(exc).__name__}: {exc}')}")
+            detail = ring.safe(f"{type(exc).__name__}: {exc}")
+            results.append({"key": mask, "verdict": "request_error",
+                            "verdict_label": "✗ 请求异常", "detail": detail,
+                            "holdings_count": None})
+            if not quiet:
+                print(f"  {mask}  ✗ 请求异常：{detail}")
             continue
         kind, detail = classify(payload)
         detail = ring.safe(detail)
+        n_hold = None
         if kind == "ok":
-            n = len(payload.get("holdings") or [])
-            print(f"  {mask}  ✓ 可用（{probe} 返回 {n} 笔持仓）")
+            n_hold = len(payload.get("holdings") or [])
+            label = "✓ 可用"
+            line = f"  {mask}  ✓ 可用（{probe} 返回 {n_hold} 笔持仓）"
             usable += 1
         elif kind == "transient":
-            print(f"  {mask}  ⚠ 瞬时限流/不可用（重试或加大 --sleep 后再试）：{detail}")
+            label = "⚠ 瞬时限流/不可用（重试或加大 --sleep 后再试）"
+            line = f"  {mask}  ⚠ 瞬时限流/不可用（重试或加大 --sleep 后再试）：{detail}"
         elif kind == "daily":
-            print(f"  {mask}  ✗ 日配额已耗尽：{detail}")
+            label = "✗ 日配额已耗尽"
+            line = f"  {mask}  ✗ 日配额已耗尽：{detail}"
         elif kind == "api_error":
-            print(f"  {mask}  ✗ API 参数错误（非限流）：{detail}")
+            label = "✗ API 参数错误（非限流）"
+            line = f"  {mask}  ✗ API 参数错误（非限流）：{detail}"
         else:
-            print(f"  {mask}  ✗ 无效响应：{detail}")
+            label = "✗ 无效响应"
+            line = f"  {mask}  ✗ 无效响应：{detail}"
+        results.append({"key": mask, "verdict": kind, "verdict_label": label,
+                        "detail": detail, "holdings_count": n_hold})
+        if not quiet:
+            print(line)
         if idx < len(ring.keys) - 1:
             time.sleep(gap)
-    print()
+
     if usable:
-        print(f"结论：{usable}/{len(ring.keys)} 个 key 当前可用。")
-        return 0
-    print(f"结论：0/{len(ring.keys)} 个 key 可用——现在取数会全部记 {NA}。"
-          f"请稍后重试、或在 {ENV_VAR} 里补充新的 key。")
-    return 1
+        conclusion = f"结论：{usable}/{len(ring.keys)} 个 key 当前可用。"
+    else:
+        conclusion = (f"结论：0/{len(ring.keys)} 个 key 可用——现在取数会全部记 {NA}。"
+                      f"请稍后重试、或在 {ENV_VAR} 里补充新的 key。")
+    if not quiet:
+        print()
+        print(conclusion)
+
+    # 「全部 key 首次调用即判日配额耗尽」单独立一个字段：AV 对无效 key 与耗尽 key
+    # 回同一条消息，这种形态更像 key 拼错，先怀疑 key 而不是配额。
+    all_daily_first_call = bool(results) and all(r["verdict"] == "daily" for r in results)
+    degraded_reasons = [f"{r['key']} {r['verdict_label']}" for r in results
+                        if r["verdict"] != "ok"]
+    if usable == 0:
+        degraded_reasons.append(f"0/{len(ring.keys)} 个 key 可用——现在取数会全部记 {NA}")
+    if any(r["verdict"] == "daily" for r in results):
+        degraded_reasons.append(DAILY_AMBIGUITY_NOTE)
+    if all_daily_first_call:
+        degraded_reasons.append("全部 key 首次调用即判日配额耗尽：先怀疑 key 拼写而不是配额")
+
+    if json_path:
+        dump_json(json_path, {
+            "mode": "check",
+            "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "ok": usable > 0,
+            "degraded": bool(degraded_reasons),
+            "degraded_reasons": degraded_reasons,
+            "probe": probe,
+            "keys_total": len(ring.keys),
+            "keys_usable": usable,
+            "keys": results,                # key 一律遮罩，原文绝不落盘
+            "conclusion": conclusion,
+            "header": header,
+            "daily_verdict_ambiguity": DAILY_AMBIGUITY_NOTE,
+            "all_keys_daily_on_first_call": all_daily_first_call,
+            "classification_note":
+                "限流回的是 HTTP 200，判定只看 body 不看状态码；关键词必须**先判瞬时、"
+                "后判日限**——瞬时文案里同时含 \"per day\" 与 \"rate limit\"，"
+                "顺序反了会把一次每秒限流误判成日配额耗尽、把好 key 全烧掉。",
+            "key_masking_note":
+                "所有 key 一律以 key#N(前4****后2) 形式出现（短 key 全遮），原文绝不落盘。",
+            "scope_note": "--check 只验 key，不取任何标的持仓，也不写任何持仓快照。",
+        }, ring)
+
+    # --quiet 关的是人类可读渲染，不是告警：否则一次「key 全废」会被静默成正常运行。
+    if quiet and degraded_reasons:
+        for reason in degraded_reasons:
+            err_warn(reason)
+
+    return 0 if usable else 1
 
 
 def build_record(meta: dict, payload: dict) -> dict:
@@ -1157,7 +1288,10 @@ def main(argv: list[str] | None = None) -> int:
     sess = make_session()
 
     if args.check:
-        return cmd_check(sess, ring, etf_rows[0]["ticker"], max(args.sleep, 1.0))
+        # --check 也要走 --json / --quiet：它的 key 判定就是 burst-vs-daily 那个
+        # 最容易搞错的结论，不能只存在于屏幕上。
+        return cmd_check(sess, ring, etf_rows[0]["ticker"], max(args.sleep, 1.0),
+                         json_path=args.json, quiet=args.quiet)
 
     if args.tickers:
         want = [t.strip() for t in args.tickers.split(",") if t.strip()]
@@ -1229,16 +1363,48 @@ def main(argv: list[str] | None = None) -> int:
                 # ---- 第三级：官网（不静默记 N/A，打印可操作提示）
                 failed.append(sym)
                 meta["notes"].append(f"三级中前两级都未取到，本档全部字段记 {NA}（绝不估算）")
+                # unavailable=True：coverage 记 "none"，且**每个**派生量都挂上
+                # 「本次未取到」的原因。绝不用 full=True——那会宣称 full_coverage 且
+                # 交出一个空的 na_reasons，把「一个都没取到」写成「查过了，都没有」。
                 records.append({"meta": meta, "profile": {}, "holdings": [],
-                                "derived": derive([], full=True)})
+                                "derived": derive([], unavailable=True)})
                 warnings.append(f"[{sym}] AV 与 yfinance 均未取到，记 {NA}，须到官方持仓页人工补")
 
         if i < len(etf_rows) - 1 and args.sleep:
             time.sleep(args.sleep)
 
+    # 降级清单：**每一条都必须是结构化字段**，不能只活在 stdout 的告警区。
+    # 「一档都没取到」「回退到 top-N」「key 耗尽」都是降级；漏报一次，
+    # 下游就会把一次降级运行读成一次正常运行（fallback 规则 6：降级必须大声）。
+    all_failed = bool(etf_rows) and not got_av and not got_yf
+    av_empty = [r["meta"]["ticker"] for r in records
+                if r["meta"].get("source") == SRC_AV and not r["holdings"]]
+    degraded_reasons: list[str] = []
+    if not ring.keys:
+        degraded_reasons.append(
+            f"未设置 {ENV_VAR}：第一级 Alpha Vantage 整个跳过，自第二级 yfinance 起跑（**仅 top-N**）")
+    if ring.exhausted:
+        degraded_reasons.append(
+            f"{len(ring.exhausted)} 个 key 本次运行内判为日配额耗尽（或 key 无效，二者消息相同）："
+            + "、".join(ring.mask_of(i) for i in sorted(ring.exhausted)))
+    if got_yf:
+        degraded_reasons.append(
+            f"{len(got_yf)} 档回退到第二级 yfinance（**非全量**，集中度以外的派生量记 {NA}）："
+            + ", ".join(got_yf))
+    if av_empty:
+        degraded_reasons.append(
+            f"{len(av_empty)} 档 AV 未返回任何持仓明细，持仓相关字段记 {NA}：" + ", ".join(av_empty))
+    if failed:
+        degraded_reasons.append(
+            f"{len(failed)} 档 AV 与 yfinance 均未取到，全部字段记 {NA}，须到官方持仓页人工补："
+            + ", ".join(failed))
+
     if args.json:
         payload = {
             "fetched_at": now_iso,
+            "ok": not all_failed,           # 与退出码同源：一档都没取到才为 false
+            "degraded": bool(degraded_reasons),
+            "degraded_reasons": degraded_reasons,
             "sources": {
                 SRC_AV: "Alpha Vantage ETF_PROFILE（全量持仓）",
                 SRC_YF: "yfinance funds_data.top_holdings（**仅 top-N，非全量**）",
@@ -1257,20 +1423,25 @@ def main(argv: list[str] | None = None) -> int:
                 SRC_YF: got_yf,
                 SRC_NONE: failed,
             },
+            # 汇总区那句「本次同时出现 ① 与 ②」的禁令也必须是字段：
+            # 只印在屏幕上的话，只读 JSON 的下游正好会去干它禁止的那件事。
+            "mixed_sources": bool(got_av and got_yf),
+            "mixed_source_prohibition":
+                "① 与 ② 两组数字口径不同，写进报告时必须分组、各自标注来源与取数日，"
+                "不得并成一张表。",
             "keys_total": len(ring.keys),
             "keys_exhausted": [ring.mask_of(i) for i in sorted(ring.exhausted)],
+            "daily_verdict_ambiguity": DAILY_AMBIGUITY_NOTE,
             "warnings": [ring.safe(w) for w in warnings],
             "etfs": [serialize(r) for r in records],
         }
-        out = Path(args.json).expanduser()
-        try:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write(out, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-            # 用户自传的路径同样含用户名，而本脚本输出会被贴进报告并推 Slack。
-            # 折叠家目录（~/...）而不是只留文件名：既不泄漏，又还能让人找到文件。
-            err(f"JSON 已写入 {scrub_paths(out)}")
-        except Exception as exc:
-            err(f"⚠ JSON 写入失败（不影响本次输出）：{type(exc).__name__}: {ring.safe(exc)}")
+        dump_json(args.json, payload, ring)
+
+    # --quiet 关的是人类可读渲染，不是告警：降级理由改走 stderr，
+    # 否则一次全档落空的运行在屏幕上会与一次正常运行长得一模一样。
+    if args.quiet and degraded_reasons:
+        for reason in degraded_reasons:
+            err_warn(reason)
 
     if not args.quiet:
         print(f"ETF 持仓取数 · {now_iso}")
@@ -1307,7 +1478,8 @@ def main(argv: list[str] | None = None) -> int:
         print("持仓一律以发行商官方持仓表为准；本脚本不保存快照，每次现取。")
 
     # 三级全落空（一档都没取到）-> 1；否则 0（部分失败已在汇总里分组列出，便于按 --tickers 重跑）。
-    return 1 if (etf_rows and not got_av and not got_yf) else 0
+    # 同一个 all_failed 也进了 JSON 的 `ok`，退出码与字段永远说同一件事。
+    return 1 if all_failed else 0
 
 
 if __name__ == "__main__":

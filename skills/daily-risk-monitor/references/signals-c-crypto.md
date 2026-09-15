@@ -6,7 +6,7 @@
 > web_fetch coingecko / tradingview」。实作时发现 CoinGecko 免费层无全市场市值历史序列
 > （`/global/market_cap_chart` 实测 HTTP 401），而**换到别家会引入第三套分母口径**
 > （CoinGecko 与 CoinPaprika 实测同日 59.1% vs 56.9%，差约 2pt，而阈值只有 2%）。
-> 因此 `crypto.sh` 改为**按天累积同源本地历史** `assets/dominance_history.jsonl` 自答这条腿，
+> 因此 `crypto.py` 改为**按天累积同源本地历史** `assets/dominance_history.jsonl` 自答这条腿，
 > 并强制校验基准笔与今日**同源**，异源一律拒绝比较记 ⚪️。
 > **不要为了补这条腿去换数据源** —— 缺的是历史序列，不是当日值。
 >

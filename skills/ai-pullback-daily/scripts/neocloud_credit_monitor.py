@@ -21,8 +21,15 @@ neocloud_credit_monitor.py —— 引爆点④「Neocloud 信用利差」日更�
   python3 neocloud_credit_monitor.py                 # 输出 markdown（可直接贴进日报）
   python3 neocloud_credit_monitor.py --json          # 输出 JSON（机读）
   python3 neocloud_credit_monitor.py --compact       # 只输出精简版一行（Slack 用）
+  python3 neocloud_credit_monitor.py --emit both     # **一次取数**同时产出完整 markdown + 精简一行
+  python3 neocloud_credit_monitor.py --compact-also /tmp/credit_compact.txt   # 精简行另写档，stdout 不变
   python3 neocloud_credit_monitor.py --no-history    # 不写入历史档（试跑用）
   python3 neocloud_credit_monitor.py --max-quote-age 3
+
+一次取数、多份渲染：完整版与精简版**必须出自同一次取数、同一个判定对象**（日更技能
+SKILL.md 第二步：「两版基于同一次取数，数据严格一致」）。分两次跑不只是两轮 ~14s 网络
+取数，还会写两次历史档并同日覆盖 —— 明天的⑩跨档变化比对的就成了第二次取数，而报告引用
+的是第一次。用 --emit both / --compact-also 取代重复调用。
 """
 
 import argparse
@@ -812,6 +819,24 @@ def evaluate(fred, bonds, equities, cfg, history, today, max_quote_age=5):
     ev["tripwire_4"] = {"state": t4, "why": why,
                         "thesis_side": thesis, "financing_side": financing}
 
+    # 论点侧共四种形态，动作不同，**不得合并**：
+    #   两层皆🟢          → 已确认未破
+    #   任一层🟡          → 论点侧本身在转弱：那是**读数**，不是缺数据
+    #   一层⚪、另一层🟢  → 未能确认未破（结论只建立在有数据的那一层上）
+    #   两层皆⚪          → 闸门**不可判定**。worst() 只在全部输入为 ⚪ 时才回 ⚪，
+    #                       所以 thesis == GREY ⟺ L2 与 L4 同时 ⚪。
+    # 第四种是 2026-09-08 补的：SKILL.md 的 thesis_side 路由表原本只有 🔴 和 🟢/🟡 两行，
+    # ⚪ 无处可去，於是 2026-09-07 那轮（L2 报价 39 天前 ⚪ + L4 因 Yahoo 全面 429 断源 ⚪）
+    # 只能由报告自行裁量。buckets.md 第三条编者注现在定了：**仅当融资侧同时为 🔴**
+    # ——有活着的告警却查不到它是否越过 L2/L4——才取保守侧降桶；⚪ 单独出现不降桶。
+    _th_grey  = [lay for lay in ("L2", "L4") if ev[lay]["state"] == GREY]
+    _th_amber = [lay for lay in ("L2", "L4") if ev[lay]["state"] == AMBER]
+    # 这三个字段**无条件**写：JSON 等价律要求每条分支下都存在，否则调用方读不到
+    # 就只能自己比对两层状态——正是本次要消掉的那一步。
+    ev["thesis_confirmed"] = (thesis == GREEN and not _th_grey and not _th_amber)
+    ev["thesis_evaluable"] = (thesis != GREY)
+    ev["thesis_grey_layers"] = list(_th_grey)
+
     # 判读：可买的回撤 vs 主题崩坏（须点名实际动了哪几层，不用固定模板）
     moved = [lay for lay in ("L1", "L3") if ev[lay]["state"] in (AMBER, RED)]
     intact = [f"{lay}{ev[lay]['state']}" for lay in ("L2", "L4")]
@@ -819,13 +844,45 @@ def evaluate(fred, bonds, equities, cfg, history, today, max_quote_age=5):
         ev["verdict_line"] = "🔴 主题崩坏风险：项目层或上游已确认受损，回调不是机会"
         ev["verdict_tag"] = "🔴主题崩坏"
     elif t4 == RED:
-        ev["verdict_line"] = "🔴 个体融资链告警：走论点闸门，全体买入桶降级观察"
-        ev["verdict_tag"] = "🔴融资链告警"
+        # ⚪ 不得读成好消息。worst() 刻意让 ⚪ 不参与升档（缺数据不得推高结论），
+        # 所以 thesis 会在 L2=⚪ / L4=🟢 时回 GREEN——那是「没有证据说破了」，
+        # **不是「有证据说没破」**。下面的 🟡 分支早就用 both_green 区分了这两件事，
+        # 这一支当初漏了，於是 L2 不可判定时照样印「论点侧未破」。
+        # buckets.md 的编者注写的正是这条：「L2 是 ⚪ 时不算「L2 未破」——不可判定不是安全」。
+        if ev["thesis_confirmed"]:
+            ev["verdict_line"] = ("🔴 个体融资链告警（融资侧）：论点侧 L2🟢/L4🟢 已确认未破 → "
+                                  "**不走论点闸门、不改分桶**，只减半节奏")
+            ev["verdict_tag"] = "🔴融资链告警（论点侧已确认）"
+        elif not ev["thesis_evaluable"]:
+            # L2 与 L4 同时 ⚪：有一个活着的融资侧 🔴，却无法查它是否已波及论点侧。
+            # 不写「未能确认未破」——那话预设了「还没破」；这里连判都判不了。
+            # 动作归 buckets.md 第三条编者注，本行只陈述状态并指名依据。
+            ev["verdict_line"] = (
+                "🔴 融资侧告警，且论点侧 L2⚪/L4⚪ **两条腿同时不可判定** → 闸门无法评估。"
+                "按 buckets.md 第三条编者注（⚪ 且融资侧 🔴）取保守侧：**买入桶降级观察**；"
+                "标签写「⚠️论点侧不可判定」而非「⚠️论点受损」——本轮无证据说论点破了")
+            ev["verdict_tag"] = "🔴融资链告警·论点侧不可判定(L2⚪/L4⚪)"
+        elif _th_amber:
+            # 🟡 是读数不是缺数据。说「数据不足」会把一个真实的转弱读数讲成取数失败。
+            ev["verdict_line"] = (
+                f"🔴 个体融资链告警（融资侧）：论点侧 {'、'.join(intact)}——"
+                f"{'/'.join(_th_amber)} 已转 🟡（**是读数、不是缺数据**），尚未达 🔴，"
+                f"故按 thesis_side 路由表第二行**不走论点闸门、分桶维持**，只转保守节奏")
+            ev["verdict_tag"] = f"🔴融资链告警·论点侧{'/'.join(_th_amber)}🟡转弱"
+        else:
+            ev["verdict_line"] = (
+                f"🔴 个体融资链告警（融资侧）：论点侧 {'、'.join(intact)} "
+                f"**数据不足、未能确认未破**（缺项不得当作未破）→ 分桶维持"
+                f"（红线：只有 L2/L4 才走论点闸门，本轮无证据说它们破了），"
+                f"但结论建立在已取到的那一层上，节奏减半并在两版报告写明缺哪一层")
+            ev["verdict_tag"] = (f"🔴融资链告警·L2{ev['L2']['state']}/L4{ev['L4']['state']}未能确认")
     elif financing in (AMBER, RED):
         # ⚪ 不得读成好消息：论点侧缺数据时只能说「未能确认」，不能说「未破」
-        both_green = ev["L2"]["state"] == GREEN and ev["L4"]["state"] == GREEN
+        both_green = ev["thesis_confirmed"]
         side = ("未破 → 主题仍在" if both_green else
-                "**数据不足、未能确认**（缺项不计入升档，但也不得当作未破）→ 分桶维持、节奏转保守")
+                (f"其中 {'/'.join(_th_amber)} 已转 🟡（**是读数、不是缺数据**）→ 分桶维持、节奏转保守"
+                 if _th_amber else
+                 "**数据不足、未能确认**（缺项不计入升档，但也不得当作未破）→ 分桶维持、节奏转保守"))
         ev["verdict_line"] = (f"🟡 可买的回撤（限定在融资成本这条腿）：{'/'.join(moved)} 已动，"
                               f"衡量的是「neocloud 股东被稀释多少」；"
                               f"{'、'.join(intact)}（项目层与上游）{side}")
@@ -850,6 +907,71 @@ def evaluate(fred, bonds, equities, cfg, history, today, max_quote_age=5):
             ev["verdict_line"] = "🟢 信用层四层皆未触发，论点侧支撑完好"
             ev["verdict_tag"] = "🟢论点侧完好"
     return ev
+
+
+# ------------------------------------------------ 数据缺口 / 降级声明（结构化）
+
+def build_data_gaps(errors, bonds, cfg, max_quote_age):
+    """把第⑧块「数据缺口」的判定集中成结构化字段，markdown 与 --json 共用同一份。
+
+    旧版 --json 在输出前 res.pop("cfg")，而⑧里**本层自述最大盲区**那一行
+    （「无实时 CDS 数据」）正是从 cfg["manual_flags"] 推出来的 —— 于是该盲区只活在
+    markdown 里，机读端看不到，等于把「不知道」交接成「已查、没事」。
+    cfg 仍不进 JSON（体积大、且 bonds/eval 已消化过），⑧ 的输入改由本结构带出。
+    """
+    flags = (cfg.get("manual_flags") or {})
+    stale = [b["label"] for b in bonds if b["stale"] and b["quote_as_of"]]
+    cds_available = bool(flags.get("cds_5y_bp"))
+    return {
+        # 取数例外（FRED/yfinance/债券定价）；已在 main 里过 scrub()，不含绝对路径
+        "fetch_errors": list(errors),
+        "cds_realtime": {
+            "available": cds_available,
+            "cds_5y_bp": flags.get("cds_5y_bp"),
+            "cds_5y_as_of": flags.get("cds_5y_as_of"),
+            "source": flags.get("cds_source", ""),
+            # 措辞照抄 markdown ⑧ 的同一行，两边不得各说各话
+            "note": None if cds_available else "无实时 CDS 数据（本层最大盲区）",
+        },
+        "stale_quotes": stale,
+        "stale_quotes_note": ("报价过期（超过 --max-quote-age，已排除于判定）" if stale else None),
+        "max_quote_age_days": max_quote_age,
+        # 只覆盖「指数/曲线/股价」三层，**不**包含 CDS —— 与⑧最后那句同一口径。
+        # 叫 no_gaps 就会在 CDS 盲区仍在时说谎，故按它实际断言的东西命名。
+        "feeds_complete": (not errors) and (not stale),
+        "feeds_complete_note": ("指数/曲线/股价三层皆取到当期数据，无缺口。"
+                                if (not errors) and (not stale) else None),
+    }
+
+
+def build_degraded(res, ev, gaps):
+    """顶层 degraded / degraded_reasons。
+
+    任何降级都必须是**结构化字段**，不能只活在 stderr 或 markdown 里：窄读与交接只看
+    stdout 的字段，一个降级若只印在人类输出里，就会被读成「已查、没事」。
+    措辞一律照抄对应的文字分支，避免两处各自演化。
+    """
+    reasons = []
+    if gaps["fetch_errors"]:
+        reasons.append(f"取数失败 {len(gaps['fetch_errors'])} 项（详见 data_gaps.fetch_errors）")
+    if gaps["stale_quotes"]:
+        reasons.append("报价过期（超过 --max-quote-age，已排除于判定）："
+                       + "、".join(gaps["stale_quotes"]))
+    if not gaps["cds_realtime"]["available"]:
+        reasons.append("无实时 CDS 数据（本层最大盲区）")
+    inc = _incomplete_layers(ev)
+    if inc:
+        reasons.append("/".join(inc) + " 本次⚪未取到数据，未能确认")
+    verdict = (ev.get("relative_check") or {}).get("verdict") or ""
+    if verdict == "无法区分":
+        reasons.append("缺 HY 基准或缺 neocloud 利差 → 按日更规则，引爆点④ 最高只记🟡，不得升🔴")
+    elif verdict.endswith("(水平法)"):
+        reasons.append("相对基准检验回退水平法：历史档无 30 日前的新鲜参照点")
+    if ev["tripwire_4"]["state"] == GREY:
+        reasons.append("引爆点④ 本次⚪：本次未取到可用信用数据")
+    if "cross_tier_changes" not in res["meta"]:
+        reasons.append("⑩ 跨档变化无历史档可比（首次运行，或历史档只有当日纪录）")
+    return bool(reasons), reasons
 
 
 # ---------------------------------------------------------------- 输出
@@ -1010,15 +1132,18 @@ def render_markdown(res):
     # 数据缺口
     A("**⑧ 数据缺口（必须声明，缺项不得推高结论）**")
     A("")
+    # 本块的判定集中在 build_data_gaps()：markdown 与 --json 的 data_gaps 同源，
+    # 不得让「本层最大盲区」只出现在其中一边。
+    gaps = res["data_gaps"]
     for e in res["errors"]:
         A(f"- {scrub(e)}")          # 例外讯息可能带绝对路径 → 一律折叠家目录
-    cds = (res["cfg"].get("manual_flags") or {})
-    if not cds.get("cds_5y_bp"):
-        A(f"- **无实时 CDS 数据**（本层最大盲区）：{cds.get('cds_source','')}")
-    stale = [b["label"] for b in bonds if b["stale"] and b["quote_as_of"]]
+    cds = gaps["cds_realtime"]
+    if not cds["available"]:
+        A(f"- **无实时 CDS 数据**（本层最大盲区）：{cds.get('source','')}")
+    stale = gaps["stale_quotes"]
     if stale:
         A(f"- **报价过期**（超过 --max-quote-age，已排除于判定）：{'、'.join(stale)}")
-    if not res["errors"] and not stale:
+    if gaps["feeds_complete"]:
         A("- 指数/曲线/股价三层皆取到当期数据，无缺口。")
     A("")
 
@@ -1057,6 +1182,19 @@ def render_markdown(res):
     return "\n".join(L)
 
 
+def render_cross_tier(res):
+    """第⑩块「跨档变化」。抽成函式，让 --emit both 的完整版与单跑 markdown 逐字相同
+    ——十个区块须整段贴入日报，缺一块就与 references/output-format.md 冲突。"""
+    ch = res["meta"].get("cross_tier_changes")
+    if ch:
+        return ("**⑩ 跨档变化（vs 上次运行 " + str(res["meta"].get("prev_run_date")) + "）**\n\n"
+                + "\n".join(f"- {c}" for c in ch))
+    if "cross_tier_changes" in res["meta"]:
+        return f"**⑩ 跨档变化**：无（vs {res['meta'].get('prev_run_date')}）"
+    # 十个区块须整段贴入日报，缺历史档也要出现这一块并说明原因
+    return "**⑩ 跨档变化**：无历史档可比（首次运行，或历史档只有当日纪录）"
+
+
 def render_compact(res):
     ev, fred = res["eval"], res["fred"]
     l1 = ev["L1"].get("corp_spread", {})
@@ -1075,10 +1213,23 @@ def main():
     ap = argparse.ArgumentParser(description="Neocloud 信用层日更监控 (引爆点④ tripwire v2)")
     ap.add_argument("--json", action="store_true", help="输出 JSON 而非 markdown")
     ap.add_argument("--compact", action="store_true", help="只输出精简版一行（Slack 用）")
+    ap.add_argument("--emit", choices=("markdown", "compact", "both", "json"), default=None,
+                    help="一次取数、多份渲染：markdown｜compact｜both（完整版+精简一行）｜json。"
+                         "both 的两份渲染源自同一个判定对象，不可能对引爆点④ 有分歧")
+    ap.add_argument("--compact-also", metavar="FILE", default=None,
+                    help="额外把精简版一行写进 FILE（stdout 内容不变），供同一次取数两处引用")
     ap.add_argument("--bonds", default=BONDS_PATH, help="债券登记表路径")
     ap.add_argument("--max-quote-age", type=int, default=5, help="报价过期天数（默认5，超过判⚪不参与触发）")
     ap.add_argument("--no-history", action="store_true", help="不写入历史档")
     args = ap.parse_args()
+
+    # --emit 与旧的 --json/--compact 是同一件事的两种写法：冲突时响亮拒绝，
+    # 不做「谁优先」的静默裁决（静默优先＝报告引用的渲染与呼叫端以为的不是同一个）。
+    implied = "json" if args.json else ("compact" if args.compact else None)
+    if args.emit and implied and args.emit != implied:
+        err(f"✗ --emit {args.emit} 与 --{implied} 冲突：两者指定了不同的输出形式，请只给一个。")
+        return 1
+    emit = args.emit or implied or "markdown"
 
     today = date.today()
     bonds_path = Path(args.bonds)
@@ -1133,6 +1284,8 @@ def main():
         "bonds": bonds,
         "eval": ev,
         "errors": errors,
+        # ⑧ 数据缺口的结构化等价物：markdown 与 --json 同源（见 build_data_gaps）
+        "data_gaps": build_data_gaps(errors, bonds, cfg, args.max_quote_age),
         "cfg": cfg,
     }
 
@@ -1150,6 +1303,9 @@ def main():
         res["meta"]["cross_tier_changes"] = changes
         res["meta"]["prev_run_date"] = prev.get("date")
 
+    # 顶层降级声明。放在 cross_tier 之后：「无历史档可比」本身就是一项降级。
+    res["degraded"], res["degraded_reasons"] = build_degraded(res, ev, res["data_gaps"])
+
     if not args.no_history:
         append_history({
             "date": today.isoformat(),
@@ -1166,23 +1322,39 @@ def main():
             "tripwire_4": ev["tripwire_4"]["state"],
         })
 
-    if args.json:
+    # 精简行另写档：放在渲染分支**之前**（与 append_history 同一理由），
+    # 渲染失败不该连带丢掉已经算出来的那一行。
+    if args.compact_also:
+        line = render_compact(res)
+        try:
+            p = Path(args.compact_also)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(line + "\n", encoding="utf-8")
+        except OSError as e:
+            # 写不进档不得毁掉已产出的完整版，但也绝不能静默：告警 + 把该行改印 stderr。
+            # 路径先折叠家目录 —— 本脚本的输出会被贴进日报并推 Slack。
+            err(f"⚠️ 精简版一行写入失败（{tilde_path(args.compact_also)}）：{type(e).__name__}；"
+                f"该行改印于 stderr：{line}")
+
+    # 渲染分支。both 的两份渲染共用同一个 res / ev 对象：compact 行与完整 markdown
+    # 在结构上不可能对引爆点④ 各说各话，也不会是两轮独立取数。
+    if emit == "json":
+        # cfg 不进 JSON（体积大，且 bonds/eval 已消化过）；⑧ 赖以判定的那几项
+        # 已由 res["data_gaps"] 结构化带出，不再随 cfg 一起被丢掉。
         res.pop("cfg", None)
         print(json.dumps(res, ensure_ascii=False, indent=2, default=str))
-    elif args.compact:
+    elif emit == "compact":
         print(render_compact(res))
     else:
         print(render_markdown(res))
-        ch = res["meta"].get("cross_tier_changes")
-        if ch:
-            print("**⑩ 跨档变化（vs 上次运行 " + str(res["meta"].get("prev_run_date")) + "）**\n")
-            for c in ch:
-                print(f"- {c}")
-        elif "cross_tier_changes" in res["meta"]:
-            print(f"**⑩ 跨档变化**：无（vs {res['meta'].get('prev_run_date')}）")
-        else:
-            # 十个区块须整段贴入日报，缺历史档也要出现这一块并说明原因
-            print("**⑩ 跨档变化**：无历史档可比（首次运行，或历史档只有当日纪录）")
+        print(render_cross_tier(res))
+        if emit == "both":
+            print("")
+            print("---")
+            print("**精简版一行（Slack 用；与上方完整版出自同一次取数、同一判定对象，"
+                  "不属于须整段贴入的十个区块）**")
+            print("")
+            print(render_compact(res))
     return 0
 
 
