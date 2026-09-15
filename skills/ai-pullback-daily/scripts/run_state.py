@@ -30,8 +30,11 @@ SKILL.md 里也没有任何读回步骤，全靠写报告的人记得住或去�
     `closed` → RUN_MODE 两轮都是 postclose → 第二轮的基准变成第一轮，同一个 bug。
   · **乱序或写错日期的 write**。旧实现会让它直接覆盖掉更新的基准。
 
-所以本档存 `postclose_history`（近 N 笔，新的在前），gate 取其中 `date < today`
-的第一笔。同一天跑几次，取到的基准永远是同一笔。
+所以本档存一份 `runs`（最近写入的在前，唯一的事实来源），gate 取其中 mode=postclose
+且 `date < today` 的最近一笔。同一天跑几次，取到的基准永远是同一笔。
+`last_any` / `last_postclose` / `postclose_history` 全部由 `runs` **派生**——早先三者
+各存一份完整 entry，实测同一笔三个 md5 相同、而一个「什么都没变」的日子要产生 169 行
+diff；本档进 git，diff 就是它的审计价值。
 
 ## ⚪ 的「沿用」必须参与闸门判定
 
@@ -76,7 +79,14 @@ RANK = {"🟢": 0, "🟡": 1, "🔴": 2}          # ⚪ 不排序：它不是一
 TRIPWIRES = ("1", "2", "3", "4", "5")
 CREDIT_KEYS = ("L1", "L2", "L3", "L4", "T4")
 MODES = ("intraday", "postclose")
-HISTORY_CAP = 30                            # 约一个月的 postclose，足够任何回看
+# 保留策略。**算法上真正需要的只有两笔**：最近一次运行（任何模式，供 ⚪ 沿用），
+# 以及「日期早于今天」的最近一笔 postclose（闸门基准）。其余纯属人看方便——
+# 而本档进 git，`git log -p` 才是完整的审计轨迹，档内再留一份是重复。
+# 早先留 30 笔 postclose 外加 last_any / last_postclose 各一份完整副本；改成单一
+# runs 之后若照留 30 笔 postclose，会连 intraday 也一起留 30 笔 —— 一天两跑就是
+# 60 笔，比原本还大（实测 30 天后 132KB vs 71KB）。所以两件事要一起做：
+# 去重**并且**收敛保留量。
+RETAIN_POSTCLOSE = 5                        # 基准只需前一笔；5 笔够跨长假与乱序写入
 
 _HOMEISH_RE = re.compile(r"(?:/Users|/home|/var/folders)/[^/\s\"']+")
 _VS16 = "️"                            # 变体选择符：⚪️ 与 ⚪ 肉眼完全相同
@@ -275,12 +285,12 @@ def merge_evidence(prev_block, new_vals, run_date):
                 "last_evidence_date": old.get("last_evidence_date"),
                 "carried_forward": True,
                 "not_supplied": False,
-                "never_evidenced": old.get("value") is None,
+                # never_evidenced 不落盘：它恒等于 value is None，存起来只会有机会走样，
+                # 而且每笔 entry 多 10 行（本档进 git，diff 就是它的价值）。
             }
         else:
             out[k] = {"value": v, "last_evidence_date": run_date,
-                      "carried_forward": False, "not_supplied": False,
-                      "never_evidenced": False}
+                      "carried_forward": False, "not_supplied": False}
     for k, old in prev.items():
         if k not in out:
             o = dict(old)
@@ -294,12 +304,50 @@ def values_of(block):
     return {k: (v or {}).get("value") for k, v in (block or {}).items()}
 
 
+def get_runs(state):
+    """档里的运行序列（最近写入的在前）。**唯一的事实来源**。
+
+    `last_any` / `last_postclose` / `postclose_history` 现在全部由它**派生**，不再各存
+    一份。早先三者各存一份完整 entry，实测同一笔的三个 md5 完全相同，而一个「什么都
+    没变」的日子要产生 169 行 diff——本档进 git，diff 就是它的审计价值，被三倍冗余
+    淹掉是自伤。
+
+    兼容旧格式：读到没有 `runs` 的旧档时，就地由旧键合成，不需要迁移脚本。
+    """
+    runs = state.get("runs")
+    if isinstance(runs, list):
+        return runs
+    out, seen = [], set()
+    for e in ([state.get("last_any")] + list(state.get("postclose_history") or [])):
+        if not isinstance(e, dict):
+            continue
+        k = (e.get("date"), e.get("mode"))
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(e)
+    return out
+
+
+def last_any_of(state):
+    """最近一次运行（不分模式）—— ⚪ 沿用的来源。"""
+    runs = get_runs(state)
+    return runs[0] if runs else None
+
+
+def postclose_runs(state):
+    """所有 postclose 运行，按日期由新到旧。"""
+    return sorted((e for e in get_runs(state) if e.get("mode") == "postclose"),
+                  key=lambda e: e.get("date") or "", reverse=True)
+
+
 def pick_baseline(state, today):
-    """基准 = `postclose_history` 里**日期严格早于 today** 的最近一笔。
+    """基准 = postclose 运行里**日期严格早于 today** 的最近一笔。
 
     「严格早于」是这个函数的全部意义，见模组 docstring 的三种情况。
+    按日期排序後再取，所以与写入顺序无关（乱序写入也拿得到正确答案）。
     """
-    for e in (state.get("postclose_history") or []):
+    for e in postclose_runs(state):
         d = e.get("date")
         if not d:
             continue
@@ -367,7 +415,7 @@ def compute_gate(state, tw_raw, cr_raw, today, read_err,
     """闸门判定。gate 与 run 共用这一份，避免两条路各判各的。"""
     baseline = pick_baseline(state or {}, today) or {}
     base_tw, base_cr = baseline.get("tripwires"), baseline.get("credit")
-    carry = (state or {}).get("last_any") or {}
+    carry = last_any_of(state or {}) or {}
 
     tw, tw_carried, tw_unres = resolve_current(tw_raw, carry.get("tripwires"))
     cr, cr_carried, cr_unres = resolve_current(cr_raw, carry.get("credit"))
@@ -424,7 +472,8 @@ def compute_gate(state, tw_raw, cr_raw, today, read_err,
                         "**无从判定**（null，非「没跨档」）")
     for n in (credit_notes or []):
         degraded.append(n)
-    never = sorted(k for k, v in (base_tw or {}).items() if (v or {}).get("never_evidenced"))
+    # 由 value 直接判，不读落盘字段（旧档若带 never_evidenced 也无妨，结果一致）
+    never = sorted(k for k, v in (base_tw or {}).items() if (v or {}).get("value") is None)
     if never:
         degraded.append(f"基准里从未有过实据的引爆点：{'、'.join(never)}")
 
@@ -485,7 +534,7 @@ def compute_gate(state, tw_raw, cr_raw, today, read_err,
         "credit_json_conflicts": (credit_info or {}).get("conflicts"),
         "credit_json_provenance": (credit_info or {}).get("provenance"),
         "baseline": {
-            "source": "postclose_history（date < today 的最近一笔）",
+            "source": "runs 里 mode=postclose 且 date < today 的最近一笔",
             "date": baseline.get("date"),
             "mode": baseline.get("mode"),
             "generated_at": baseline.get("generated_at"),
@@ -577,7 +626,7 @@ def parse_date(s):
 
 
 def do_write(state, mode, tw, cr, run_date, pushed):
-    prev_any = (state.get("last_any") or {})
+    prev_any = (last_any_of(state) or {})
     entry = {
         "date": run_date.isoformat(),
         "mode": mode,
@@ -586,18 +635,35 @@ def do_write(state, mode, tw, cr, run_date, pushed):
         "credit": merge_evidence(prev_any.get("credit"), cr, run_date.isoformat()),
         "pushed": bool(pushed),
     }
-    state["last_any"] = entry
-    if mode == "postclose":
-        hist = [e for e in (state.get("postclose_history") or [])
-                if e.get("date") != entry["date"]]          # 同日重跑覆盖自己那笔
-        hist.insert(0, entry)
-        hist.sort(key=lambda e: e.get("date") or "", reverse=True)
-        state["postclose_history"] = hist[:HISTORY_CAP]
-        state["last_postclose"] = entry                      # 仅供人看，闸门不读它
+    # 同一 (日期, 模式) 的重跑覆盖自己那一笔；新的一律排在最前，所以 runs[0]
+    # 永远是「最近写入的那次」= last_any。**不重新排序**：排序会让同日的盘中/盘后
+    # 谁在前变得看运气，而 ⚪ 沿用要的是「最近写入」，不是「日期最大」。
+    runs = [e for e in get_runs(state)
+            if not (e.get("date") == entry["date"] and e.get("mode") == entry["mode"])]
+    runs.insert(0, entry)
+    # 修剪：保留「最近一笔运行（不分模式）」+「最近 RETAIN_POSTCLOSE 笔 postclose」。
+    # 盘中那些运行除了当 last_any 之外没有任何读者，所以只留最新的一笔即可——
+    # 照单全收会让一天两跑把档案撑成原本的两倍。
+    keep, seen_pc = [], 0
+    for i, e in enumerate(runs):
+        if i == 0:                                   # runs[0] = last_any，永远留
+            keep.append(e)
+            if e.get("mode") == "postclose":
+                seen_pc += 1
+            continue
+        if e.get("mode") == "postclose" and seen_pc < RETAIN_POSTCLOSE:
+            keep.append(e)
+            seen_pc += 1
+    state["runs"] = keep
+    # 旧格式的三个键不再写入（同一笔存三份，实测三个 md5 相同、无变化的一天要 169 行
+    # diff）。读档时仍兼容旧档，见 get_runs()。
+    for legacy in ("last_any", "last_postclose", "postclose_history"):
+        state.pop(legacy, None)
     state["_readme"] = (
-        "ai-pullback-daily 跨运行状态档。闸门基准 = postclose_history 里**日期早于今天**的"
-        "最近一笔（同日重跑、周末两跑、乱序写入都因此不会把基准换成自己）。"
-        "last_postclose 只是最近一笔 postclose 的便捷视图，闸门不读它。"
+        "ai-pullback-daily 跨运行状态档。`runs` 是唯一的事实来源（最近写入的在前）；"
+        "last_any / last_postclose / postclose_history 一律由它派生，不再各存一份。"
+        "闸门基准 = runs 里 mode=postclose 且**日期严格早于今天**的最近一笔"
+        "（同日重跑、周末两跑、乱序写入都因此不会把基准换成自己）。"
         "每项 last_evidence_date 是该项最后一次有真实证据的日期，⚪ 搬运时原样保留。"
         "由 scripts/run_state.py 维护，Slack 推送**之前**落盘。")
     return entry
@@ -722,9 +788,12 @@ def cmd_show(args):
                              ensure_ascii=False, indent=2))
         return 3
     if args.json:
+        # 派生视图一并给出：调用方不必自己复制一遍挑选规则（复制 = 第二个出处）
         print(json.dumps({"ok": True, "state_path": rel_display(STATE_PATH),
                           "exists": STATE_PATH.exists(),
                           "baseline_for_today": pick_baseline(state, date.today()),
+                          "last_any": last_any_of(state),
+                          "postclose_history": postclose_runs(state),
                           **state}, ensure_ascii=False, indent=2))
         return 0
     if not state:
@@ -732,10 +801,10 @@ def cmd_show(args):
         return 0
     today = date.today()
     base = pick_baseline(state, today)
+    runs = get_runs(state)
     print(f"今日闸门基准：{base['date'] + ' · postclose' if base else '（无——首次运行）'}")
-    print(f"postclose 序列：{len(state.get('postclose_history') or [])} 笔")
-    for name in ("last_any",):
-        e = state.get(name)
+    print(f"运行序列：{len(runs)} 笔（其中 postclose {len(postclose_runs(state))} 笔）")
+    for name, e in (("last_any（最近一次运行）", last_any_of(state)),):
         print(f"── {name}: " + (f"{e['date']} · {e['mode']}" if e else "（无）"))
         if not e:
             continue
