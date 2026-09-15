@@ -58,7 +58,7 @@ metadata:
 | `scripts/perp_quotes.py`               | 24/7 永续隐含变动                                     |
 | `scripts/neocloud_credit_monitor.py`   | Neocloud 信用层四层判定（引爆点④ 的量化层）           |
 | `scripts/neocloud_credit_lite.py`      | 同上的云端版（纯标准库，无历史档）                    |
-| `scripts/run_state.py`                 | 跨运行状态档：推送闸门的「上次」与 ⚪ 的沿用来源       |
+| `scripts/run_state.py`                 | 跨运行状态档：推送闸门的「上次」与 ⚪ 的沿用来源      |
 | `assets/neocloud_bonds.json`           | 债券条款 + WebSearch 喂入的报价 + 一级市场条款        |
 | `assets/neocloud_credit_history.jsonl` | 每日一笔的信用层历史档（变化率检验/跨档侦测）         |
 
@@ -99,16 +99,16 @@ python3 -c "import json;s=json.load(open('/tmp/sess.json'))['session']['US'];pri
 按上面那条命令的 `session.US.state` 取：`intraday` → `RUN_MODE=intraday`，
 其余（`post_close`/`pre_open`/`closed`）→ `RUN_MODE=postclose`。
 
-| | `intraday`（盘中） | `postclose`（盘后，**权威**） |
-|---|---|---|
-| 个股技术面 | 最近完整交易日 ＋ **⏳ 盘中活价叠加层** | 当日完整交易日，无叠加层 |
-| T1/T2/T3 与分桶 | **只由完整交易日收盘判定**；盘中触及另列「⏳ 盘中触及·未确认」，不进桶、不计入触发数 | 正常判定 |
-| 🌙 永续隐含（第二步之二） | 标题改「⏳ 盘中 vs 前收 隐含变动」；\|≥2%\|/\|≥5%\| 阈值记 N/A（窗口不同），预告措辞为「若**今日以此价收盘**」 | 「🌙 盘后/休市隐含」，阈值照常，预告为「若明日以此价开盘」 |
-| 信用层历史档 | `--no-history`（**不落盘**） | 正常落盘 |
-| `assets/neocloud_bonds.json` | **不写**。盘中拿到的债券报价若要写，必须带 `quote_kind: "intraday_indicative"` | 正常写，且**必须显式写 `quote_kind: "close_clean"`** |
-| git commit 状态档 | **不 commit** | 正常 commit |
-| Slack | 推送，标题与头部标「盘中」 | 推送，标题与头部标「盘后」 |
-| 「较上次新增🟡」比较基准 | 上一次 **postclose** 运行 | 上一次 **postclose** 运行 |
+|                              | `intraday`（盘中）                                                                                             | `postclose`（盘后，**权威**）                              |
+|------------------------------|----------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
+| 个股技术面                   | 最近完整交易日 ＋ **⏳ 盘中活价叠加层**                                                                        | 当日完整交易日，无叠加层                                   |
+| T1/T2/T3 与分桶              | **只由完整交易日收盘判定**；盘中触及另列「⏳ 盘中触及·未确认」，不进桶、不计入触发数                           | 正常判定                                                   |
+| 🌙 永续隐含（第二步之二）    | 标题改「⏳ 盘中 vs 前收 隐含变动」；\|≥2%\|/\|≥5%\| 阈值记 N/A（窗口不同），预告措辞为「若**今日以此价收盘**」 | 「🌙 盘后/休市隐含」，阈值照常，预告为「若明日以此价开盘」 |
+| 信用层历史档                 | `--no-history`（**不落盘**）                                                                                   | 正常落盘                                                   |
+| `assets/neocloud_bonds.json` | **不写**。盘中拿到的债券报价若要写，必须带 `quote_kind: "intraday_indicative"`                                 | 正常写，且**必须显式写 `quote_kind: "close_clean"`**       |
+| git commit 状态档            | **不 commit**                                                                                                  | 正常 commit                                                |
+| Slack                        | 推送，标题与头部标「盘中」                                                                                     | 推送，标题与头部标「盘后」                                 |
+| 「较上次新增🟡」比较基准     | 上一次 **postclose** 运行                                                                                      | 上一次 **postclose** 运行                                  |
 
 两条容易踩的：
 
@@ -565,7 +565,10 @@ python3 "$S/run_state.py" run --mode "$RUN_MODE" --date "$RUN_DATE" --json \
 - 状态档坏掉时 `run_state.py` **拒绝写入并回 3**（把原档另存 `.corrupt-<时戳>.json`），
   不会以空基准重建——重建会抹掉整个基准序列。
 - `assets/last_run.json` 与信用层历史档一样**进 git**：不跟踪的话换一台机器跑就永远是
-  「首次运行」，闸门等于恒不触发。
+  「首次运行」，闸门等于恒不触发。档内只有一个 `runs` 阵列（最近写入的在前），
+  `last_any` / `last_postclose` / `postclose_history` 皆由它派生、不各存一份；
+  保留量是「最近一笔运行 + 最近 5 笔 postclose」，**更早的去 `git log -p` 查**——
+  档内再留一份只是把审计轨迹抄第二遍。
 
 ## 依赖
 
