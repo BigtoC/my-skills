@@ -236,24 +236,26 @@ shared helpers are still copy-pasted, and that is the current state of the code,
 not an oversight waiting to be discovered:
 
 - **`scrub()`** (folds `$HOME`-ish absolute paths out of error text) is defined
-  **ten times** (measured 2026-09-07, not a remembered number — re-run the grep):
-  `industry_table.py`, `technicals.py`, `perp_quotes.py`,
-  `neocloud_credit_monitor.py`, `neocloud_credit_lite.py`, `etf_holdings.py`,
-  `market.py`, `snapshot.py`, `crypto.py`, `stock_perp.py`.
-- **`rel_display()`** exists in **five** copies: the shared one in `_weekly.py`
+  **fourteen times** (measured 2026-09-15 by `grep -rl _HOMEISH_RE --include='*.py' skills/`
+  — not a remembered number; re-run the grep):
+  `etf_holdings.py`, `bars_fallback.py`, `industry_table.py`,
+  `neocloud_credit_lite.py`, `neocloud_credit_monitor.py`, `perp_quotes.py`,
+  `run_state.py`, `source_probe.py`, `technicals.py`, `crypto.py`,
+  `market_fallback.py`, `market.py`, `snapshot.py`, `stock_perp.py`.
+- **`rel_display()`** exists in **six** copies: the shared one in `_weekly.py`
   (imported by the scripts that need the weekly install) plus private
-  definitions in `neocloud_credit_monitor.py`, `neocloud_credit_lite.py`,
-  `market.py` and `snapshot.py`. The credit scripts do not import `_weekly` at
+  definitions in `neocloud_credit_lite.py`, `neocloud_credit_monitor.py`,
+  `run_state.py`, `market.py` and `snapshot.py`. The credit scripts do not import `_weekly` at
   all — they read only this skill's own `assets/`, so they have no reason to
   depend on the weekly lookup.
 
-Treat these as ten and five separate implementations: a fix to path scrubbing
+Treat these as fourteen and six separate implementations: a fix to path scrubbing
 (the public-repo leak rule below) is an N-place edit, and grepping for
 `_HOMEISH_RE` finds every copy.
 
 ⚠️ **Count the grep, do not trust this list.** It said five and three until
-2026-09-07, by which point the real numbers were ten and five — the two Python
-ports and three earlier scripts had been added without updating it. Path
+2026-09-07 and ten and five until 2026-09-15, by which point the real numbers were
+fourteen and six — each time, new scripts had been added without updating it. Path
 scrubbing is the public-repo leak rule, so a missed copy publishes a home
 directory into a Slack-pushed report; a stale count here is the most expensive
 kind of documentation rot in this file. Converging them is fine, but `neocloud_credit_lite.py`

@@ -332,12 +332,22 @@ def _absorb(container, flat):
 
 
 def load_spot(path: Path):
-    """容错读取 technicals.py --json 的输出 → {TICKER: record}。"""
+    """容错读取 technicals.py --json 的输出 → ({TICKER: record}, session)。
+
+    session 取自同一份 tech.json，**不另开旗标、也不自己判时钟**：现货基准与盘口
+    状态必须来自同一次取数，否则会出现「基准是 D-1 收盘、却按盘后口径渲染」这种
+    两个来源各说各话的组合。
+    """
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         err(f"警告：--spot {Path(path).name} 读取失败（{scrub(exc)}），本次只输出 perp 价与 OI 分档。")
-        return {}
+        return {}, None
+    session = None
+    if isinstance(data, dict):
+        s = (data.get("session") or {}).get("US")
+        if isinstance(s, dict):
+            session = s
     flat = {}
     if isinstance(data, dict):
         for key in CONTAINER_KEYS:
@@ -349,7 +359,7 @@ def load_spot(path: Path):
         _absorb(data, flat)
     if not flat:
         err(f"警告：--spot {Path(path).name} 里没解析出任何现货收盘价，本次只输出 perp 价与 OI 分档。")
-    return flat
+    return flat, session
 
 
 def spot_lookup(flat, ticker):
@@ -431,8 +441,12 @@ def finalize_row(row, *, triggers: bool = True):
     return row
 
 
-def forecast_note(row):
-    """跨阈值只能写成预告，绝不记为已触发。"""
+def forecast_note(row, intraday=False):
+    """跨阈值只能写成预告，绝不记为已触发。
+
+    时态要跟着盘口走：美股仍在交易时说「若**明日开盘**」是错的——下一个定价事件
+    是**今天的收盘**，不是明天的开盘。
+    """
     perp, spot = row.get("perp_usd_equiv"), row.get("spot_close")
     if perp is None or spot is None:
         return None
@@ -442,11 +456,12 @@ def forecast_note(row):
         if v is None or v <= 0:
             continue
         if perp <= v < spot:
-            notes.append(f"若明日以此价开盘将触及 {label}@${fmt_px(v)}（预告，非已触发）")
+            when = "今日以此价收盘" if intraday else "明日以此价开盘"
+            notes.append(f"若{when}将触及 {label}@${fmt_px(v)}（预告，非已触发）")
     return "；".join(notes) if notes else None
 
 
-def evaluate(ticker, currency, markets, spot_flat, fx_rates, fx_notes):
+def evaluate(ticker, currency, markets, spot_flat, fx_rates, fx_notes, intraday=False):
     """把一个标的算成一行结果。返回 dict（status 决定它落到哪个区块）。"""
     name = MARKET_ALIASES.get(ticker, ticker if "." not in ticker else None)
     row = {"ticker": ticker, "currency": currency, "market": None, "status": "unlisted"}
@@ -508,8 +523,18 @@ def evaluate(ticker, currency, markets, spot_flat, fx_rates, fx_notes):
         return row
 
     row["implied_pct"] = (ratio - 1.0) * 100.0
-    row["major"] = abs(row["implied_pct"]) >= MAJOR_MOVE
-    row["forecast"] = forecast_note(row)
+    # |≥2%| 印出、|≥5%| 强制 WebSearch 查因 —— 这两个阈值标定在**现货收盘到下次开盘**
+    # 那段隔夜窗上（perp-overnight.md:21）。美股仍在交易时，分母是 D-1 收盘而分子含
+    # 了今天已经走完的大半个交易日，窗口根本不是同一个：阈值不随窗口转移
+    # （回退链规则第 4 条），所以盘中记 null + 理由，不拿隔夜阈值去套。
+    row["threshold_comparable"] = not intraday
+    if intraday:
+        row["major"] = None
+        row["major_reason"] = ("盘中：隐含变动的窗口是「D-1收盘→此刻」，"
+                               "而 |≥2%|/|≥5%| 标定在隔夜窗上，阈值不可跨窗比较")
+    else:
+        row["major"] = abs(row["implied_pct"]) >= MAJOR_MOVE
+    row["forecast"] = forecast_note(row, intraday=intraday)
     row["status"] = "ok"
     return row
 
@@ -555,7 +580,12 @@ def prohibitions_block():
 def render(result):
     out = []
     A = out.append
-    A("== 第二步之二：盘后 / 休市期间隐含变动（24/7 永续 · Hyperliquid xyz 池）==")
+    _iu = bool(result.get("intraday"))
+    A("== 第二步之二：" + ("⏳ 盘中 vs 前收 隐含变动" if _iu else "盘后 / 休市期间隐含变动")
+      + "（24/7 永续 · Hyperliquid xyz 池）==")
+    if _iu:
+        A("⚠ 盘中口径：分母为最近完整交易日收盘、分子含今日已走完的盘中时段——"
+          "**与隔夜窗不是同一个窗口**。|≥2%| / |≥5%| 阈值标定在隔夜窗上，本次记 N/A 不套用。")
     A(f"取数时间：{result['fetched_at']}（UTC） · 池：{DEX} · 市场数：{result['market_count']}"
       f"（在架 {result['market_listed']}） · 标的清单：{result['universe_path']}")
     if result.get("spot_path"):
@@ -781,6 +811,8 @@ def main():
             write_json({
                 "section": "第二步之二·24/7 永续隐含变动",
                 "observation_only": True,
+                "intraday": intraday,
+                "session": session,
                 "note": OBSERVATION_NOTE,
                 "degraded": True,
                 "degraded_reasons": reasons,
@@ -807,11 +839,12 @@ def main():
 
     markets = build_markets(payload)
 
-    spot_flat, spot_path = {}, None
+    spot_flat, spot_path, session = {}, None, None
     if args.spot:
-        spot_flat = load_spot(Path(args.spot))
+        spot_flat, session = load_spot(Path(args.spot))
         if spot_flat:
             spot_path = spot_arg_name
+    intraday = bool((session or {}).get("state") == "intraday")
 
     # 汇率（同池）
     fx_rates, fx_notes, fx_lines = {}, {}, []
@@ -830,7 +863,7 @@ def main():
             fx_lines.append(f"汇率：{cur} 计价标的在 {DEX} 池无对应汇率市场 → 本次跳过。")
 
     # 个股
-    stocks = [finalize_row(evaluate(t, c, markets, spot_flat, fx_rates, fx_notes))
+    stocks = [finalize_row(evaluate(t, c, markets, spot_flat, fx_rates, fx_notes, intraday))
               for t, c in universe]
 
     # 大盘层
@@ -867,6 +900,8 @@ def main():
     result = {
         "section": "第二步之二·24/7 永续隐含变动",
         "observation_only": True,
+        "intraday": intraday,
+        "session": session,
         "note": OBSERVATION_NOTE,
         # 降级汇总在下面回填（要先有完整 result 才算得出来），放在这里是为了排在头部显眼处。
         "degraded": None,

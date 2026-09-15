@@ -552,8 +552,13 @@ def resolve_asof(ref_frame, union_index, market: str):
     if last.date() == now.date():
         if now.time() < meta["close"]:
             incomplete = True
+            # ⚠ 前缀是**必须**的：apply_degraded() 只把 ⚠ 开头的 note 转成
+            # degraded_reasons，没有它这条回退就只活在 asof_notes 的中文散文里，
+            # --json 的 degraded 会是 false——「当日数据被换成了前一日」这件事
+            # 对只读 degraded 的下游完全不可见（回退链规则第 6 条：降级必须响亮；
+            # JSON 等价规则第 4 条：stderr/正文是冗余频道，不能是唯一频道）。
             notes.append(
-                f"{meta['label']}运行时点（{now:%H:%M} {meta['tz']}）早于收盘 "
+                f"⚠ {meta['label']}运行时点（{now:%H:%M} {meta['tz']}）早于收盘 "
                 f"{meta['close']:%H:%M}，当日 K 线未完成，按完整交易日规则取前一日"
             )
         elif ref_frame is not None and last in ref_frame.index and "Volume" in ref_frame.columns:
@@ -566,8 +571,14 @@ def resolve_asof(ref_frame, union_index, market: str):
                 base = float(ref_frame["Volume"].iloc[pos - 20:pos].mean())
                 if base > 0 and cur < base * 0.5:
                     incomplete = True
+                    # 同上，⚠ 前缀不可省。注意本分支是 elif：收盘前恒被时钟分支
+                    # 抢先，**盘中不可达**；它只在收盘后触发，而收盘后成交量低于
+                    # 20日均量一半的，实测 10 年 2491 个完整交易日里有 132 次
+                    # （5.30%），其中包含 2025-12-24 这类真实半日市（比值 0.263）
+                    # ——即它把一个真实完整交易日的收盘丢掉了。见 references 与
+                    # MARKETS 的半日市待办。
                     notes.append(
-                        f"{meta['label']}基准 {US_REF_TICKER if market == 'US' else '标的'} "
+                        f"⚠ {meta['label']}基准 {US_REF_TICKER if market == 'US' else '标的'} "
                         f"当日量 {cur:,.0f} < 20日均量 {base:,.0f} 的 50%，判为未完成盘中 K 线，剔除退到前一日"
                     )
     if incomplete:
@@ -575,6 +586,152 @@ def resolve_asof(ref_frame, union_index, market: str):
             return None, notes + ["回退后无可用交易日"]
         return union_index[-2], notes
     return last, notes
+
+
+def market_session(market: str, union_index, asof_ts):
+    """该市场此刻的**盘口状态**，供报告头「交易状态：<盘后/盘中/休市>」逐字使用。
+
+    这是纯附加的观察层：它**不参与** resolve_asof 的任何判定，也不改动 asof。
+    `output-format.md:13` 早就要求报告头写交易状态，但在此之前没有任何脚本产出
+    这个字段——写报告的人只能自己看时钟或去 asof_notes 里认中文散文。
+
+    state 的四个取值互斥：
+      intraday   最新 bar 就是今天、且此刻还没到该市场收盘 → 当日 K 线未完成
+      post_close 今天有 bar 且已过收盘时间
+      pre_open   今天还没有 bar、且此刻早于收盘（开盘前，或数据源尚未落地当日 bar）
+      closed     今天没有 bar 且已过收盘时间（周末／假日／该市场今日不交易）
+    """
+    meta = MARKETS[market]
+    now = dt.datetime.now(ZoneInfo(meta["tz"]))
+    last = union_index[-1] if union_index is not None and len(union_index) else None
+    has_today = bool(last is not None and last.date() == now.date())
+    before_close = now.time() < meta["close"]
+    if has_today:
+        state = "intraday" if before_close else "post_close"
+    else:
+        state = "pre_open" if before_close else "closed"
+    asof_date = asof_ts.date().isoformat() if asof_ts is not None else None
+    return {
+        "state": state,
+        "label": {"intraday": "盘中", "post_close": "盘后",
+                  "pre_open": "开盘前", "closed": "休市"}[state],
+        "now": now.isoformat(timespec="seconds"),
+        "tz": meta["tz"],
+        "close_time": meta["close"].strftime("%H:%M"),
+        "latest_bar": last.date().isoformat() if last is not None else None,
+        # 当日 bar 是否已完结。intraday 时为 False——这正是 asof 回退的原因。
+        "bar_complete": state != "intraday",
+        "asof": asof_date,
+        # asof 是否因当日 bar 未完成而被推回前一日（回退链规则第 2 条：标明档位）
+        "rolled_back": bool(state == "intraday" and last is not None and asof_date
+                            and asof_date != last.date().isoformat()),
+    }
+
+
+def attach_live_overlay(row, frame, asof_ts, session):
+    """盘中**实时价叠加层**——双轨制的活价那一轨。
+
+    ## 为什么是叠加而不是重算
+
+    `compute_row` 用 `hist = frame.loc[frame.index <= asof]` 切片，把当日未完成的
+    那根 bar 排除在外。一旦把 asof 往前挪一天让它进来，它会**同时**进入所有窗口
+    ——MA5/10/20/50/60/200、hi20、hi52、vol_ma20、RSI——这不是「拿到实时价」，
+    这是用半根 K 线重算所有慢变量。实测（2026-09-14 盘中）那样做的后果：
+      · hi20 的 20 根窗口向前滚一格，AVGO 20日高 412.50 → 399.36（−3.19%），
+        于是 T2触发价 379.50 → 367.41 —— **盘中把球门自己挪走了**；
+      · MA200 在股价下跌 4.8% 的同时 +0.21%（因为窗口同时丢掉了最老那根）；
+      · ma_position 在 48 档里翻转 19 档，ma_structure 翻转 6 档；
+      · 量比恒 <1（半个交易日的累计量除以整日均量），实测 37 档美股最大 1.065、
+        中位 0.504，「放量 ≥1.5x」**一次都不可能触发** —— 风险标签的静默漏报。
+    而且这三类偏差里有两类同向指向「没有买点」：hi52/hi20 在盘中是各自结算值的
+    **下界**，T1/T2触发价被系统性压低，`close <= t*_price` 更难成立。对一个专门
+    抓回调的例程，天真重算会让盘中运行**错过买点**而外观完全正常。
+
+    所以：窗口型的量一律冻结在最近完整交易日（hi52/hi20/T1价/T2价/各均线/量比），
+    只有**到这些阈值的距离**换成活价。那一个减法就是用户要的全部。
+
+    ## 触发用的是另一套名字
+
+    盘中触及写进 `t1_touch_live` / `t2_touch_live` / `t3_touch_live`，**绝不**写回
+    `t1`/`t2`/`t3`/`triggered`。那四个字段的口径是「最近完整交易日收盘」，
+    `output-format.md:89`「绝不谎报新收盘数据或制造新触发」、`perp-overnight.md:21`
+    「T1/T2/T3 永远只用最近一个完整交易日收盘价计算」、`buckets.md` 三个触发全定义
+    在收盘上。活价触及是**未确认**的：实测 AVGO 的 Wilder RSI 在同一个交易日里
+    在 34.0–36.0 之间来回穿越 T3 的 35.0 阈值，本次研究自己的两次探测（11:16 读
+    34.4 触发、11:25 读 35.0 不触发）就互相矛盾。
+    """
+    row["bar_complete"] = True
+    if frame is None or asof_ts is None:
+        return row
+    later = frame.loc[frame.index > asof_ts]
+    if len(later) == 0:
+        # 该档的日线来自回退档时最常见：实测 stockanalysis 在 11:20 ET 仍只到前一日，
+        # 韩股档甚至按设计丢弃当日未完成 bar。没有活价就记 null + 理由，不拿别处凑。
+        row["live_price"] = None
+        row["live_unavailable_reason"] = (
+            f"该档日线源（{row.get('bars_source') or 'yfinance'}）未提供当日未完成 bar")
+        return row
+    bar = later.iloc[-1]
+    live = float(bar["Close"]) if is_num(bar.get("Close")) else None
+    if not is_num(live):
+        row["live_price"] = None
+        row["live_unavailable_reason"] = "当日未完成 bar 的 Close 非数值"
+        return row
+
+    close = row.get("close")
+    row["bar_complete"] = False
+    row["live_price"] = rnd(live, 4)
+    row["live_bar_date"] = later.index[-1].date().isoformat()
+    row["live_ts"] = session.get("now")
+    # 与历史同一个 series 对象，口径天然一致（拆股已还原、股息未复权）。
+    # 这是唯一能这么说的源：换任何外部实时源都要过回退链规则第 3、4 条。
+    row["live_source"] = "yfinance 当日未完成日线 bar（与历史同一 series，口径一致）"
+    row["live_price_caliber"] = "拆股已还原·股息未复权（同 close/hi52/hi20）"
+
+    # 活价 vs **冻结**的窗口型阈值 —— 分子换成活价，分母一律不动
+    for name, ref in (("dd52_pct_live", row.get("hi52")), ("dd20_pct_live", row.get("hi20"))):
+        row[name] = rnd(pct_from(live, ref), 3) if is_num(ref) else None
+    for name, ref in (("gap_to_t1_pct_live", row.get("t1_price")),
+                      ("gap_to_t2_pct_live", row.get("t2_price"))):
+        row[name] = rnd(pct_from(ref, live), 2) if is_num(ref) else None
+    for name, ref in (("vs_ma50_pct_live", row.get("ma50")),
+                      ("vs_ma200_pct_live", row.get("ma200"))):
+        row[name] = rnd(pct_from(live, ref), 2) if is_num(ref) else None
+    # 「今日至今%」不是「日涨跌%」：分母是前一完整交易日收盘，但分子是半天。
+    # 两者不是同一个被测量，任何按整日涨跌标定的闸门都不得拿它比。
+    row["live_chg_from_close_pct"] = rnd(pct_from(live, close), 3) if is_num(close) else None
+
+    # 双轨的活价轨：独立命名，独立计数，不进桶
+    t1p, t2p = row.get("t1_price"), row.get("t2_price")
+    row["t1_touch_live"] = bool(live <= t1p) if is_num(t1p) else None
+    row["t2_touch_live"] = bool(live <= t2p) if is_num(t2p) else None
+    # T3 在盘中**没有被测量**：RSI(14) 定义在收盘上，盘中没有收盘。
+    # null 不是 false（JSON 等价规则第 2 条）。数值另以观察值给出。
+    row["t3_touch_live"] = None
+    row["t3_touch_live_reason"] = "RSI(14) 定义在收盘价上，盘中无收盘 → 不判定（null，非 false）"
+    touches = [row["t1_touch_live"], row["t2_touch_live"]]
+    row["touched_live"] = True if any(v is True for v in touches) else (
+        False if all(v is False for v in touches) else None)
+
+    # 量比在盘中不可得：半个交易日的累计量 ÷ 整日均量，结构性 <1。
+    # **不得**按已过时间折算成全日预估——那是「用不完整数据推算」，回退链规则第 5 条禁止。
+    row["vol_ratio_live"] = None
+    row["vol_ratio_live_reason"] = (
+        "盘中累计量 ÷ 20日整日均量 结构性 <1（实测中位 0.504、最大 1.065），"
+        "「放量 ≥1.5x」在盘中不可达；按已过时间折算全日属「用不完整数据推算」，禁止")
+
+    row["threshold_comparable"] = {
+        "value": False,
+        "reason": "T1/T2/T3 阈值标定在完整交易日收盘上，活价不得与之比较后记为已触发",
+    }
+    row["counts_toward"] = {"numerator": False, "denominator": False}
+    row["prohibitions"] = [
+        "盘中活价不得写入任何以「收盘」为名的字段（close/prev_close/spot_close）",
+        "不得据此判定 T1/T2/T3 新触发、不得改变分桶",
+        "不得改变「✅ 未触发」清单——该清单口径为完整交易日收盘",
+        "hi52/hi20/T1触发价/T2触发价/各均线/量比 一律为最近完整交易日之值，盘中不重算",
+    ]
+    return row
 
 
 # ---------------------------------------------------------------- 指标
@@ -1120,6 +1277,68 @@ def print_macro(macro):
     print()
 
 
+def print_live_section(result):
+    """⏳ 盘中活价 —— 双轨的活价那一轨，**未确认**。
+
+    与「📋 触发表」「✅ 未触发」是两套互不相干的清单：那两个的口径是最近完整交易日
+    收盘，这一个的口径是盘中活价。表头逐字写明两者，就是为了让读者不可能把活价
+    误读成收盘（perp 节的 `| 完整交易日收盘 | 24/7永续价 | 隐含变动% |` 是同一手法）。
+    """
+    live = result.get("live") or {}
+    if not live.get("enabled"):
+        return
+    if not live.get("markets_intraday"):
+        return
+    rows_all = [r for r in result["tickers"] if r.get("live_price") is not None]
+    print("⏳ 盘中活价 · 未确认（**不改变 T1/T2/T3 触发与分桶**）")
+    print(f"   活价源：{live['source']}")
+    print("   口径：现价为盘中活价；52周高/20日高/T1触发价/T2触发价/均线/量比 一律为"
+          "最近完整交易日之值，盘中不重算（避免半根 K 线把阈值本身挪走）。")
+    if not rows_all:
+        na = [r["ticker"] for r in result["tickers"] if r.get("live_unavailable_reason")]
+        print("   本次未取到任何盘中活价" + (f"（{len(na)} 档记 N/A）" if na else ""))
+        print()
+        return
+    touched = [r for r in rows_all if r.get("touched_live") is True]
+    print()
+    if touched:
+        print(f"   🔶 盘中触及 · 未确认（{len(touched)} 档）——收盘前可能收回，"
+              f"**不进买入桶、不计入触发数**")
+        trows = [[r["ticker"],
+                  fnum(r.get("close"), 2), fnum(r.get("live_price"), 2),
+                  fsign(r.get("live_chg_from_close_pct"), 2, "%"),
+                  ("T1" if r.get("t1_touch_live") else "") +
+                  ("+T2" if r.get("t1_touch_live") and r.get("t2_touch_live")
+                   else ("T2" if r.get("t2_touch_live") else "")),
+                  fnum(r.get("t1_price"), 2), fnum(r.get("t2_price"), 2),
+                  fsign(r.get("dd52_pct_live"), 1, "%")]
+                 for r in touched]
+        print_table(["代码", "完整交易日收盘", "盘中活价", "今日至今%",
+                     "盘中触及", "T1触发价", "T2触发价", "盘中52w回撤%"], trows)
+        print("   逐档读法：若**今日以此价收盘**将触及所列触发位（盘中未确认，非已触发）。")
+        print()
+    near = sorted((r for r in rows_all if r.get("touched_live") is not True
+                   and is_num(r.get("gap_to_t2_pct_live"))),
+                  key=lambda r: abs(r["gap_to_t2_pct_live"]))[:8]
+    if near:
+        print("   📉 距触发最近（盘中活价口径，前 8 档）")
+        nrows = [[r["ticker"], fnum(r.get("close"), 2), fnum(r.get("live_price"), 2),
+                  fsign(r.get("live_chg_from_close_pct"), 2, "%"),
+                  fnum(r.get("t1_price"), 2), fsign(r.get("gap_to_t1_pct_live"), 2, "%"),
+                  fnum(r.get("t2_price"), 2), fsign(r.get("gap_to_t2_pct_live"), 2, "%")]
+                 for r in near]
+        print_table(["代码", "完整交易日收盘", "盘中活价", "今日至今%",
+                     "T1触发价", "距T1", "T2触发价", "距T2"], nrows)
+        print()
+    print("   盘中不判定的两项：**T3/RSI** —— RSI(14) 定义在收盘价上，盘中无收盘，"
+          "记 null（非 false）；**量比/放量≥1.5x** —— 盘中累计量 ÷ 20日整日均量"
+          "结构性 <1，盘中不可达，记 null。两者都不按已过时间折算全日。")
+    na = [r["ticker"] for r in result["tickers"] if r.get("live_unavailable_reason")]
+    if na:
+        print(f"   ⚪ 盘中活价取不到 {len(na)} 档（记 N/A，不拿别处价格凑）：" + ", ".join(na))
+    print()
+
+
 def print_report(result):
     asof = result["asof"]
     print("=" * 96)
@@ -1127,6 +1346,19 @@ def print_report(result):
     print("=" * 96)
     parts = [f"{MARKETS[m]['label']} {asof[m]}" for m in ("US", "HK", "KR") if asof.get(m)]
     print("数据日期：" + "；".join(parts) if parts else "数据日期：N/A")
+    # 交易状态逐市场给：三个市场的盘口天天不同步，一个全局 token 说不清楚。
+    sess = result.get("session") or {}
+    if sess:
+        sparts = []
+        for m in ("US", "HK", "KR"):
+            s = sess.get(m)
+            if not s:
+                continue
+            tag = f"{MARKETS[m]['label']} {s['label']}"
+            if s.get("state") == "intraday":
+                tag += f"（{s['now'][11:16]} {s['tz'].split('/')[-1]}，收盘 {s['close_time']}）"
+            sparts.append(tag)
+        print("交易状态：" + "；".join(sparts))
     for n in result["asof_notes"]:
         print(f"  · {n}")
     print(f"标的来源：{result['sources']['universe']}（{result['counts']['universe']} 档，按 order）")
@@ -1161,6 +1393,8 @@ def print_report(result):
     print("口径：T1触发价=52周高×0.85；T2触发价=20日高×0.92；RSI14 即 T3 当前值（≤35 触发）。"
           "✅=已触发，—=未触发，N/A=数据不足暂不判定。")
     print()
+
+    print_live_section(result)
 
     print("📐 补充观察 · 短中期均线（不改变 T1/T2/T3 与分桶）")
     rows = [[r["ticker"], fnum(r.get("close"), 2), fnum(r.get("ma5"), 2), fnum(r.get("ma10"), 2),
@@ -1303,6 +1537,26 @@ def apply_degraded(result):
         reasons.append(f"T1/T2/T3 中有触发位因数据不足暂不判定（null，非 false）"
                        f" {len(undecided)} 档：" + ", ".join(undecided))
 
+    # 盘中运行本身就是一种降级：报告里每一个技术面数字都是**前一个**完整交易日的。
+    # 不把它写成 degraded_reasons，只读该字段的下游会把一份昨日快照当成今日读数。
+    sess = result.get("session") or {}
+    for mkt, s in sess.items():
+        if s.get("state") == "intraday":
+            reasons.append(
+                f"⚠ {MARKETS[mkt]['label']}此刻为盘中（{s.get('now')}，收盘 {s.get('close_time')}）："
+                f"本行所有技术面字段（收盘/52周高/20日高/T1·T2触发价/RSI/均线/量比）"
+                f"均为最近完整交易日 {s.get('asof')} 之值，非今日")
+    live = result.get("live") or {}
+    if live.get("enabled") and live.get("rows"):
+        reasons.append(
+            f"⚠ 已附盘中活价叠加层 {live['rows']} 档：活价仅用于「现价/距T1·T2/盘中触及」，"
+            f"**未确认、不改分桶、不进 triggered/untriggered**；量比与 T3 在盘中记 null")
+    no_live = [r["ticker"] for r in (result.get("tickers") or [])
+               if r.get("live_unavailable_reason")]
+    if no_live:
+        reasons.append(f"盘中活价取不到 {len(no_live)} 档（记 N/A，不拿别处价格凑）："
+                       + ", ".join(no_live))
+
     e = result.get("earnings") or {}
     reasons.extend(e.get("warnings") or [])
 
@@ -1429,6 +1683,7 @@ def run(args):
     # 传输层降级（yfinance 不收 session= -> 退回 curl_cffi）必须进 asof_notes：
     # ⚠ 前缀让 apply_degraded() 把它转成 degraded_reasons 字段，--json 才不会少于正文。
     asof, asof_notes = {}, list(_ENGINE_NOTES) + list(_FALLBACK_NOTES)
+    sessions = {}
     markets_needed = {market_of(t) for t in sel_tickers} | {"US"}
     for mkt in markets_needed:
         mk_frames = [frames[t] for t in dl if frames[t] is not None and market_of(t) == mkt]
@@ -1443,6 +1698,8 @@ def run(args):
         asof[mkt] = d.date().isoformat() if d is not None else None
         asof[mkt + "_ts"] = d
         asof_notes.extend(notes)
+        # 盘口状态是纯观察层，与上面的 asof 判定完全独立（它不改 asof，只描述此刻）。
+        sessions[mkt] = market_session(mkt, union, d)
     if asof.get("US") is None:
         # 同上：基准标的取不到日线是**取数失败**，不是参数错误 → 3。
         err(f"错误：无法确定美股完整交易日（基准 {US_REF_TICKER} 无数据）——"
@@ -1458,6 +1715,10 @@ def run(args):
             "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
             "mode": "macro-only",
             "asof": {k: v for k, v in asof.items() if not k.endswith("_ts")},
+            # macro-only 也要给盘口状态：驱动源判定用的 SMH−QQQ 与 10Y 日变动都是
+            # **整日**量，盘中运行时它们仍是前一完整交易日之值。不给这个字段，
+            # 读 macro-only 的那一步就无从知道自己拿到的是昨天的驱动源。
+            "session": sessions,
             "asof_notes": asof_notes,
             "macro": macro,
             # 顶层 indices：perp_quotes.py --spot 只展开顶层容器键，^GSPC/^NDX 必须放这一层
@@ -1485,6 +1746,7 @@ def run(args):
     # 命中集合只按「元数据 + 有没有日线」筛（与 compute_row 里的 etf/^ 判定同口径），
     # 「数据日是哪天」仍只在 compute_row 里算一次——绝不为了并发再写第二份日期规则。
     want_earn = not args.no_earnings
+    want_live = not args.no_live_overlay
     earn_targets = []
     if want_earn:
         earn_targets = list(dict.fromkeys(
@@ -1551,6 +1813,22 @@ def run(args):
     for r in rows:
         finalize_triggers(r)
 
+    # ---- 盘中活价叠加层（双轨的活价那一轨）
+    # **必须**在 finalize_triggers 之后：它要读已冻结的 hi52/hi20/T1价/T2价/均线，
+    # 只把「到这些阈值的距离」换成活价。顺序反了就会拿到空阈值。
+    live_rows = []
+    if want_live:
+        for r in rows:
+            if r.get("insufficient_history"):
+                continue
+            mkt = r["market"]
+            sess = sessions.get(mkt) or {}
+            if sess.get("state") != "intraday":
+                continue
+            attach_live_overlay(r, frames.get(r["ticker"]), asof.get(mkt + "_ts"), sess)
+            if r.get("live_price") is not None:
+                live_rows.append(r)
+
     evaluated = [r for r in rows if not r.get("insufficient_history")]
     untriggered = [r["ticker"] for r in evaluated
                    if r.get("t1") is not True and r.get("t2") is not True and r.get("t3") is not True]
@@ -1564,6 +1842,10 @@ def run(args):
         "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "mode": "full",
         "asof": {k: v for k, v in asof.items() if not k.endswith("_ts")},
+        # 报告头「交易状态：<盘后/盘中/休市>」的机读来源（output-format.md:13）。
+        # 逐市场给，因为三个市场的盘口状态天天不同步：实测 2026-09-14 12:16 ET
+        # 美股 intraday，而港股/韩股当时都已收盘。
+        "session": sessions,
         "asof_notes": asof_notes,
         "macro": macro,
         # 顶层 indices：perp_quotes.py --spot 只展开顶层容器键，^GSPC/^NDX 必须放这一层
@@ -1576,6 +1858,33 @@ def run(args):
         # ⚪️ 取不到（异常，需查）——与 ❌ 上市太新（正常，等满半年）分开
         "source_unavailable": src_unavail,
         "insufficient_history_too_young": too_young,
+        # 双轨的活价轨。与上面 triggered/untriggered 是**两套互不相干的清单**：
+        # 那两个的口径是最近完整交易日收盘，这个的口径是盘中活价、且未确认。
+        # 合并两者、或拿本清单改分桶，就是 output-format.md:89 禁的那件事。
+        "live": {
+            "enabled": bool(want_live),
+            "rows": len(live_rows),
+            "markets_intraday": sorted(m for m, s in sessions.items()
+                                       if s.get("state") == "intraday"),
+            "touched_live": sorted(r["ticker"] for r in live_rows if r.get("touched_live") is True),
+            "t1_touch_live": sorted(r["ticker"] for r in live_rows if r.get("t1_touch_live") is True),
+            "t2_touch_live": sorted(r["ticker"] for r in live_rows if r.get("t2_touch_live") is True),
+            "t3_touch_live": None,
+            "t3_touch_live_reason": "RSI(14) 定义在收盘价上，盘中无收盘 → 不判定（null，非 false）",
+            "source": "yfinance 当日未完成日线 bar（与历史同一 series，口径一致）",
+            "threshold_comparable": {
+                "value": False,
+                "reason": "T1/T2/T3 阈值标定在完整交易日收盘上，活价触及为未确认",
+            },
+            "counts_toward": {"numerator": False, "denominator": False},
+            "prohibitions": [
+                "盘中活价不得写入任何以「收盘」为名的字段（close/prev_close/spot_close）",
+                "不得据此判定 T1/T2/T3 新触发、不得改变分桶",
+                "不得改变「✅ 未触发」清单——该清单口径为完整交易日收盘",
+                "hi52/hi20/T1触发价/T2触发价/各均线/量比 一律为最近完整交易日之值，盘中不重算",
+                "本清单与 triggered/untriggered 不得合并计数，也不得互相顶替",
+            ],
+        },
         "counts": {
             "universe": len(universe),
             "selected": len(selected),
@@ -1651,6 +1960,8 @@ def main():
     ap.add_argument("--tickers", metavar="A,B,C", help="只跑这些标的（逗号分隔）")
     ap.add_argument("--macro-only", action="store_true", help="只出宏观利率/大盘背景（驱动源判定输入）")
     ap.add_argument("--no-earnings", action="store_true", help="跳过下次财报日查询（省 N 次请求）")
+    ap.add_argument("--no-live-overlay", action="store_true",
+                    help="盘中不附加实时价叠加层（收盘后本来就不附加，此旗标只影响盘中运行）")
     args = ap.parse_args()
 
     if args.macro_only and args.tickers:

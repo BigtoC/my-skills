@@ -18,10 +18,15 @@ tools: WebSearch, WebFetch, Read, Write
 #   - ai-pullback-daily/assets/neocloud_credit_history.jsonl  TRACKED → the file
 #     IS there, holding the LAST COMMITTED state, and the day's append lands in
 #     the temporary tree and evaporates with it.
-# The two untracked ones fail loudly as "first run". The tracked one is the
-# dangerous one: nothing errors, the file looks entirely normal, it has just
-# silently travelled back in time, and tomorrow's cross-tier comparison is made
-# against a stale baseline. (None of these are in .gitignore — they have simply
+#   - ai-pullback-daily/assets/last_run.json                   TRACKED → same
+#     failure, and it is the push gate's only baseline: inside a worktree the
+#     gate compares today against the last COMMITTED postclose run, so a 🟡 that
+#     was already recorded reads as new (spurious 🚨) or, after the day's write
+#     evaporates, tomorrow compares against a baseline that never advanced.
+# The two untracked ones fail loudly as "first run". The two tracked ones are the
+# dangerous ones: nothing errors, the file looks entirely normal, it has just
+# silently travelled back in time, and tomorrow's cross-tier comparison — and the
+# Slack push gate — are made against a stale baseline. (None of these are in .gitignore — they have simply
 # never been `git add`ed.) See CLAUDE.md, "Retrieval transport layer".
 ---
 

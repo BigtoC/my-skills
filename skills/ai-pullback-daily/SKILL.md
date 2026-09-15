@@ -58,6 +58,7 @@ metadata:
 | `scripts/perp_quotes.py`               | 24/7 永续隐含变动                                     |
 | `scripts/neocloud_credit_monitor.py`   | Neocloud 信用层四层判定（引爆点④ 的量化层）           |
 | `scripts/neocloud_credit_lite.py`      | 同上的云端版（纯标准库，无历史档）                    |
+| `scripts/run_state.py`                 | 跨运行状态档：推送闸门的「上次」与 ⚪ 的沿用来源       |
 | `assets/neocloud_bonds.json`           | 债券条款 + WebSearch 喂入的报价 + 一级市场条款        |
 | `assets/neocloud_credit_history.jsonl` | 每日一笔的信用层历史档（变化率检验/跨档侦测）         |
 
@@ -71,7 +72,56 @@ metadata:
 SKILL_DIR=<本 SKILL.md 所在目录的绝对路径>
 echo "${NOTIFICATION_SLACK_CHANNEL_ID:-<unset>}"
 python3 "$SKILL_DIR/scripts/industry_table.py" --check
+
+# RUN_MODE：**必须真的赋值**，下面每一处分支都读它。
+# rm 在前：留着上一轮的 /tmp/sess.json，早上跑过一次之后，傍晚那轮若取数失败就会
+# 读到早上那份、把权威运行当成盘中处理（信用层因此不落历史档、报告标错轮次）。
+rm -f /tmp/sess.json
+python3 "$SKILL_DIR/scripts/technicals.py" --macro-only --json /tmp/sess.json >/tmp/sess.err 2>&1
+RC_SESS=$?
+if [ "$RC_SESS" != "0" ] || [ ! -s /tmp/sess.json ]; then
+  echo "✗ 停线：无法判定盘口状态 exit=$RC_SESS"; cat /tmp/sess.err; exit "${RC_SESS:-3}"
+fi
+RUN_MODE=$(python3 -c "import json;s=json.load(open('/tmp/sess.json'))['session']['US'];print('intraday' if s['state']=='intraday' else 'postclose')")
+RUN_DATE=$(python3 -c "import json;print(json.load(open('/tmp/sess.json'))['session']['US']['now'][:10])")
+echo "RUN_MODE=$RUN_MODE RUN_DATE=$RUN_DATE"
+python3 -c "import json;s=json.load(open('/tmp/sess.json'))['session']['US'];print('美股',s['label'],s['now'][11:16],'ET｜最新bar',s['latest_bar'],'｜数据日',s['asof'])"
 ```
+
+> **停线而不是猜**：取不到盘口状态就退出。猜错的代价是不对称的——把盘后猜成盘中，
+> 当天的信用层历史档就不落盘；把盘中猜成盘后，盘中那轮会去写历史档与 `bonds.json`，
+> 污染 30 天后的 L1 基准。
+
+### 运行模式 `RUN_MODE`：`intraday` 还是 `postclose`
+
+本例程**一个日历日可以跑两次**（盘中一次、盘后一次），两次的口径与副作用不同，
+所以每次运行**第一件事就是确定 RUN_MODE**，后续每一步都按它分支。不要靠感觉判断，
+按上面那条命令的 `session.US.state` 取：`intraday` → `RUN_MODE=intraday`，
+其余（`post_close`/`pre_open`/`closed`）→ `RUN_MODE=postclose`。
+
+| | `intraday`（盘中） | `postclose`（盘后，**权威**） |
+|---|---|---|
+| 个股技术面 | 最近完整交易日 ＋ **⏳ 盘中活价叠加层** | 当日完整交易日，无叠加层 |
+| T1/T2/T3 与分桶 | **只由完整交易日收盘判定**；盘中触及另列「⏳ 盘中触及·未确认」，不进桶、不计入触发数 | 正常判定 |
+| 🌙 永续隐含（第二步之二） | 标题改「⏳ 盘中 vs 前收 隐含变动」；\|≥2%\|/\|≥5%\| 阈值记 N/A（窗口不同），预告措辞为「若**今日以此价收盘**」 | 「🌙 盘后/休市隐含」，阈值照常，预告为「若明日以此价开盘」 |
+| 信用层历史档 | `--no-history`（**不落盘**） | 正常落盘 |
+| `assets/neocloud_bonds.json` | **不写**。盘中拿到的债券报价若要写，必须带 `quote_kind: "intraday_indicative"` | 正常写，且**必须显式写 `quote_kind: "close_clean"`** |
+| git commit 状态档 | **不 commit** | 正常 commit |
+| Slack | 推送，标题与头部标「盘中」 | 推送，标题与头部标「盘后」 |
+| 「较上次新增🟡」比较基准 | 上一次 **postclose** 运行 | 上一次 **postclose** 运行 |
+
+两条容易踩的：
+
+- **`quote_kind` 是黏的**。它跟着报价存在 `bonds.json` 里，不会自己复位。盘中那轮
+  写下 `intraday_indicative` 之后，若盘后那轮只更新 `price`/`as_of`/`source` 而不碰
+  `quote_kind`，那支债券会**永久**被 `hist_bond_stale()` 拒于 30 日基准之外——静默地，
+  因为它照样出现在当日的利差表里。所以盘后写报价时把 `quote_kind: "close_clean"`
+  **一起写上**，不要靠「缺省即 close_clean」。
+- **周末与美股休市日两轮都是 `postclose`**（每年约 110 天，`session.state` 皆为
+  `closed`）。这不会重现「基准被自己顶掉」的问题：`run_state.py` 的闸门基准取的是
+  **日期严格早于今天**的那一笔 postclose，同一天跑几次拿到的基准都一样。
+
+最后一行的「比较基准」是两次都推之后最容易出错的一条，单独说明见第六步。
 
 拿不准时探测（两种安装形态都覆盖）：
 
@@ -159,9 +209,18 @@ SKILL_DIR=<本 SKILL.md 所在目录的绝对路径>
 S="$SKILL_DIR/scripts"
 mkdir -p /tmp/search                       # 检索分组自己的命名空间，与脚本产物分开
 rm -f /tmp/check.json /tmp/check.err /tmp/tech.json /tmp/perp.json \
-      /tmp/techperp.log /tmp/credit.md /tmp/credit.err /tmp/*.rc
+      /tmp/techperp.log /tmp/credit.md /tmp/credit.err /tmp/*.rc \
+      /tmp/search/a.json /tmp/search/b.json /tmp/search/c.json /tmp/search/d.json
+#      ^ /tmp/sess.json **故意不在这一行**：后面每一个新 shell 都要重新从它读回
+#        RUN_MODE / RUN_DATE（见下方 re-derive 片段）。第零步已经 rm-then-write 过，
+#        所以它一定是本轮的。删掉它，后面的块就没有盘口状态可依。
 #      ^ 这些档由脚本自己写，不是 shell 重定向目标：不清掉，昨天的档会通过下面
 #        「存在且非空」的检查，perp_quotes 就会拿到**隔日**的现货基准而毫无征兆。
+#      ^ /tmp/search/*.json 过去**不在**这一行里（只 mkdir 不清空）。一天只跑一次时
+#        这个洞要隔天才咬人；改成一天两跑后它变成**同一天内**就会咬：盘后那轮若某个
+#        检索分组失败，下面「存在且非空」的检查会读到**盘中那轮**留下的同名档案，
+#        于是六小时前的引爆点读数被当成盘后的新证据写进权威那一份报告。
+#        这正是第 238 行「缺一个单元绝不能被读成『该单元无数据』」要防的事。
 
 # ① 停线闸门：**前台跑，不进背景波次**。它是次秒级的，抢不到并发收益，
 #    而背景化会让它失去闸门作用——RC_CHECK=1 时另外两支已经跑完，
@@ -187,11 +246,23 @@ fi
 信用层永远读到上一轮的旧报价。**实测后果**：L2 项目层唯一那笔报价 37 天陈旧、过 5 天硬闸 → L2 判 ⚪，
 而第五步 ⛔红线「只有 L2/L4 才走论点闸门」的前提正是 L2 可判——本轮内无路可补。
 
-所以顺序是：**D 组回来 → 把 `quote.price / quote.as_of / quote.source` 写进 `neocloud_bonds.json` → 才跑信用层。**
+所以顺序是：**D 组回来 → 把 `quote.price / quote.as_of / quote.source / quote.quote_kind` 写进 `neocloud_bonds.json` → 才跑信用层。**
+（`quote_kind`：盘后写 `"close_clean"`、盘中写 `"intraday_indicative"`，**显式写、不要靠缺省**——它是黏的，上一轮留下的值会一直生效。）
 
 ```bash
 # 四组检索都回来、且 D 组的报价已写进 assets/neocloud_bonds.json 之后：
-python3 "$S/neocloud_credit_monitor.py" --emit both >/tmp/credit.md 2>/tmp/credit.err
+# ⚠️ RUN_MODE=intraday 时必须带 --no-history：历史档是「一天一笔、同日覆写」，
+#    盘中先落一笔、盘后再覆写，本来也能收敛——但**盘后那轮一旦失败**，当日留在
+#    档里的就是盘中那笔指示性读数，30 天后它会成为 L1 变化率检验的基准。
+#    --no-history 只关闭「写」，仍照常**读**历史档，所以 ⑩ 跨档变化照常产出。
+# ⚠️ **必须重新导出**：这是一个新 shell（见上方第 205 行「变量不跨调用」），
+#    第零步赋的 $RUN_MODE 在这里是空的。空值会让 HIST_FLAG 也空 →
+#    盘中那轮照样写历史档 → 一笔盘中指示价读数落进 assets/neocloud_credit_history.jsonl，
+#    30 天后成为 L1 变化率检验的基准。所以取不到就**停线**，不要默默当 postclose。
+RUN_MODE=$(python3 -c "import json;s=json.load(open('/tmp/sess.json'))['session']['US'];print('intraday' if s['state']=='intraday' else 'postclose')" 2>/dev/null)
+[ -n "$RUN_MODE" ] || { echo "✗ 停线：RUN_MODE 未定（/tmp/sess.json 缺失或不可解析）"; exit 3; }
+HIST_FLAG=""; [ "$RUN_MODE" = "intraday" ] && HIST_FLAG="--no-history"
+python3 "$S/neocloud_credit_monitor.py" --emit both $HIST_FLAG >/tmp/credit.md 2>/tmp/credit.err
 RC_CREDIT=$?; echo "── credit exit=$RC_CREDIT"
 
 # 收 t=0 那条背景 job（它多半早就跑完了）
@@ -306,7 +377,7 @@ python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --emit both
   且**绝不能用脚本 10Y 减脚本 2Y 自行拼出来**（见 `references/search-contract.md` §5.2）。
 - **📝 编者注 · 港股 asof 的已知口径差异（可能滞后，不必然滞后）**：`technicals.py` 对港股把 `asof` 覆写为 `hk_quote.py` 的当日报价日，而该行的 **MA/RSI/20日高/20日回撤来自 yfinance 最近一根已落地的未复权日线**。yfinance 的港股日 K 当日**有时**尚未落地，此时派生指标会**落后一根日线**；但也常常当日即落地、两者同日（2026-09-02 实测 0700.HK / 1810.HK / 0941.HK：`hk_quote` 报价日与 yfinance 最新日线同为 09-02，全行同日）。**所以不得无条件写成「MA/RSI 是前一交易日」**——那在同日的日子里就是谎报。以**脚本当次输出为准**：看该行的 `asof` 与 `notes`（`notes` 里出现「数据滞后」即确证滞后）。确实滞后时才在港股行注明（如「价格为 HKT 当日收盘，MA/RSI/20日高为 yfinance 上一交易日」）；同日则如实写同日。这不是 bug，是两个数据源的更新节奏差。
 - **24/7 永续** —— 读 `references/perp-overnight.md`。**纯观察节点，绝不改变 T1/T2/T3 触发与分桶**；跨阈值只能写成「若明日以此价开盘将触及 XX（预告，非已触发）」。
-- **Neocloud 信用层** —— 读 `references/neocloud-credit.md`。脚本输出的十个区块**整段贴入完整版，不删节、不改写数字**；「⑧ 数据缺口」与已知局限声明须保留。债券报价没有免费 API：由你 WebSearch 取到后喂进 `assets/neocloud_bonds.json` 的 `quote.price / quote.as_of / quote.source`，脚本自己反解 YTM 与利差。脚本失败 → 该节写「本次未取到信用层数据，引爆点④ 沿用上次状态并标⚪」，**不臆测利差**、不影响其余部分。
+- **Neocloud 信用层** —— 读 `references/neocloud-credit.md`。脚本输出的十个区块**整段贴入完整版，不删节、不改写数字**；「⑧ 数据缺口」与已知局限声明须保留。债券报价没有免费 API：由你 WebSearch 取到后喂进 `assets/neocloud_bonds.json` 的 `quote.price / quote.as_of / quote.source / quote.quote_kind`（`quote_kind` 盘后 `"close_clean"`、盘中 `"intraday_indicative"`，显式写），脚本自己反解 YTM 与利差。脚本失败 → 该节写「本次未取到信用层数据，引爆点④ 沿用上次状态并标⚪」，**不臆测利差**、不影响其余部分。
 
 数据缺失记 N/A 或 ⚪，**不估算、不编造**。
 
@@ -404,6 +475,67 @@ python3 "$SKILL_DIR/scripts/neocloud_credit_monitor.py" --emit both
 - **推送**：发到 `$NOTIFICATION_SLACK_CHANNEL_ID`，报告生成后直接发送，无需草稿或二次确认。**发送时不含外层 ```**——包了外层代码块，粗体与项目符号不会渲染。（在对话里展示时可以包，便于整段复制。）发送失败 → 说明可能原因并给出可复制的兜底文本。
 - **完整版只在对话中输出，不发往 Slack。**
 - 未设置频道变量 → 跳过推送，两版照常完整输出。
+- **两次运行都推**，但标题与报告头必须标明是哪一轮。标题的轮次词用
+  `output-format.md` 的原口径 **盘后／盘中／休市**（`session.US.label` 直接给）：
+  `🎯 *AI算力回调 | <YYYY-MM-DD> 盘中*`（附一行 `⚠ 未收盘·盘中触及未确认·不产生触发`）
+  / `… 盘后*` / 周末与美股休市日 `… 休市*`。**盘后（或休市）那一份是权威**，
+  盘中那一份要在末尾写明「本日盘后另有一份完整报告，以盘后为准」。
+
+### 推送闸门的「上次」＝上一次**盘后**运行（两次都推之后最容易错的一条）
+
+`references/output-format.md` 的强制完整推送条件里有「较上次新增🟡」。一天两跑之后，
+若把「上次」理解成字面上的上一次运行，会发生这件事：
+
+> 早上 ② 由 🟢 转 🟡 → 盘中那份带 🚨 横幅推出去。傍晚盘后那份（**唯一会被当真的那份**）
+> 的「上次」变成今天早上，② 在早上就已经是 🟡 了 → 不算新增 → **权威那份不带横幅**。
+
+所以闸门**只与上一次 postclose 比**，由 `run_state.py` 维护，盘中运行不动该基准：
+
+**一条命令判完并落盘**（`run` = gate + write）。**必须在 Slack 推送之前跑**——
+推送失败不该连带丢掉当日判出的状态：
+
+```bash
+# 同样是新 shell：RUN_MODE / RUN_DATE 必须重新从 /tmp/sess.json 读回。
+RUN_MODE=$(python3 -c "import json;s=json.load(open('/tmp/sess.json'))['session']['US'];print('intraday' if s['state']=='intraday' else 'postclose')" 2>/dev/null)
+RUN_DATE=$(python3 -c "import json;print(json.load(open('/tmp/sess.json'))['session']['US']['now'][:10])" 2>/dev/null)
+[ -n "$RUN_MODE" ] && [ -n "$RUN_DATE" ] || { echo "✗ 停线：RUN_MODE/RUN_DATE 未定"; exit 3; }
+
+python3 "$S/run_state.py" run --mode "$RUN_MODE" --date "$RUN_DATE" --json \
+  --tripwires '1=🟢,2=🟡,3=⚪,4=🟡,5=🟢' \
+  --credit 'L1=🟡,L2=🟢,L3=🟡,L4=⚪,T4=🟡'
+```
+
+**`--date` 用美东日历日（`session.US.now[:10]`），不是本机日期。** 两个理由：
+① 重跑幂等——状态档以日期为键，同一轮的重跑必须落回同一个键，否则第二次会
+把自己那笔当成基准（横幅丢失）。② 非美东时区的操作者，美股盘后那轮跑在本机
+深夜（欧洲约 22:00–00:0x CET），一次跨过本机午夜的重试会换一个日期键；用美东
+日历日就没有这个缺口——那一刻美东还是同一个下午。
+
+**用 `run`，不要分开跑 `gate` 再跑 `write`。** 分开有两个坑：状态字串要手打两遍、
+两遍之间没有任何交叉检查（打错一个字元，判的和落盘的就是两组状态）；而且 `write`
+会推进基准序列，两条命令的先后与重跑次数都会影响结果。`gate` 保留给「只想看一眼、
+不落盘」的场合（等价于 `run --gate-only`）。
+
+读法：
+- `force_full_push` 是**三态**：`true` = 判定为是；`false` = 每条腿都判过、都不成立；
+  `null` = 至少有一条腿**无从判定**（缺基准）。`null` 不是「否」——照 `recommended_full_push`
+  行动（未判定时它为 `true`，保守走完整推送），并在报告里写明本次闸门缺基准，
+  **不要**写成「本次无新增🟡」。
+- `newly_amber_vs_last_postclose` / `credit_l2_l4_escalated` 同样是 `null` 而非空清单时
+  表示未判定。空清单 `[]` 才是「判过了、没有」。
+- `not_supplied_tripwires` / `not_supplied_credit` 列出**你没提交**的项。它们没参与判定，
+  也**不等于「没触发」**。正常情况这两个清单应为空。
+- `effective_tripwires` 是把 ⚪ 解析成沿用值之后**实际生效**的状态——闸门判的就是它，
+  报告正文印的也应该是它。传 ⚪ 不会让那一项从闸门里消失。
+- `show` 给出每项的 `last_evidence_date` 与距今天数。⚪ 沿用时报告写
+  「沿用上次状态（最后实据 YYYY-MM-DD，已 N 天）」——一天两跑会让「沿用」的**次数**翻倍，
+  天数不会，天数才是读者要的那个量。
+- 闸门基准取 `postclose_history` 里**日期严格早于今天**的最近一笔，所以同日重跑、
+  周末两跑、乱序写入都不会把基准换成自己。
+- 状态档坏掉时 `run_state.py` **拒绝写入并回 3**（把原档另存 `.corrupt-<时戳>.json`），
+  不会以空基准重建——重建会抹掉整个基准序列。
+- `assets/last_run.json` 与信用层历史档一样**进 git**：不跟踪的话换一台机器跑就永远是
+  「首次运行」，闸门等于恒不触发。
 
 ## 依赖
 
