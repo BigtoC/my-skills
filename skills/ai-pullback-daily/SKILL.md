@@ -520,7 +520,18 @@ python3 "$S/run_state.py" run --mode "$RUN_MODE" --date "$RUN_DATE" --json \
 - ④ 与 L1–L4/T4 **一律取自脚本**；你在 `--tripwires`/`--credit` 里写的对应值只当交叉检查。
 - 不一致时**以脚本为准**，并逐条记进 `credit_json_conflicts` 字段 + `degraded_reasons` + stderr。
   不阻断推送（一个打字错误不该拦下当天的权威报告），但报告里要说明。
-- `credit_json_conflicts` 为 `[]` = 比对过、一致；为 `null` = **没给这个旗标、根本没比对**。
+- **`credit_json_status` 三态**（不要只看 `credit_json_conflicts`）：
+  `not_provided` = 没给旗标，④ 仍是手打值；`ok` = 读到了，`credit_json_conflicts`
+  为清单（`[]` = 比对过、一致）；`unusable` = 给了但档案缺失／坏掉／**自检 ok=false**
+  → ④ 与 L1–L4/T4 已自动改走 ⚪ 沿用。
+- `credit_json_provenance` 记下这份④ 来自哪一次取数（档名 + `generated_at` +
+  `data_date`）。报告引用④ 时可据此复核——**一份隔轮残留的 `/tmp/credit.json`
+  会毫无痕迹地冒充今天的④**，这个字段是唯一能看出来的地方。
+- **`l2_l4_observed_this_run: false` 时 `credit_l2_l4_escalated` 是 `null`**。
+  强制推送条件 ④⑤ 问的是「L2/L4 **今天**有没有跨档」，而「昨天是🟢、今天没查到」
+  排除不掉一次跨档——所以那是「无从判定」，不是「没跨档」。
+- `unresolved_tripwires` / `unresolved_credit`：你提交了 ⚪ 但**上次也没有值可沿用**
+  的项。它们既不在 `effective_*` 也不在 `not_supplied_*`，**不等于「没触发」**。
 - 信用层脚本这轮失败 / 档案缺失 → 这几项自动记 ⚪ 走沿用（SKILL.md 既有规定），
   **手打值不会顶替**，也不会变成硬错误。
 

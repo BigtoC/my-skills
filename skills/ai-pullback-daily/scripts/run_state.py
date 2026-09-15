@@ -153,12 +153,33 @@ def load_credit_json(path):
     except (OSError, json.JSONDecodeError) as e:
         return None, (f"信用层 JSON 读取失败（{rel_display(path)}）：{type(e).__name__}；"
                       f"引爆点④ 与 L1–L4/T4 按 ⚪ 沿用上次状态处理（不手打顶替）")
-    ev = (d or {}).get("eval") or {}
+    d = d or {}
+    # 产物自己的自检必须先看。**判别式只能是 `is False`**：完整版 monitor 的 JSON
+    # 顶层**没有** ok 这个键（实测顶层为 meta/fred/equities/bonds/eval/errors/
+    # data_gaps/degraded/degraded_reasons），而 lite 变体有。写成 `not d.get("ok")`
+    # 会把完整版的「没有这个键」当成「自检没过」，天天误判。
+    if d.get("ok") is False:
+        return None, (f"信用层 JSON 自检未过（ok=false，{rel_display(path)}）；"
+                      f"引爆点④ 与 L1–L4/T4 按 ⚪ 沿用上次状态处理，不采信其读数")
+    ev = d.get("eval") or {}
     t4 = ((ev.get("tripwire_4") or {}).get("state"))
     if not t4:
         return None, (f"信用层 JSON 里没有 eval.tripwire_4.state（{rel_display(path)}）；"
                       f"引爆点④ 与 L1–L4/T4 按 ⚪ 沿用上次状态处理")
-    out = {"tripwires": {}, "credit": {}}
+    meta = d.get("meta") or {}
+    out = {"tripwires": {}, "credit": {},
+           # 来源标注（回退链规则第 2 条）：④ 到底来自哪一次取数，必须可复核。
+           # 没有它，一份隔轮残留的 /tmp/credit.json 会毫无痕迹地冒充今天的④。
+           # 只记档名，不记路径。本字段会进 --json、可能被贴进报告并推 Slack，而
+           # scrub() 的 _HOMEISH_RE 只折叠字面的 /Users|/home|/var/folders——像
+           # `/private/tmp/claude-503/-Users-<用户名>-Documents-...` 这种把用户名
+           # 编进目录名的路径它抓不到（实测）。档名 + generated_at 已足够复核「这份
+           # ④ 来自哪一次取数」，路径本身没有额外价值。
+           "provenance": {"file": Path(path).name,
+                          "generated_at": meta.get("generated_at"),
+                          "data_date": meta.get("data_date"),
+                          "degraded": d.get("degraded"),
+                          "ok": d.get("ok", "（完整版无此键）")}}
     v = norm_state(t4)
     if v in STATES:
         out["tripwires"]["4"] = v
@@ -297,16 +318,21 @@ def resolve_current(raw_vals, carry_block):
     没能复核的 🟡，会既印在报告里又躲过闸门，然后悄悄变成明天的基准。
     """
     carry = values_of(carry_block)
-    out, carried = {}, []
+    out, carried, unresolved = {}, [], []
     for k, v in raw_vals.items():
         if v == "⚪":
             c = carry.get(k)
             if c:
                 out[k] = c
                 carried.append(k)
+            else:
+                # ⚪ 且没有可沿用的值 = 「从来不知道」。早先这里没有 else，键就**凭空消失**，
+                # 于是它既不在 effective_* 里、也不在 not_supplied_* 里（因为调用方确实传了），
+                # 闸门于是对一个从未被观察过的项回报「比对过、没触发」。
+                unresolved.append(k)
         else:
             out[k] = v
-    return out, sorted(carried)
+    return out, sorted(carried), sorted(unresolved)
 
 
 def newly_amber(baseline_block, current):
@@ -337,14 +363,14 @@ def escalated(baseline_block, current):
 
 
 def compute_gate(state, tw_raw, cr_raw, today, read_err,
-                 credit_notes=None, credit_conflicts=None):
+                 credit_notes=None, credit_info=None):
     """闸门判定。gate 与 run 共用这一份，避免两条路各判各的。"""
     baseline = pick_baseline(state or {}, today) or {}
     base_tw, base_cr = baseline.get("tripwires"), baseline.get("credit")
     carry = (state or {}).get("last_any") or {}
 
-    tw, tw_carried = resolve_current(tw_raw, carry.get("tripwires"))
-    cr, cr_carried = resolve_current(cr_raw, carry.get("credit"))
+    tw, tw_carried, tw_unres = resolve_current(tw_raw, carry.get("tripwires"))
+    cr, cr_carried, cr_unres = resolve_current(cr_raw, carry.get("credit"))
 
     missing_tw = sorted(set(TRIPWIRES) - set(tw_raw))
     missing_cr = sorted(set(CREDIT_KEYS) - set(cr_raw))
@@ -357,8 +383,13 @@ def compute_gate(state, tw_raw, cr_raw, today, read_err,
     amber_new = newly_amber(base_tw, tw) if base_tw else None
     esc = escalated(base_tw, tw) if base_tw else None
     cr_esc = escalated(base_cr, cr) if base_cr else None
+    # 强制推送条件 ④⑤ 问的是「L2/L4 **今天**有没有跨档」。沿用值答不了这个问题：
+    # 「昨天是🟢、今天没查到」不等于「今天是🟢」，前者排除不掉一次跨档。
+    # 所以 L2/L4 只要不是当轮实测到的，这一条就是 null（无从判定），不是 []（查过、没有）。
+    l2l4_observed = all(k not in cr_carried and k not in cr_unres and k in cr
+                        for k in ("L2", "L4"))
     l2l4 = ([e for e in cr_esc if e["key"] in ("L2", "L4") and e["to"] in ("🟡", "🔴")]
-            if cr_esc is not None else None)
+            if (cr_esc is not None and l2l4_observed) else None)
 
     reasons = []
     if red:
@@ -384,6 +415,13 @@ def compute_gate(state, tw_raw, cr_raw, today, read_err,
     if tw_carried or cr_carried:
         degraded.append(f"⚪ 沿用上次状态后参与判定：引爆点 {tw_carried or '无'}、"
                         f"信用层 {cr_carried or '无'}（报告印什么，闸门就判什么）")
+    if tw_unres or cr_unres:
+        degraded.append(f"⚠ ⚪ 且无可沿用值、**从未被观察过**：引爆点 {tw_unres or '无'}、"
+                        f"信用层 {cr_unres or '无'}——这些项未参与判定，"
+                        f"**不等于「没触发」**")
+    if not l2l4_observed:
+        degraded.append("⚠ L2/L4 本轮非实测（沿用或缺失）→ 强制推送条件 ④⑤「L2/L4 跨档」"
+                        "**无从判定**（null，非「没跨档」）")
     for n in (credit_notes or []):
         degraded.append(n)
     never = sorted(k for k, v in (base_tw or {}).items() if (v or {}).get("never_evidenced"))
@@ -396,7 +434,9 @@ def compute_gate(state, tw_raw, cr_raw, today, read_err,
     # recommended_full_push 行动，只把漏提交写进 degraded_reasons 是不够的：
     # 一个忘了打的 🔴 会让闸门回「没有强制推送理由」而 ok:true、exit 0，
     # 矛盾只藏在另一个字段里——正是 ⚪/❌ 那条规则要防的形状。
-    undetermined = (amber_new is None) or (l2l4 is None) or bool(missing_tw) or bool(missing_cr)
+    undetermined = ((amber_new is None) or (l2l4 is None)
+                    or bool(missing_tw) or bool(missing_cr)
+                    or bool(tw_unres) or bool(cr_unres))
     if reasons:
         force = True
     elif undetermined:
@@ -429,9 +469,21 @@ def compute_gate(state, tw_raw, cr_raw, today, read_err,
         "carried_forward_credit": cr_carried,
         "not_supplied_tripwires": missing_tw,
         "not_supplied_credit": missing_cr,
+        # ⚪ 且无可沿用值：调用方**有**提交（所以不在 not_supplied_*），但它从未被观察过，
+        # 也就不在 effective_* 里。没有这两个字段，这类键会在两边都查不到。
+        "unresolved_tripwires": tw_unres,
+        "unresolved_credit": cr_unres,
+        "l2_l4_observed_this_run": l2l4_observed,
         # 引爆点④/L1–L4/T4 若由 --credit-json 提供，这里记它与手打值的冲突。
         # 空清单 = 比对过、一致；null = 没给 --credit-json，根本没比对。
-        "credit_json_conflicts": credit_conflicts,
+        # 三态，缺一不可区分：
+        #   not_provided = 没给 --credit-json，④ 仍是手打值
+        #   ok           = 读到了，conflicts 为清单（[] = 比对过、一致）
+        #   unusable     = 给了但档案缺失/坏掉/自检未过 → ④ 已改走 ⚪ 沿用
+        # 早先 conflicts=None 同时表示第一与第三种，SKILL.md 却只定义了第一种。
+        "credit_json_status": (credit_info or {}).get("status", "not_provided"),
+        "credit_json_conflicts": (credit_info or {}).get("conflicts"),
+        "credit_json_provenance": (credit_info or {}).get("provenance"),
         "baseline": {
             "source": "postclose_history（date < today 的最近一笔）",
             "date": baseline.get("date"),
@@ -471,11 +523,11 @@ def cmd_gate(args):
     if read_err:
         err("⚠ " + read_err)
     today = parse_date(args.date)
-    tw, cr, notes, conflicts = resolve_inputs(args)
+    tw, cr, notes, cinfo = resolve_inputs(args)
     for n in notes:
         err(n)
     res = compute_gate(state or {}, tw, cr, today, read_err,
-                       credit_notes=notes, credit_conflicts=conflicts)
+                       credit_notes=notes, credit_info=cinfo)
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     else:
@@ -491,11 +543,13 @@ def resolve_inputs(args):
     """
     tw = parse_pairs(args.tripwires, TRIPWIRES, "引爆点")
     cr = parse_pairs(args.credit, CREDIT_KEYS, "信用层")
-    notes, conflicts = [], None
+    notes, conflicts, prov = [], None, None
+    status = "not_provided"
     path = getattr(args, "credit_json", None)
     if path:
         auth, cerr = load_credit_json(path)
         if cerr:
+            status = "unusable"
             notes.append("⚠ " + cerr)
             # 脚本没给 → 这几项记 ⚪，交给沿用机制；**不**保留手打值顶替
             for k in ("4",):
@@ -504,11 +558,13 @@ def resolve_inputs(args):
                 cr[k] = "⚪"
             conflicts = None
         else:
+            status = "ok"
+            prov = auth.get("provenance")
             tw, cr, conflicts = merge_authoritative(tw, cr, auth)
             for c in conflicts:
                 notes.append(f"⚠ {c['group']} {c['key']} 手打 {c['typed']} 与脚本 {c['script']} 冲突，"
                              f"已以脚本为准（output-format.md 规则②：④ 不得与脚本结论冲突）")
-    return tw, cr, notes, conflicts
+    return tw, cr, notes, {"conflicts": conflicts, "status": status, "provenance": prov}
 
 
 def parse_date(s):
@@ -547,7 +603,7 @@ def do_write(state, mode, tw, cr, run_date, pushed):
     return entry
 
 
-def cmd_write(args, _gate_res=None):
+def cmd_write(args, _gate_res=None, _resolved=None):
     state, read_err = load_state()
     if read_err:
         # **绝不**以空基准重建：那会让一次暂时性的 PermissionError 抹掉整个
@@ -568,9 +624,14 @@ def cmd_write(args, _gate_res=None):
                              ensure_ascii=False, indent=2))
         return 3
 
-    tw, cr, wnotes, _ = resolve_inputs(args)
-    for n in wnotes:
-        err(n)
+    # run 已经解析过一次就直接复用：重解析会再读一次 credit.json、把冲突讯息印两遍，
+    # 而且两次之间档案可能被换掉——判的与落盘的就不是同一组状态了。
+    if _resolved is not None:
+        tw, cr, wnotes, wcinfo = _resolved
+    else:
+        tw, cr, wnotes, wcinfo = resolve_inputs(args)
+        for n in wnotes:
+            err(n)
     run_date = parse_date(args.date)
     entry = do_write(state, args.mode, tw, cr, run_date, args.pushed)
     if _gate_res is not None:
@@ -595,7 +656,19 @@ def cmd_write(args, _gate_res=None):
            "credit": values_of(entry["credit"]),
            "not_supplied_tripwires": sorted(set(TRIPWIRES) - set(tw)),
            "not_supplied_credit": sorted(set(CREDIT_KEYS) - set(cr)),
+           # 单独跑 write --json 时，冲突此前只进 stderr——而 stderr 是冗余频道，
+           # 不能是唯一频道（JSON 等价规则第 4 条）。
+           "credit_json_status": (wcinfo or {}).get("status", "not_provided"),
+           "credit_json_conflicts": (wcinfo or {}).get("conflicts"),
+           "credit_json_provenance": (wcinfo or {}).get("provenance"),
            "degraded_reasons": [], "degraded": False}
+    if (wcinfo or {}).get("conflicts"):
+        res["degraded_reasons"].append(
+            f"⚠ 手打值与信用层脚本冲突 {len((wcinfo or {}).get('conflicts'))} 处，已以脚本为准")
+        res["degraded"] = True
+    if (wcinfo or {}).get("status") == "unusable":
+        res["degraded_reasons"].append("⚠ 信用层 JSON 不可用 → ④ 与 L1–L4/T4 按 ⚪ 沿用处理")
+        res["degraded"] = True
     if res["not_supplied_tripwires"] or res["not_supplied_credit"]:
         res["degraded_reasons"].append(
             f"⚠ 未提交：引爆点 {res['not_supplied_tripwires'] or '无'}、"
@@ -622,13 +695,14 @@ def cmd_run(args):
     state, read_err = load_state()
     if read_err:
         err("⚠ " + read_err)
-    tw, cr, notes, conflicts = resolve_inputs(args)
+    resolved = resolve_inputs(args)
+    tw, cr, notes, cinfo = resolved
     for n in notes:
         err(n)
     today = parse_date(args.date)
     gate_res = compute_gate(state or {}, tw, cr, today, read_err,
-                            credit_notes=notes, credit_conflicts=conflicts)
-    rc = cmd_write(args, _gate_res=gate_res) if not args.gate_only else 0
+                            credit_notes=notes, credit_info=cinfo)
+    rc = cmd_write(args, _gate_res=gate_res, _resolved=resolved) if not args.gate_only else 0
     if args.json:
         if not args.gate_only:
             print()          # write 的 JSON 已印，分隔后再印 gate 的
