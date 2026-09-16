@@ -24,9 +24,10 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 88.61,
-        "as_of": "2026-09-14",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAE0，9.625%、到期 2032-07-15；同页 YTW 12.40%）。页面无报价日期字段，as_of 为观测日 2026-09-14；页面未标注 clean/dirty，按面值百分比挂牌惯例判为干净价。"
+        "price": 87.31,
+        "as_of": "2026-09-16",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAE0，9.625%、到期 2032-07-15；同页 YTW 12.43%；评级列 B/B1）。页面无报价日期字段，as_of 为观测日 2026-09-16；页面未标注 clean/dirty，按面值百分比挂牌惯例判为干净价。",
+        "quote_kind": "close_clean"
       }
     },
     {
@@ -44,9 +45,10 @@
       "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
       "is_l1_benchmark": true,
       "quote": {
-        "price": 89.0,
-        "as_of": "2026-09-14",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAC4，9.750%；同页 YTW 12.75%；同页到期显示 2031-10-01，与资产档 terms 的当月 15 日不同，本次只更新 quote、不改 terms）。页面无报价日期字段，as_of 为观测日 2026-09-14；页面未标注 clean/dirty，按面值百分比挂牌惯例判为干净价。"
+        "price": 89.39,
+        "as_of": "2026-09-16",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAC4，9.750%；同页 YTW 12.46%；同页到期显示 2031-10-01，与资产档 terms 的当月 15 日不同，本次只更新 quote、不改 terms；评级列 B/B1）。页面无报价日期字段，as_of 为观测日 2026-09-16；页面未标注 clean/dirty，按面值百分比挂牌惯例判为干净价。",
+        "quote_kind": "close_clean"
       }
     },
     {
@@ -63,9 +65,10 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 89.6,
-        "as_of": "2026-09-14",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAB6，9.000%；同页 YTW 12.12%；同页到期显示 2031-02-01，与资产档 terms 的当月 15 日不同，本次只更新 quote、不改 terms）。页面无报价日期字段，as_of 为观测日 2026-09-14；页面未标注 clean/dirty，按面值百分比挂牌惯例判为干净价。"
+        "price": 88.29,
+        "as_of": "2026-09-16",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN USU2069EAB6，9.000%；同页 YTW 11.91%；同页到期显示 2031-02-01，与资产档 terms 的当月 15 日不同，本次只更新 quote、不改 terms；评级列 B/B1）。页面无报价日期字段，as_of 为观测日 2026-09-16；页面未标注 clean/dirty，按面值百分比挂牌惯例判为干净价。",
+        "quote_kind": "close_clean"
       }
     },
     {
@@ -83,9 +86,10 @@
       "rating_cohort": "single_b",
       "note": "欧元计价，不与美债曲线比；只对 EUR HY 指数(BAMLHE00EHYIOAS)做相对比较",
       "quote": {
-        "price": 86.41,
-        "as_of": "2026-09-14",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN XS333313928，8.500%、到期 2032-07-15、EUR 计价；同页 YTW 11.76%）。页面无报价日期字段，as_of 为观测日 2026-09-14；页面未标注 clean/dirty，按面值百分比挂牌惯例判为干净价。EUR 计价，绝对利差 N/A，只对 EUR HY 指数 BAMLHE00EHYIOAS 做相对比较，仅参考。"
+        "price": 86.57,
+        "as_of": "2026-09-16",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CRWV/bonds/（ISIN XS333313928，8.500%、到期 2032-07-15、EUR 计价；同页 YTW 11.39%）。页面无报价日期字段，as_of 为观测日 2026-09-16；页面未标注 clean/dirty，按面值百分比挂牌惯例判为干净价。EUR 计价，绝对利差 N/A，只对 EUR HY 指数 BAMLHE00EHYIOAS 做相对比较，仅参考。",
+        "quote_kind": "close_clean"
       }
     },
     {
@@ -104,8 +108,9 @@
       "is_l2_benchmark": true,
       "quote": {
         "price": 99.34,
-        "as_of": "2026-09-14",
-        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CIFR/bonds/（识别码 BLPG6304798，发行人 Black Pearl Compute LLC，6.125%、到期 2031-02-15、USD；Moody's Ba2；YTW 列为「—」，无同源收益率可交叉核对）。页面无报价日期字段，as_of 为观测日 2026-09-14；页面未标注 clean/dirty，按面值百分比挂牌惯例判为干净价。本次取回的价与 2026-09-11 观测值相同，系当日重新取数结果，非沿用旧价。"
+        "as_of": "2026-09-16",
+        "source": "TradingView 债券页 tradingview.com/symbols/NASDAQ-CIFR/bonds/（识别码 BLPG6304798，发行人 Black Pearl Compute LLC，6.125%、到期 2031-02-15、USD；Moody's Ba2；YTW 列未显示，无同源收益率可交叉核对）。页面无报价日期字段，as_of 为观测日 2026-09-16；页面未标注 clean/dirty，按面值百分比挂牌惯例判为干净价。本次取回的价与 2026-09-14 / 2026-09-11 观测值相同，系 2026-09-16 当日重新取数结果，非沿用旧价。",
+        "quote_kind": "close_clean"
       }
     },
     {
