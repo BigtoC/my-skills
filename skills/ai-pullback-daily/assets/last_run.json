@@ -1,0 +1,82 @@
+{
+  "runs": [
+    {
+      "date": "2026-09-16",
+      "mode": "postclose",
+      "generated_at": "2026-09-16T22:15:15+00:00",
+      "tripwires": {
+        "1": {
+          "value": "🟢",
+          "last_evidence_date": "2026-09-16",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "2": {
+          "value": "🟢",
+          "last_evidence_date": "2026-09-16",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "3": {
+          "value": "🟢",
+          "last_evidence_date": "2026-09-16",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "4": {
+          "value": "🟡",
+          "last_evidence_date": "2026-09-16",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "5": {
+          "value": "🟢",
+          "last_evidence_date": "2026-09-16",
+          "carried_forward": false,
+          "not_supplied": false
+        }
+      },
+      "credit": {
+        "L1": {
+          "value": "🟡",
+          "last_evidence_date": "2026-09-16",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L2": {
+          "value": "🟢",
+          "last_evidence_date": "2026-09-16",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L3": {
+          "value": "🟡",
+          "last_evidence_date": "2026-09-16",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L4": {
+          "value": "🟢",
+          "last_evidence_date": "2026-09-16",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "T4": {
+          "value": "🟡",
+          "last_evidence_date": "2026-09-16",
+          "carried_forward": false,
+          "not_supplied": false
+        }
+      },
+      "pushed": false,
+      "gate": {
+        "force_full_push": null,
+        "reasons": [],
+        "gate_undetermined": true,
+        "recommended_full_push": true,
+        "baseline_date": null
+      }
+    }
+  ],
+  "_readme": "ai-pullback-daily 跨运行状态档。`runs` 是唯一的事实来源（最近写入的在前）；last_any / last_postclose / postclose_history 一律由它派生，不再各存一份。闸门基准 = runs 里 mode=postclose 且**日期严格早于今天**的最近一笔（同日重跑、周末两跑、乱序写入都因此不会把基准换成自己）。每项 last_evidence_date 是该项最后一次有真实证据的日期，⚪ 搬运时原样保留。由 scripts/run_state.py 维护，Slack 推送**之前**落盘。"
+}
