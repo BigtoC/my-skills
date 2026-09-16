@@ -94,6 +94,13 @@ PREFIX = f"{DEX}:"
 # —— 分档门槛（名义 OI = markPx × openInterest）——
 # references/perp-overnight.md 里那张 2026-07-27 实测表是**基线不是定论**，
 # 因此这里只保留门槛，每次运行都用当天的 OI 现场分档。
+#
+# ⚠️ **这两个门槛不随盘口状态重新标定，这是刻意的。** 名义 OI = markPx × openInterest
+# 是一个**存量**（未平仓合约的总额），不是流量：它不在一天之内累积、也不在收盘时结算。
+# 一档 OI $12M 的永续，上午十点和傍晚六点同样值得信。相较之下 |≥2%|/|≥5%| 的隐含变动
+# 阈值标定在「收盘→下次开盘」那个**窗口**上，所以盘中必须记 N/A（已在 evaluate 里处理）——
+# 两者性质不同，别把後者的处理方式套到这里。
+# 美股盘中反而是 OI 读数**最**可信的时段：现货在交易，与永续之间的套利是活的。
 OI_MAIN = 10_000_000.0      # 主用：读数可信
 OI_THIN = 3_000_000.0       # 薄盘：$3–10M，须标注「（薄盘 $X.XM，仅参考）」
                             # < $3M 过薄：直接跳过，不输出
@@ -332,12 +339,22 @@ def _absorb(container, flat):
 
 
 def load_spot(path: Path):
-    """容错读取 technicals.py --json 的输出 → {TICKER: record}。"""
+    """容错读取 technicals.py --json 的输出 → ({TICKER: record}, session)。
+
+    session 取自同一份 tech.json，**不另开旗标、也不自己判时钟**：现货基准与盘口
+    状态必须来自同一次取数，否则会出现「基准是 D-1 收盘、却按盘后口径渲染」这种
+    两个来源各说各话的组合。
+    """
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         err(f"警告：--spot {Path(path).name} 读取失败（{scrub(exc)}），本次只输出 perp 价与 OI 分档。")
-        return {}
+        return {}, None
+    session = None
+    if isinstance(data, dict):
+        s = (data.get("session") or {}).get("US")
+        if isinstance(s, dict):
+            session = s
     flat = {}
     if isinstance(data, dict):
         for key in CONTAINER_KEYS:
@@ -349,7 +366,7 @@ def load_spot(path: Path):
         _absorb(data, flat)
     if not flat:
         err(f"警告：--spot {Path(path).name} 里没解析出任何现货收盘价，本次只输出 perp 价与 OI 分档。")
-    return flat
+    return flat, session
 
 
 def spot_lookup(flat, ticker):
@@ -431,8 +448,12 @@ def finalize_row(row, *, triggers: bool = True):
     return row
 
 
-def forecast_note(row):
-    """跨阈值只能写成预告，绝不记为已触发。"""
+def forecast_note(row, intraday=False):
+    """跨阈值只能写成预告，绝不记为已触发。
+
+    时态要跟着盘口走：美股仍在交易时说「若**明日开盘**」是错的——下一个定价事件
+    是**今天的收盘**，不是明天的开盘。
+    """
     perp, spot = row.get("perp_usd_equiv"), row.get("spot_close")
     if perp is None or spot is None:
         return None
@@ -442,11 +463,12 @@ def forecast_note(row):
         if v is None or v <= 0:
             continue
         if perp <= v < spot:
-            notes.append(f"若明日以此价开盘将触及 {label}@${fmt_px(v)}（预告，非已触发）")
+            when = "今日以此价收盘" if intraday else "明日以此价开盘"
+            notes.append(f"若{when}将触及 {label}@${fmt_px(v)}（预告，非已触发）")
     return "；".join(notes) if notes else None
 
 
-def evaluate(ticker, currency, markets, spot_flat, fx_rates, fx_notes):
+def evaluate(ticker, currency, markets, spot_flat, fx_rates, fx_notes, intraday=False):
     """把一个标的算成一行结果。返回 dict（status 决定它落到哪个区块）。"""
     name = MARKET_ALIASES.get(ticker, ticker if "." not in ticker else None)
     row = {"ticker": ticker, "currency": currency, "market": None, "status": "unlisted"}
@@ -508,8 +530,18 @@ def evaluate(ticker, currency, markets, spot_flat, fx_rates, fx_notes):
         return row
 
     row["implied_pct"] = (ratio - 1.0) * 100.0
-    row["major"] = abs(row["implied_pct"]) >= MAJOR_MOVE
-    row["forecast"] = forecast_note(row)
+    # |≥2%| 印出、|≥5%| 强制 WebSearch 查因 —— 这两个阈值标定在**现货收盘到下次开盘**
+    # 那段隔夜窗上（perp-overnight.md:21）。美股仍在交易时，分母是 D-1 收盘而分子含
+    # 了今天已经走完的大半个交易日，窗口根本不是同一个：阈值不随窗口转移
+    # （回退链规则第 4 条），所以盘中记 null + 理由，不拿隔夜阈值去套。
+    row["threshold_comparable"] = not intraday
+    if intraday:
+        row["major"] = None
+        row["major_reason"] = ("盘中：隐含变动的窗口是「D-1收盘→此刻」，"
+                               "而 |≥2%|/|≥5%| 标定在隔夜窗上，阈值不可跨窗比较")
+    else:
+        row["major"] = abs(row["implied_pct"]) >= MAJOR_MOVE
+    row["forecast"] = forecast_note(row, intraday=intraday)
     row["status"] = "ok"
     return row
 
@@ -555,7 +587,12 @@ def prohibitions_block():
 def render(result):
     out = []
     A = out.append
-    A("== 第二步之二：盘后 / 休市期间隐含变动（24/7 永续 · Hyperliquid xyz 池）==")
+    _iu = bool(result.get("intraday"))
+    A("== 第二步之二：" + ("⏳ 盘中 vs 前收 隐含变动" if _iu else "盘后 / 休市期间隐含变动")
+      + "（24/7 永续 · Hyperliquid xyz 池）==")
+    if _iu:
+        A("⚠ 盘中口径：分母为最近完整交易日收盘、分子含今日已走完的盘中时段——"
+          "**与隔夜窗不是同一个窗口**。|≥2%| / |≥5%| 阈值标定在隔夜窗上，本次记 N/A 不套用。")
     A(f"取数时间：{result['fetched_at']}（UTC） · 池：{DEX} · 市场数：{result['market_count']}"
       f"（在架 {result['market_listed']}） · 标的清单：{result['universe_path']}")
     if result.get("spot_path"):
@@ -781,6 +818,8 @@ def main():
             write_json({
                 "section": "第二步之二·24/7 永续隐含变动",
                 "observation_only": True,
+                "intraday": intraday,
+                "session": session,
                 "note": OBSERVATION_NOTE,
                 "degraded": True,
                 "degraded_reasons": reasons,
@@ -807,11 +846,12 @@ def main():
 
     markets = build_markets(payload)
 
-    spot_flat, spot_path = {}, None
+    spot_flat, spot_path, session = {}, None, None
     if args.spot:
-        spot_flat = load_spot(Path(args.spot))
+        spot_flat, session = load_spot(Path(args.spot))
         if spot_flat:
             spot_path = spot_arg_name
+    intraday = bool((session or {}).get("state") == "intraday")
 
     # 汇率（同池）
     fx_rates, fx_notes, fx_lines = {}, {}, []
@@ -820,8 +860,21 @@ def main():
         m = markets.get(mname) if mname else None
         if m and m["mark"]:
             fx_rates[cur] = m["mark"]
-            if m["delisted"] or m["notional_oi"] in (0, None) or m["day_ntl_vlm"] == 0:
-                fx_notes[cur] = f"{PREFIX}{mname} 已下架/无持仓，仅 oracle 报价，折算结果仅参考"
+            # 「已下架」与「有市场但没人持仓」是两回事，分开写。
+            # 实测 2026-09-15（xyz 池）：xyz:KRW **确实带 isDelisted=true**，OI 与
+            # dayNtlVlm 皆 0，仅剩 mark=1360.7 这个 oracle 报价；xyz:DXY(97.15)、
+            # xyz:VIX(20.0) 同型。下架市场的 oracle **有可能**停更，所以实测过：
+            # 2026-09-15 xyz:KRW = 1360.9 对 yfinance `KRW=X` 1360.95，偏离 −0.00%，
+            # 且两次查询之间 1360.7→1360.9 有跳动 → **这条 oracle 是活的**，韩股折算无碍。
+            # 但它仍是韩股两档 USD 折算的单点依赖、且已下架，所以每次都要标注；
+            # 若哪天偏离拉开，先查这里（拿 xyz:KRW 的 markPx 对照 yfinance KRW=X 即可）。
+            # （同池 xyz:VIX 的 20.0 是整数且两次查询未变，可疑；本技能不用它。CLAUDE.md
+            #  已记录腾讯 .VIX 冻结七个月的同类陷阱：HTTP 200 + 合理数字 ≠ 活数据。）
+            if m["delisted"]:
+                fx_notes[cur] = f"{PREFIX}{mname} 已下架，折算结果仅参考"
+            elif m["notional_oi"] in (0, None) or m["day_ntl_vlm"] == 0:
+                fx_notes[cur] = (f"{PREFIX}{mname} 无持仓/无成交（本池 FX 为 oracle 报价、不撮合，"
+                                 f"零 OI 属常态），汇率可用，折算结果标注来源即可")
             fx_lines.append(f"汇率：1 USD = {fmt_px(m['mark'])} {cur}（同池 {PREFIX}{mname}）"
                             + (f" · {fx_notes[cur]}" if cur in fx_notes else ""))
         elif mname:
@@ -830,7 +883,7 @@ def main():
             fx_lines.append(f"汇率：{cur} 计价标的在 {DEX} 池无对应汇率市场 → 本次跳过。")
 
     # 个股
-    stocks = [finalize_row(evaluate(t, c, markets, spot_flat, fx_rates, fx_notes))
+    stocks = [finalize_row(evaluate(t, c, markets, spot_flat, fx_rates, fx_notes, intraday))
               for t, c in universe]
 
     # 大盘层
@@ -867,6 +920,8 @@ def main():
     result = {
         "section": "第二步之二·24/7 永续隐含变动",
         "observation_only": True,
+        "intraday": intraday,
+        "session": session,
         "note": OBSERVATION_NOTE,
         # 降级汇总在下面回填（要先有完整 result 才算得出来），放在这里是为了排在头部显眼处。
         "degraded": None,

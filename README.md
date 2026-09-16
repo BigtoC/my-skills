@@ -108,6 +108,17 @@ they keep runtime state that changes on every run:
   record per run (a same-day rerun overwrites its own record), so seeing it
   modified in `git status` is normal and committing it is what preserves the
   history the change-rate checks rely on.
+- **Run gate state.** `skills/ai-pullback-daily/assets/last_run.json` is written by
+  `scripts/run_state.py` at the end of every run, *before* the Slack push, so a
+  failed push never loses the day's verdict. It answers the one question the
+  report format asks but nothing else could: what "since last time" means for the
+  「较上次新增🟡」 forced-push rule. Because the routine may run twice a calendar
+  day (once intraday, once after the close), the gate's baseline is the most
+  recent **post-close** run dated strictly *earlier than today* — an intraday run
+  records itself but never becomes the baseline, so the authoritative evening
+  report cannot lose its alert banner to its own morning run. Seeing this file
+  modified in `git status` after a run is expected, and committing it is what
+  keeps the gate working across machines.
   `skills/ai-pullback-daily/assets/neocloud_bonds.json` is different: no script
   ever writes it. Its `quote` fields are updated **by hand** from bond quotes
   found on the web, and a quote older than five days is treated as stale and

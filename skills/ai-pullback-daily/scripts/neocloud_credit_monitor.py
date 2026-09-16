@@ -404,6 +404,15 @@ def price_bonds(cfg, fred, today, max_quote_age):
             "is_l1_benchmark": bool(b.get("is_l1_benchmark")),
             "is_l2_benchmark": bool(b.get("is_l2_benchmark")),
             "price": price, "quote_as_of": as_of, "quote_source": q.get("source"),
+            # quote.as_of 只有日期、没有时间：同一天的**盘中指示性报价**与**盘后干净价**
+            # 在字段上无法区分。这不是假设——git 里已经发生过：2026-09-10 两笔同日运行，
+            # 4d3e912（10:41 ET 盘中，「盘中挂牌价」）记 CRWV 9.625 price 88.71 / 利差
+            # 777bp；f6f136f（18:36 ET 盘后干净价）改为 86.75 / 827bp。**50bp 之差正好
+            # 是 TH["excess_widening_idio_bp"] 的一整个单位**（个体 vs 宏观的判别尺度）。
+            # 那次盘后运行成功覆写了盘中那笔，所以没出事；盘后运行若失败，当日留下的
+            # 就是盘中那笔，30 天后它会成为 L1 变化率检验的基准而无人知情。
+            # 缺省 close_clean 是为了向后相容：既有 7 笔报价都没有这个字段。
+            "quote_kind": q.get("quote_kind") or "close_clean",
             "note": b.get("note"),
             "ytm_pct": None, "bench_pct": None, "bench_label": None,
             "spread_bp": None, "cohort_premium_bp": None,
@@ -508,7 +517,13 @@ def hist_bond_stale(rec, entry, max_quote_age):
     基准，会把纯粹的曲线漂移读成「利差收窄/走阔」，进而污染「个体 vs 宏观」判定
     ——而该判定正是引爆点④ 能否升🔴 的闸门。
     新格式直接带 "stale" 标记；旧纪录（无标记）由「纪录日 − 报价日」回推。
+
+    **盘中指示性报价一律不得当基准**，与过期报价同等对待：它不是当日的结算价，
+    拿它做 30 日变化率的基准，比较的两端就不是同一种价。这一条优先于 "stale"
+    标记——盘中报价的 age 通常是 0 天，按陈旧度检查永远是「新鲜」的。
     """
+    if entry.get("quote_kind") not in (None, "close_clean"):
+        return True
     if entry.get("stale") is not None:
         return bool(entry["stale"])
     quoted, logged = entry.get("quote_as_of"), rec.get("date")
@@ -921,6 +936,8 @@ def build_data_gaps(errors, bonds, cfg, max_quote_age):
     """
     flags = (cfg.get("manual_flags") or {})
     stale = [b["label"] for b in bonds if b["stale"] and b["quote_as_of"]]
+    intraday = [b["label"] for b in bonds
+                if (b.get("quote_kind") or "close_clean") != "close_clean" and b["quote_as_of"]]
     cds_available = bool(flags.get("cds_5y_bp"))
     return {
         # 取数例外（FRED/yfinance/债券定价）；已在 main 里过 scrub()，不含绝对路径
@@ -936,6 +953,13 @@ def build_data_gaps(errors, bonds, cfg, max_quote_age):
         "stale_quotes": stale,
         "stale_quotes_note": ("报价过期（超过 --max-quote-age，已排除于判定）" if stale else None),
         "max_quote_age_days": max_quote_age,
+        # 盘中指示性报价：**计入当日读数，但永不作 30 日基准**。单列一条，
+        # 不与 stale_quotes 合并——两者原因不同（一个是太旧、一个是不同种价），
+        # 合并就等于把「这是另一种价」说成「这是旧价」。
+        "intraday_quotes": intraday,
+        "intraday_quotes_note": (
+            "盘中指示性报价（非当日结算价）：计入本次读数，但不得作 30 日变化率基准"
+            if intraday else None),
         # 只覆盖「指数/曲线/股价」三层，**不**包含 CDS —— 与⑧最后那句同一口径。
         # 叫 no_gaps 就会在 CDS 盲区仍在时说谎，故按它实际断言的东西命名。
         "feeds_complete": (not errors) and (not stale),
@@ -957,6 +981,12 @@ def build_degraded(res, ev, gaps):
     if gaps["stale_quotes"]:
         reasons.append("报价过期（超过 --max-quote-age，已排除于判定）："
                        + "、".join(gaps["stale_quotes"]))
+    # 盘中指示价是**口径**降级：数字照样进判定，但它与盘后干净价不是同一种价。
+    # 只放进 data_gaps 而不进 degraded_reasons，等于让只读 degraded 的下游把
+    # 一条指示性报价读成当日结算价。
+    if gaps.get("intraday_quotes"):
+        reasons.append("盘中指示性报价（非当日结算价，不得作 30 日变化率基准）："
+                       + "、".join(gaps["intraday_quotes"]))
     if not gaps["cds_realtime"]["available"]:
         reasons.append("无实时 CDS 数据（本层最大盲区）")
     inc = _incomplete_layers(ev)
@@ -1046,6 +1076,10 @@ def render_markdown(res):
         tier = {"corp": "L1公司层", "spv_ig_tenant": "L2项目层", "convert": "转债·仅参考"}[b["tier"]]
         mark = GREY if b["stale"] or b["ytm_pct"] is None else ("—" if b["tier"] == "convert" else "✓")
         stale_note = f"（{b['quote_age_days']}天前·过期）" if b["stale"] and b["quote_as_of"] else ""
+        # 盘中指示价在表里必须看得见：它不过期、YTM 也算得出，所以既没有 ⚪ 也没有
+        # 「过期」字样——不标的话读者无从知道这一行与其他行不是同一种价。
+        if (b.get("quote_kind") or "close_clean") != "close_clean" and b["quote_as_of"]:
+            stale_note += "（⏳盘中指示价）"
         A(f"| {b['label']} | {tier} | {fmt(b['price'],'',2)}{stale_note} | {b['quote_as_of'] or 'N/A'} | "
           f"{fmt(b['ytm_pct'],'%',2)} | {fmt(b['bench_pct'],'%',2) if b['bench_pct'] else (b['bench_label'] or 'N/A')} | "
           f"{('+'+str(int(b['spread_bp']))+'bp') if b['spread_bp'] is not None else 'N/A'} | "
@@ -1143,6 +1177,9 @@ def render_markdown(res):
     stale = gaps["stale_quotes"]
     if stale:
         A(f"- **报价过期**（超过 --max-quote-age，已排除于判定）：{'、'.join(stale)}")
+    if gaps.get("intraday_quotes"):
+        A(f"- **盘中指示性报价**（非当日结算价，计入本次读数但**不得作 30 日变化率基准**）："
+          f"{'、'.join(gaps['intraday_quotes'])}")
     if gaps["feeds_complete"]:
         A("- 指数/曲线/股价三层皆取到当期数据，无缺口。")
     A("")
@@ -1201,10 +1238,16 @@ def render_compact(res):
     l2 = ev["L2"].get("spv_spread", {})
     hy = fred.get("HY OAS", {}).get("level_pct")
     ccc = fred.get("CCC & Lower OAS", {})
+    # 盘中指示价必须在这一行出现。这是 output-format.md:30 指定进 Slack 精简版的
+    # **唯一**一条信用层输出；不标的话，今天由指示价算出的 L1 777bp 会紧挨着昨天
+    # 由干净价算出的 827bp 出现在同一个频道里，读者看到的是 50bp 收窄——而那
+    # 恰好是 TH["excess_widening_idio_bp"] 的一整个单位（个体 vs 宏观的判别尺度）。
+    n_intraday = len((res.get("data_gaps") or {}).get("intraday_quotes") or [])
+    intraday_tag = f"｜⏳盘中指示价{n_intraday}档" if n_intraday else ""
     return (f"💳 信用④{ev['tripwire_4']['state']}｜"
             f"L1 {fmt(l1.get('spread_bp'),'bp',0)}｜L2 {fmt(l2.get('spread_bp'),'bp',0)}｜"
             f"HY {fmt(hy,'%',2)}｜CCC90d {fmt(ccc.get('d90_bp'),'bp',0,True)}｜"
-            f"{ev['relative_check']['verdict']}｜{ev.get('verdict_tag','')}")
+            f"{ev['relative_check']['verdict']}｜{ev.get('verdict_tag','')}{intraday_tag}")
 
 
 # ---------------------------------------------------------------- 主流程
@@ -1218,6 +1261,10 @@ def main():
                          "both 的两份渲染源自同一个判定对象，不可能对引爆点④ 有分歧")
     ap.add_argument("--compact-also", metavar="FILE", default=None,
                     help="额外把精简版一行写进 FILE（stdout 内容不变），供同一次取数两处引用")
+    ap.add_argument("--json-also", metavar="FILE", default=None,
+                    help="额外把完整 JSON 写进 FILE（stdout 内容不变）。"
+                         "第六步的 run_state.py --credit-json 读它，让引爆点④/T4 直接取自本脚本，"
+                         "而不是由人再手打一遍——output-format.md 规则② 要求④「不得与脚本结论冲突」")
     ap.add_argument("--bonds", default=BONDS_PATH, help="债券登记表路径")
     ap.add_argument("--max-quote-age", type=int, default=5, help="报价过期天数（默认5，超过判⚪不参与触发）")
     ap.add_argument("--no-history", action="store_true", help="不写入历史档")
@@ -1313,9 +1360,12 @@ def main():
             "indices": {k: v.get("level_pct") for k, v in res["fred"].items()},
             # 过期报价算出的 spread_bp 只反映当日 DGS 曲线漂移，不含任何信用信息：
             # 落盘时置 None 并标 stale，免得日后被 hist_spread_delta() 当成 30 日基准。
+            # quote_kind 必须落盘：hist_bond_stale() 靠它把盘中指示性报价挡在
+            # 30 日基准之外，而报价日期本身分辨不出盘中还是盘后。
             "bonds": {b["key"]: {"price": b["price"], "ytm_pct": b["ytm_pct"],
                                  "spread_bp": (None if b["stale"] else b["spread_bp"]),
                                  "quote_as_of": b["quote_as_of"],
+                                 "quote_kind": b.get("quote_kind") or "close_clean",
                                  "stale": bool(b["stale"])}
                       for b in bonds},
             "states": {lay: ev[lay]["state"] for lay in ("L1", "L2", "L3", "L4")},
@@ -1335,6 +1385,21 @@ def main():
             # 路径先折叠家目录 —— 本脚本的输出会被贴进日报并推 Slack。
             err(f"⚠️ 精简版一行写入失败（{tilde_path(args.compact_also)}）：{type(e).__name__}；"
                 f"该行改印于 stderr：{line}")
+
+    # 同一个 res 对象另存一份 JSON。与 --compact-also 同一理由：放在渲染分支之前，
+    # 渲染失败不该连带丢掉已经算出来的判定；且它与 stdout 的任何渲染出自**同一次取数、
+    # 同一个判定对象**，所以第六步据此判闸门不可能与报告正文的④各说各话。
+    if args.json_also:
+        try:
+            p = Path(args.json_also)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            payload = dict(res)
+            payload.pop("cfg", None)          # 与 emit==json 同口径：cfg 不进 JSON
+            p.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n",
+                         encoding="utf-8")
+        except OSError as e:
+            err(f"⚠️ JSON 另存失败（{tilde_path(args.json_also)}）：{type(e).__name__}；"
+                f"第六步的推送闸门将拿不到本脚本的④，须改以 ⚪ 沿用处理，不得手打顶替")
 
     # 渲染分支。both 的两份渲染共用同一个 res / ev 对象：compact 行与完整 markdown
     # 在结构上不可能对引爆点④ 各说各话，也不会是两轮独立取数。

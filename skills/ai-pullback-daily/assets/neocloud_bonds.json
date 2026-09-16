@@ -6,7 +6,8 @@
     "报价没有免费 API。流程：日报的 WebSearch 步骤拿到价格 → 填进 quote.price + quote.as_of + quote.source → 脚本自己算 YTM 与利差。",
     "quote.as_of 超过 --max-quote-age(默认5天) 的债券判为 ⚪ 数据过期，不参与触发判定（不臆测、不沿用旧价当新价）。",
     "maturity_precision='month' 表示只知到月份、日期取当月15日，YTM 误差约 ±3bp，可接受；拿到精确日期就改成 'day'。",
-    "新增债券时必须填 currency；EUR 债不与美债曲线比，只对 EUR HY 指数做相对比较。"
+    "新增债券时必须填 currency；EUR 债不与美债曲线比，只对 EUR HY 指数做相对比较。",
+    "quote.quote_kind 区分同一天的两种价：'close_clean'(当日结算/干净价，缺省) 与 'intraday_indicative'(盘中指示性报价)。as_of 只有日期、分辨不出两者——2026-09-10 曾同日两跑，盘中 88.71(利差777bp) 被盘后 86.75(827bp) 覆写，50bp 正好是个体/宏观判别的一整个单位。盘中报价**计入当日读数，但永不作 30 日变化率基准**；盘中那次运行不要落历史档(--no-history)。"
   ],
   "bonds": [
     {

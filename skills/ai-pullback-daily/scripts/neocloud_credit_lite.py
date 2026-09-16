@@ -106,7 +106,13 @@ BASELINE_QUOTES = {  # 建立基线时的报价（2026-07-30）；每次运行�
     "BLACKPEARL-6.125-2031": (101.28, "2026-07-30"),
 }
 PRIMARY = {  # 一级市场最近一笔；有新交易时改这里
-    "date": "2026-07-29", "issuer": "CoreWeave", "instrument": "Term Loan B",
+    # ⚠️ 本 dict 是 assets/neocloud_bonds.json 的 primary_market.deals 中**通过完整版筛选的最新
+    # 一笔**的副本（筛选条件见 neocloud_credit_monitor.py：status ∈ {repricing, priced} 且
+    # initial_spread_bp / final_spread_bp 皆非空，再按日期取最新）。两处是**两地编辑**，与 TH
+    # 字典同性质：一方更新而另一方没跟上，两个脚本就会对引爆点④给出不同的 L1 读数，而当天跑了
+    # 哪一个，报告就把哪一个当事实。改 deals 时必须同步改这里，并逐字核对 date 与 instrument。
+    "date": "2026-08-10", "issuer": "CoreWeave",
+    "instrument": "Delayed Draw Term Loan Facility（DDTL 5.5 Facility，杠杆贷款）",
     "size_mm": 2600, "base": "SOFR", "sp0": 425, "sp1": 550, "oid0": 99.0, "oid1": 96.5,
 }
 
