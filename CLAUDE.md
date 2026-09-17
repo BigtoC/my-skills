@@ -17,6 +17,11 @@ Skills live at `skills/<skill-name>/SKILL.md`, with optional siblings:
 `references/` (on-demand docs), `scripts/` (helper executables), `assets/`
 (templates and data).
 
+`docs/solutions/` holds documented solutions to past problems — bugs,
+conventions, workflow fixes — organized by category, each carrying YAML
+frontmatter (`module`, `tags`, `problem_type`) so they can be searched.
+Relevant when implementing or debugging in an area one of them covers.
+
 Every `SKILL.md` starts with frontmatter in this shape — match it when adding a
 skill:
 
