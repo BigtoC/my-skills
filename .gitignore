@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .idea
 .env
+
+# 本机核可规则：含绝对路径，公开仓库绝不提交
+.claude/settings.local.json
