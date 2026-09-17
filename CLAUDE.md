@@ -492,6 +492,31 @@ never restate or amend the caliber itself; every rule it cites has to be checked
 back against the migrated `signals-*.md` / `tripwires.md` / `neocloud-credit.md`
 files that own it.
 
+Those citations are written as **anchors, never line numbers**:
+`` `file.md`「verbatim phrase」 `` or `` `file.md` §「heading」 ``. Both quote bytes
+that exist in the target, so every citation in the file can be re-checked by
+grepping for it — which is the same "count the grep, do not trust the list"
+discipline the `scrub()` / `rel_display()` counts above are under.
+
+This was not free advice. On 2026-09-17 `daily-risk-monitor`'s contract held 59
+line-number citations and **19 of them had rotted** — `SKILL.md:140` and `:174`
+pointed at blank lines, and `signals-a-macro.md:40-41` was cited for 「无历史基准」
+while actually pointing at the HY/IG/BBB caliber trap. Most had been wrong since
+before that day's edits; a rewrite of `SKILL.md` step 1.1 then moved several more.
+A rotted line number is the expensive kind of wrong because it **looks exactly
+like a correct one**: the reader jumps, lands on something unrelated, and
+concludes they looked in the wrong place rather than that the document is wrong.
+The sibling `ai-pullback-daily` contract never used line numbers and so never
+rotted — that is the form to copy.
+
+One scoping note for anyone repeating this: it was a **one-place** edit despite
+the two-place rule, because the 依据 citation column exists only in the
+`daily-risk-monitor` copy, and the §2 envelope field list is identical in both
+set and order across the two files. Verify that before assuming either way.
+Still open, and genuinely two-place: the `daily-risk-monitor` copy's `as_of`
+field has lost the comment `# 数据自身的日期，不是取数日` that the
+`ai-pullback-daily` copy still carries.
+
 ### `.claude/agents/` is optional and must stay that way
 
 `.claude/agents/search-transport.md` is the Claude Code mechanism that executes

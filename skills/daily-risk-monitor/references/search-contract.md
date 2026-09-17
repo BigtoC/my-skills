@@ -7,6 +7,14 @@
 > 因此本文件可以正常编辑维护；但它**引用**的每一条口径都必须回到那九个文件里核对，
 > 契约不得改写口径，只规定口径怎么被搬运。
 
+> **编者注 · 引用一律用锚点，不用行号（2026-09-17 全面改过）。**
+> 出处写成 `` `档名`「逐字短语」 `` 或 `` `档名` §「小节标题」 ``，两种都是**目标档里的
+> 逐字内容**，可以直接 grep 回去核对。**不要写 `档名:行号`**——这份文件曾经有 59 条行号
+> 引用，其中 19 条已经指到别的地方（有两条指到的是 `SKILL.md` 的空行），而行号错了**看起来
+> 和对的一模一样**：读的人跳过去、看到一段不相干的话，只会以为自己找错，不会以为文件错了。
+> 上游档案每改一次版面，行号就再错一次；锚点不会，因为它引的是内容本身。
+> 核对全部引用：把每个 「…」 与 §「…」 拿去 grep 对应档案，一条都不该落空。
+
 ---
 
 ## 0. 为什么要有这一层
@@ -16,9 +24,9 @@
 把它们直接倒进写报告的上下文，会同时产生两个后果：
 
 1. 判定被 snippet 的措辞带着走——搜索结果自己就写着「市场情绪已极度贪婪」，
-   而 `known-traps.md:20` 要求**触发状态严格按阈值判断，不加「但是」「不过」之类的软化语言**；
-2. 来源与资料日期在几千字里被冲淡，而 `output-format.md:72` 要求**每项都必须标注资料日期**、
-   `SKILL.md:148` 要求**每项附来源**。
+   而 `known-traps.md` §「行为准则」 要求**触发状态严格按阈值判断，不加「但是」「不过」之类的软化语言**；
+2. 来源与资料日期在几千字里被冲淡，而 `output-format.md` §「第 2 部分 · 完整仪表盘表格」 要求**每项都必须标注资料日期**、
+   `SKILL.md` §「1.2 检索分组（与 1.1 同时派发，不等脚本）」 要求**每项附来源**。
 
 所以检索被拆成**传输**与**判定**两件事：
 传输层只回**读数与出处**，判定层（写报告的那个 agent）拿到的是结构化字段，不是 snippet。
@@ -68,16 +76,16 @@ payload                  # 逐项定义，见 §6
 
 | 字段 | 要求 | 依据 |
 |------|------|------|
-| `attempted[]` | **成功时也要有**，按文档化顺序排列。父级不看 snippet 就能审计「写死的来源顺序有没有被真的走过」；第一级没被尝试就打回重取 | `SKILL.md:148`「逐项按各 `references/signals-*.md` 里写明的搜索顺序与来源优先级执行」 |
-| `attempted[].http` | 实测到的 HTTP 码要照填。403 / 418 / 451 这些是本仓库已知陷阱清单上的常客，父级要能在第 8 部分列出来 | `known-traps.md:57-70`、`output-format.md:103` |
-| `as_of` + `as_of_granularity` | 两个都必填。粒度不是装饰：信号 11 必须报**月份**、信号 27 必须报**季度**、信号 31 必须报**是哪一个周五那期 FactSet**。粒度丢了，滞后就算不出来 | `signals-b-positioning.md:54`、`signals-e-cycle-valuation.md:51-61`、`signals-f-monday.md:14` |
-| `caliber` | 口径标签**跟着数字走**，不是注释。Equity vs Total、8h vs 4h vs 1h、USA Overall Market vs openinsider、百万 vs 十亿 | `signals-b-positioning.md:45`、`signals-c-crypto.md:55-67`、`signals-b-positioning.md:64-73` |
-| `staleness` | **只要 `last_known` 有值就必须有**——没有滞后周数的「数据暂缺」是不合格输出。**唯一的例外是 `last_known` 本身为 `null`**（首跑、或该项从来没有过基准）：此时滞后**在数学上算不出来**，`staleness` 记 `null`，并在 payload 写死 `signals-a-macro.md:41` 那句「**无历史基准，本项完全不可判定**」。**绝不允许为了满足本栏而编一个周数**——那是红线一，而且 §8 已说明这些字段是仓位输入。 | `known-traps.md:15` ＋ `signals-a-macro.md:41` |
-| `last_known` | `{value, date}`；查不到写 `null`，并在 payload 里说明「无历史基准，本项完全不可判定」 | `signals-a-macro.md:40-41` |
-| `attempted[]` 长度 | 检索不重试超过 2 次 | `data-cadence.md:21` |
+| `attempted[]` | **成功时也要有**，按文档化顺序排列。父级不看 snippet 就能审计「写死的来源顺序有没有被真的走过」；第一级没被尝试就打回重取 | `SKILL.md` §「1.2 检索分组（与 1.1 同时派发，不等脚本）」「逐项按各 `references/signals-*.md` 里写明的搜索顺序与来源优先级执行」 |
+| `attempted[].http` | 实测到的 HTTP 码要照填。403 / 418 / 451 这些是本仓库已知陷阱清单上的常客，父级要能在第 8 部分列出来 | `known-traps.md` §「已知失效 / 陷阱清单」、`output-format.md` §「第 8 部分 · 数据品质附注」 |
+| `as_of` + `as_of_granularity` | 两个都必填。粒度不是装饰：信号 11 必须报**月份**、信号 27 必须报**季度**、信号 31 必须报**是哪一个周五那期 FactSet**。粒度丢了，滞后就算不出来 | `signals-b-positioning.md`「报告中必须标注数据所属月份」、`signals-e-cycle-valuation.md`「必须同季度对齐」、`signals-f-monday.md` §「31. 标普500 前瞻本益比（Forward P/E）」「FactSet 每周五发布」 |
+| `caliber` | 口径标签**跟着数字走**，不是注释。Equity vs Total、8h vs 4h vs 1h、USA Overall Market vs openinsider、百万 vs 十亿 | `signals-b-positioning.md`「总和里混了指数期权」、`signals-c-crypto.md` §「⚠️ 口径统一（最容易搞错的一步）」、`signals-b-positioning.md` §「🚨 口径陷阱：替代源不能拿来比对 0.17」 |
+| `staleness` | **只要 `last_known` 有值就必须有**——没有滞后周数的「数据暂缺」是不合格输出。**唯一的例外是 `last_known` 本身为 `null`**（首跑、或该项从来没有过基准）：此时滞后**在数学上算不出来**，`staleness` 记 `null`，并在 payload 写死 `signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」 那句「**无历史基准，本项完全不可判定**」。**绝不允许为了满足本栏而编一个周数**——那是红线一，而且 §8 已说明这些字段是仓位输入。 | `known-traps.md`「必须老实报出滞后周数」 ＋ `signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」 |
+| `last_known` | `{value, date}`；查不到写 `null`，并在 payload 里说明「无历史基准，本项完全不可判定」 | `signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」「最后一次已知读数的日期与值」 |
+| `attempted[]` 长度 | 检索不重试超过 2 次 | `data-cadence.md` §「数据更新节奏」 |
 
 `staleness` 与 `last_known` 是一对：速览卡要把它们渲染成一行内联文字
-「⚪️ 无法判定（上次 6.2 @07-18，滞后 3 周）」（`output-format.md:42`），
+「⚪️ 无法判定（上次 6.2 @07-18，滞后 3 周）」（`output-format.md` §「第 0 部分 · 极简速览卡（5 项核心）」），
 所以传输层给的是**两个字段**，不是一句已经拼好的话。
 
 ---
@@ -91,27 +99,27 @@ payload                  # 逐项定义，见 §6
 信号 12 可以从 openinsider.com 取回一个**真实、新鲜、解析正确**的数字，
 而它**仍然必须报 ⚪️ 数据暂缺**——因为 `0.17` 是**为 GuruFocus 的特定算法校准的**
 （美元加权、全市场汇总、月度口径），openinsider 用的是另一套算法，数值尺度完全不同
-（`signals-b-positioning.md:64-73`）。原文把话说到底：
+（`signals-b-positioning.md` §「🚨 口径陷阱：替代源不能拿来比对 0.17」）。原文把话说到底：
 
 > **用替代源的数去比对为原口径校准的阈值，和把 WALCL 的「百万」当成「十亿」是同一类错误**——数字看起来很合理，结论完全错。
 
 没有这个显式布尔，下游只会看到「有一个数」，于是把它当成「阈值可判定」，
-⚪️ 会计就**静默塌缩成 ❌**——而 `decision-framework.md:44` 说得很清楚，
+⚪️ 会计就**静默塌缩成 ❌**——而 `decision-framework.md`「完全不同的两件事」 说得很清楚，
 `❌ 未触发` 和 `⚪️ 无法判定` 是完全不同的两件事：一个是「查过了，安全」，一个是「不知道」。
 
 同型的还有三处，都写进 `reason`：
 
 | 项 | 有值也不可比阈值的情形 | 依据 |
 |----|------------------------|------|
-| 信号 12 内部人 | 数来自 openinsider / SEC EDGAR Form 4 / 口径不明的转载 | `signals-b-positioning.md:64-73`、`SKILL.md` 红线一 |
-| 信号 10 Put/Call | 拿到的是 **Total** 而不是 **Equity** | `signals-b-positioning.md:45` |
-| 信号 14 资金费率 | 第三级 coinglass 搜到的是跨所或非 8h 口径 | `signals-c-crypto.md:55-67`、`:90-92` |
-| 信号 27 Buffett | 数来自 currentmarketvaluation / gurufocus 而不是同季对齐的 FRED 计算 | `signals-e-cycle-valuation.md:47-61` |
+| 信号 12 内部人 | 数来自 openinsider / SEC EDGAR Form 4 / 口径不明的转载 | `signals-b-positioning.md` §「🚨 口径陷阱：替代源不能拿来比对 0.17」、`SKILL.md` 红线一 |
+| 信号 10 Put/Call | 拿到的是 **Total** 而不是 **Equity** | `signals-b-positioning.md`「总和里混了指数期权」 |
+| 信号 14 资金费率 | 第三级 coinglass 搜到的是跨所或非 8h 口径 | `signals-c-crypto.md` §「⚠️ 口径统一（最容易搞错的一步）」§「兜底顺序」、`:90-92` |
+| 信号 27 Buffett | 数来自 currentmarketvaluation / gurufocus 而不是同季对齐的 FRED 计算 | `signals-e-cycle-valuation.md` §「27. Buffett Indicator（股市总市值 / GDP）⭐新增」「数据源（对照）」 |
 
 `threshold_comparable.value = false` 时，`status` **仍可以是 `ok`**（数字是真的、抓到了），
 但 `counts_toward` 必须是 `{numerator: false, denominator: false}`，
 且 payload 里要带上可以照抄进报告的那句限制语——信号 12 的原文规定是
-「**口径不同，无法判定第 7 项硬阈值**」（`signals-b-positioning.md:77`）。
+「**口径不同，无法判定第 7 项硬阈值**」（`signals-b-positioning.md`「抓不到时的强制处理」）。
 
 ### 3.2 `carry_forward_policy` —— 沿用是必须还是缺陷，只看滞后分不出来
 
@@ -119,12 +127,12 @@ payload                  # 逐项定义，见 §6
 也有**沿用即缺陷**的项。只看 `staleness` 两类长得一模一样：都是「一个旧日期」。
 
 **本技能这 18 项目前全部是 `must_refetch`**，只有一个例外分支：
-信号 31 非周一时不派发，记 `n_a`（`signals-f-monday.md:9-11`，仅周一执行）。
+信号 31 非周一时不派发，记 `n_a`（`signals-f-monday.md`「31 / 33 / 34 仍是仅周一执行」，仅周一执行）。
 
 理由必须写下来，否则这一栏看起来像可以省：
 
-- `data-cadence.md:11`：**全部 30 项每天都抓**（「宁可多花时间，也不要用过期数据做判断」）；
-- `data-cadence.md:20-21`：**非更新日抓到相同值 = 正常**，标 `as of MM/DD`，
+- `data-cadence.md` §「数据更新节奏」：**全部 30 项每天都抓**（「宁可多花时间，也不要用过期数据做判断」）；
+- `data-cadence.md` §「数据更新节奏」：**非更新日抓到相同值 = 正常**，标 `as of MM/DD`，
   但**抓不到就标「⚪️ 数据暂缺」，绝不用旧记忆或估算值填充**。
 
 这两条合起来意味着：信号 11（月频、滞后约一个月）连续二十天回同一个数字是**正常**的，
@@ -147,7 +155,7 @@ payload                  # 逐项定义，见 §6
 | `N/A` | 一行里**某个子字段**缺（如 CNN F&G 的四个对照读数之一）：该读数印 `N/A`、变动栏印「N/A（缺对照读数，不计算变动）」 | 该行**仍是 ok**，只是变动栏不计算；**不补 0、不估算** |
 | `null` | `--json` 机读面的三态 | `null` = ⚪️（分子分母都不进）；`false` = ❌（进分母不进分子）。**把 `null` 读成 `false` 就是把「不知道」记成「查过了没事」** |
 
-依据：`decision-framework.md:42-51`、`SKILL.md:168`、`scripts/cnn_fng.sh:166-175`。
+依据：`decision-framework.md` §「🚨 数据暂缺的计数规则（不可省略）」、`SKILL.md`「`null` 是 ⚪️，`false` 是 ❌」、`scripts/cnn_fng.sh`「一律记 N/A，不估算也不补 0」。
 
 所以 `missing_sentinel` 是**调用方在派发时填进任务里的**，传输层照填回来。
 取数方不知道这个读数最后要落进硬阈值表格、仪表盘还是数据品质附注，
@@ -170,7 +178,7 @@ payload                  # 逐项定义，见 §6
 理由是分工：判定的规则写在 `signals-*.md` 与 `decision-framework.md` 里，
 读的是**全部 30 项加上下文**（Tier 1 计数、加密计数、估值环境联动）。
 一个只看着一项搜索结果的单元，没有做那个判定所需的任何一样东西。
-`output-format.md:69` 那个 ≤25 字的「一句话解读」同理——它要求
+`output-format.md`「必填，≤25 字」 那个 ≤25 字的「一句话解读」同理——它要求
 「用**大白话**说明这个数字现在代表什么，不要重复阈值」，那是写报告的人的活。
 
 唯一的例外是**照抄型文字**：原文规定必须逐字出现在报告里的限制语
@@ -195,7 +203,7 @@ payload                  # 逐项定义，见 §6
 
 逐族的理由：
 
-**多值 · 信号 11** ——「**连续 3 个月**月减」（`signals-b-positioning.md:53`）是硬阈值第 2 项，
+**多值 · 信号 11** ——「**连续 3 个月**月减」（`signals-b-positioning.md`「7 项硬阈值之一（第 2 项）」）是硬阈值第 2 项，
 一个标量答不了「连续 3 个月」。原文另外强制**必须同时给出三个数**：
 最新月度绝对值、年增率 YoY %、月增方向 ↑/↓（`:49`）。`three_month_streak[]` 是那三笔月度读数本身，
 不是一个已经算好的布尔——布尔是判定，判定不在这一层。
@@ -210,7 +218,7 @@ payload                  # 逐项定义，见 §6
 序列）才记 ⚪️、才从分母扣除。把「前提不成立」误记成 ⚪️，硬阈值第 5 项就会**每天**被扣掉，
 分母恒为 6、最坏情况恒被抬高 1 —— 那是 2026-09-05 实跑真正发生过的事。
 
-信号 6 是「**SPX 创新高，但 A/D Line 未同步创新高**」（`signals-a-macro.md:76`），
+信号 6 是「**SPX 创新高，但 A/D Line 未同步创新高**」（`signals-a-macro.md` §「6. NYSE 腾落线（Advance/Decline Line）顶背离 ⭐新增」），
 信号 2 是「SPX 创新高但该比例 <60%」（`:26`）。
 所以搜索回来的**不是一个可判定的读数**，而是背离的一条腿。
 另一条腿——「SPX 今天是不是创新高」——是价格事实，**必须由父级从脚本侧供给，不得由搜索回答**。
@@ -222,7 +230,7 @@ payload                  # 逐项定义，见 §6
 不得因为搜索腿抓到了就把整项当成已判定。
 
 **记录表 · 信号 13** —— 两个**同阈值却互相矛盾**的口径，原文有实测证据
-（`signals-b-positioning.md:89-95`）：2026-08-10 实测 2026 年至今 99 宗募 $251B，
+（`signals-b-positioning.md` §「⚠️ 两个口径可能给出相反答案，必须分别报告」）：2026-08-10 实测 2026 年至今 99 宗募 $251B，
 对比 2025 全年 202 宗募 $44B → **件数在减少，金额 +470%**；
 「只看件数会判 ❌ 未触发，只看金额会判 ✅ 触发」。
 所以 payload 是 `readings[]`（每条自带 `caliber: "件数" | "金额"`），
@@ -232,8 +240,8 @@ payload                  # 逐项定义，见 §6
 
 **同源对 · 信号 4** —— 两腿必须**同源同日**。
 一个「一值一 `as_of`」的元组表达不了这个约束，而这正是
-`signals-a-macro.md:5-9` 那条编者注要防的事（同一份报告里出现两个 VIX、资料日期常差一个交易日）。
-`data-cadence.md:53` 给了它的具体死法：yfinance 的 `^VIX3M`/`^VIX9D`/`^VIX6M`
+`signals-a-macro.md`「编者注 · VIX 的单一来源」 那条编者注要防的事（同一份报告里出现两个 VIX、资料日期常差一个交易日）。
+`data-cadence.md`「全部停更在 2026-07-17」 给了它的具体死法：yfinance 的 `^VIX3M`/`^VIX9D`/`^VIX6M`
 **全部停更在 2026-07-17** 而 `^VIX` 是当日的，拿它算期限结构会
 **静默地用三周前的远月值去比今天的近月值**。
 `shared_source` / `shared_date` 两个字段就是让这种事**变成显式的校验**而不是隐式的巧合。
@@ -241,9 +249,9 @@ payload                  # 逐项定义，见 §6
 **纯方向 · 信号 3 / 信号 12** —— 这两族的存在本身就是结论：
 可以回一句有用的话，同时 `status` 仍是 `missing`。
 信号 12 允许补一句 openinsider 的**方向性**观察（如「近两周集中卖出为主」），
-但**必须紧接着写「口径不同，无法判定第 7 项硬阈值」**（`signals-b-positioning.md:77`）。
+但**必须紧接着写「口径不同，无法判定第 7 项硬阈值」**（`signals-b-positioning.md`「抓不到时的强制处理」）。
 信号 3 在连 `last_known` 都取不到时，要能表达
-「无历史基准，本项完全不可判定」（`signals-a-macro.md:41`）。
+「无历史基准，本项完全不可判定」（`signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」）。
 `direction_text` 就是这句话的槽位；它**不是** payload.value 的替代品，
 `threshold_comparable.value` 在这一族里恒为 `false`。
 
@@ -305,7 +313,7 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
 1. `attempted[]` 的第一条，是不是该项参考文件里写死的第一级来源？
    **第一级没被尝试就打回**——这正是 `attempted[]` 成功时也要有的原因。
 2. `tier_used` 与 `source_label` 对不对得上？降级了但 `tier_used` 还写 1，
-   就是 `SKILL.md:14-16` 里「回退必须响」那条被违反。
+   就是 `SKILL.md`「回退链规则」 里「回退必须响」那条被违反。
 
 ---
 
@@ -322,20 +330,20 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
 
 （另外信号 4 的 VIX 绝对值是第 1 项，但那一项正常走 FRED，只有备援腿会进本契约。）
 
-任何一项 ⚪️ 都**改变分母**：`decision-framework.md:46` ——
+任何一项 ⚪️ 都**改变分母**：`decision-framework.md`「一律不计入触发数，也不计入分母」 ——
 **⚪️ 项一律不计入触发数，也不计入分母**，写法是「今日共 X / N 项触发（M 项数据暂缺）」，N = 7 − M。
 并且 `:47` 强制**同时给出最坏情况**：「**若暂缺的 M 项全部触发，计数将达 X+M**」，
 还要说明那会不会跨过警戒升级（≥2）或分批门槛。
 `:48` 再加一条：**⚪️ 项 ≥3 时**，战略基准**维持昨日档位不变**，不因计数下降而回补仓位。
 
-顺着这条链往下：触发数 T → 战略基准（`decision-framework.md:73-83`）→ 最终目标仓位。
+顺着这条链往下：触发数 T → 战略基准（`decision-framework.md` §「轨道一 · 战略层 → 目标仓位基准」）→ 最终目标仓位。
 
 **所以 `status` / `threshold_comparable` / `counts_toward` / `staleness` 这几个字段
 是仓位输入，不是记账。** 一个单元把 `threshold_comparable` 填成 `true` 而它其实不可比，
 分母就多一格，触发比例被压低，战略基准被推高——
-`known-traps.md:14` 说的就是这件事：**编造的数字会直接改变战略层的目标仓位基准**。
+`known-traps.md` §「行为准则」 说的就是这件事：**编造的数字会直接改变战略层的目标仓位基准**。
 
-`decision-framework.md:49`：**绝不允许**因为「其余几项都很安全」就推断暂缺项也安全。
+`decision-framework.md` §「🚨 数据暂缺的计数规则（不可省略）」：**绝不允许**因为「其余几项都很安全」就推断暂缺项也安全。
 
 ---
 
@@ -345,7 +353,7 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
 
 - **信号 2**（`:24-27`）：来源写的是 barchart.com 或 stockcharts，搜
   `"S&P 500 stocks above 200-day moving average"`。两家是并列的，不是排序；
-  但换第三家仍受 `SKILL.md:14-16`「阈值不随源转移」约束——成分口径/调整方式不同的源不得静默替入。
+  但换第三家仍受 `SKILL.md`「回退链规则」「阈值不随源转移」约束——成分口径/调整方式不同的源不得静默替入。
 - **信号 3**（`:29-43`）：搜索顺序是写死的三段、**最多 2 轮**：
   ① `BofA Bull Bear Indicator` + 当前月份／`Flow Show`；
   ② ZeroHedge、FT Unhedged、Reuters、Business Insider、MarketWatch；
@@ -364,7 +372,7 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
 ### 组 B · `signals-b-positioning.md`
 
 - **信号 10**（`:41-45`）：走 cboe.com/us/options/market_statistics 的 web_fetch。
-  **`cdn.cboe.com` 的 PCRATIO CSV 会回 403，不可用**（`known-traps.md:63` 同载）。
+  **`cdn.cboe.com` 的 PCRATIO CSV 会回 403，不可用**（`known-traps.md` §「已知失效 / 陷阱清单」「`cdn.cboe.com` PCRATIO CSV」 同载）。
   口径必须是**权益（Equity）**——总和里混了指数期权，机构大量拿来对冲，会把散户情绪讯号糊掉。
   拿到 Total 就填 `threshold_comparable {value: false}`，不是把它当 Equity 用。
 - **信号 11**（`:47-55`）：来源顺序是 macromicro 镜像页 web_fetch，或搜 `"FINRA margin statistics"`。
@@ -391,41 +399,41 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
   Binance 默认 8h 直接用、部分币种 4h **× 2**、Hyperliquid **1 小时 × 8**；
   报告里**同时给出 8h 费率和年化**（`年化% = 8h费率 × 3 × 365`）。
   跨所不可直接跨日比较——「不同交易所费率可以差一倍」，所以 `caliber` 与 `source_label` 都必填。
-- **信号 15**：`crypto.py liquidations` **一定 exit 3**（`scripts/crypto.py:1392` `do_liquidations`），
+- **信号 15**：`crypto.py liquidations` **一定 exit 3**（`scripts/crypto.py`「一律 missing（OKCOUNT 不加）」 `do_liquidations`），
   这是它的正常结局，不是故障——本项没有任何免费公开源（Coinglass v4 需 API key）。
   脚本会实测并印出每个来源的 HTTP 码，那份清单**直接充当 `attempted[]`**。
-  接到 exit 3 就走 `web_search "coinglass liquidations 24h"`，报告要写全三件事（`SKILL.md:140`）：
+  接到 exit 3 就走 `web_search "coinglass liquidations 24h"`，报告要写全三件事（`SKILL.md`「报告里写全三件事」）：
   24h 总清算金额（>$500M = 杠杆洗盘｜>$1B = 重大事件）、
   **多头 vs 空头哪一方被清算更多**、以及「上次已知读数 X @ YYYY-MM-DD，已滞后 N 周」。
   ⚠️ **搜不到也不得写成「未触发」**——本项即使 `status: missing` 也要照 §2 报滞后周数；
   但**首跑没有 `last_known` 时算不出滞后**，那时 `staleness` 记 `null` 并写「无历史基准，本项完全不可判定」，
-  **不要为了填满这一栏而编一个周数**。>$1B 单独就会把告警拉到 🔴（`decision-framework.md:18`）。
+  **不要为了填满这一栏而编一个周数**。>$1B 单独就会把告警拉到 🔴（`decision-framework.md`「清算 >$1B」）。
 - **信号 16**：**不派发，禁止检索。**
   正文（`:100-103`）写的「搜 "BTC dominance" 或 web_fetch coingecko / tradingview」
-  **已被该文件开头的编者注收紧**（`signals-c-crypto.md:5-11`）：
+  **已被该文件开头的编者注收紧**（`signals-c-crypto.md`「编者注 · 信号 16 的 7d 腿」）：
   CoinGecko 免费层无全市场市值历史序列（`/global/market_cap_chart` 实测 HTTP 401），
   **换到别家会引入第三套分母口径**——CoinGecko 与 CoinPaprika 实测同日 59.1% vs 56.9%，
   差约 2pt，**而阈值只有 2%**。因此 `crypto.py` 改为按天累积同源本地历史
   `assets/dominance_history.jsonl` 自答 7d 腿，并强制校验基准笔与今日**同源**，异源一律拒绝比较记 ⚪️。
   原文的话是：**「不要为了补这条腿去换数据源 —— 缺的是历史序列，不是当日值。」**
   ⚠️ `crypto.py` 在两家全灭时确实会印一句 `web_fetch coingecko / tradingview BTC.D` 的 next_step
-  （`scripts/crypto.py:1969`）——那是**当日值**的兜底，**不是**给 7d 腿开的口子。
+  （`scripts/crypto.py`「web_fetch coingecko / tradingview BTC.D」）——那是**当日值**的兜底，**不是**给 7d 腿开的口子。
   三种 ⚪️（历史不足 / 历史断层 / 来源不同）的措辞要照抄脚本，
-  且**绝不能因为「其余条件都正常」就推断这条腿安全**（`SKILL.md:141`）。
+  且**绝不能因为「其余条件都正常」就推断这条腿安全**（`SKILL.md`「这三种都必须写成 ⚪️」）。
 
 ### 组 E · `signals-e-cycle-valuation.md`
 
 - **信号 25**（`:24-28`）：走 conference-board.org/topics/us-leading-indicators。
   要**两个数**：最新月度指数值 + **6 个月年化变化率**；触发只看后者（< −4%）。
   「单月的绝对值没意义，要看**六个月的斜率**」——一个换了窗口的成长率（3 个月、同比）
-  不得拿去比 −4%。`known-traps.md:17` 把 LEI 列进「尤其容易凭印象写出一个『差不多的数』」那一组：
+  不得拿去比 −4%。`known-traps.md`「每次都必须给出实际抓取到的数值来源」 把 LEI 列进「尤其容易凭印象写出一个『差不多的数』」那一组：
   **这几项每次都必须给出实际抓取到的数值来源**。
 - **信号 27**（`:47-65`）：首选是**可算**的 `fred("NCBEILQ027S") ÷ fred("GDP")`，
-  且 `SKILL.md:174` 规定走 `fred.sh --buffett`（内建同季对齐），别自己各取末行相除。
+  且 `SKILL.md` §「工具与已知坑（完整表见 `references/known-traps.md`，逐条遵守）」 规定走 `fred.sh --buffett`（内建同季对齐），别自己各取末行相除。
   本契约里那两个网页源（currentmarketvaluation、gurufocus）**是「对照」，不是替代**。
   对照取不到**不会**让信号 27 变成 ⚪️；对照与首选打架时，进
-  `output-format.md:103` 第 8 部分的「**来源冲突的项目**」，不进仪表盘那一格。
-  首选自身量级自检不过时是 `exit 4`，那时**不要引用那个数字**（`SKILL.md:145`）。
+  `output-format.md` §「第 8 部分 · 数据品质附注」 第 8 部分的「**来源冲突的项目**」，不进仪表盘那一格。
+  首选自身量级自检不过时是 `exit 4`，那时**不要引用那个数字**（`SKILL.md`「先怀疑单位」）。
 - **信号 29**（`:86-89`）：走 aaii.com/assetallocationsurvey——
   与信号 8 的 aaii.com/sentimentsurvey 是**不同的调查、不同的页面、不同的量纲**，
   「嘴巴会骗人，帐户不会」，两者**永不互相替代**。
@@ -439,10 +447,10 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
 - **信号 31**（`:13-16`）：搜 `"S&P 500 forward P/E FactSet Earnings Insight"`
   （FactSet 每周五发布 PDF/网页），`as_of` 要说清是**哪一期**。
   参考区间 5 年均值约 19–20、10 年均值约 18——那是**参考**，不是触发阈值。
-- ⚠️ **本项没有触发阈值，也没有档位。** `signals-f-monday.md:11` 与 `SKILL.md:152`：
+- ⚠️ **本项没有触发阈值，也没有档位。** `signals-f-monday.md`「这四项不计入 30 个信号，也不参与任何触发计数」 与 `SKILL.md`「这四项（含每日的 32）」：
   这四项**不计入 30 个信号，也不参与任何触发计数**。
   因此 `counts_toward` 恒为 `{false, false}`，且**绝不可写进 `snapshot.py` 的 `signals`**——
-  该脚本只认 1–30（`scripts/snapshot.py:122`），
+  该脚本只认 1–30（`scripts/snapshot.py`「编号固定 1–30」），
   混入 31–34 会被点名拒绝（`:312-313`：「31–34 是周一附加，不计入 30 个信号，不要放进 signals」）。
 - 非周一不派发本组，`carry_forward_policy` 记 `n_a`。
 
