@@ -74,15 +74,15 @@ payload                  # 逐项定义，见 §6
 
 逐字段的硬要求：
 
-| 字段 | 要求 | 依据 |
-|------|------|------|
-| `attempted[]` | **成功时也要有**，按文档化顺序排列。父级不看 snippet 就能审计「写死的来源顺序有没有被真的走过」；第一级没被尝试就打回重取 | `SKILL.md` §「1.2 检索分组（与 1.1 同时派发，不等脚本）」「逐项按各 `references/signals-*.md` 里写明的搜索顺序与来源优先级执行」 |
-| `attempted[].http` | 实测到的 HTTP 码要照填。403 / 418 / 451 这些是本仓库已知陷阱清单上的常客，父级要能在第 8 部分列出来 | `known-traps.md` §「已知失效 / 陷阱清单」、`output-format.md` §「第 8 部分 · 数据品质附注」 |
-| `as_of` + `as_of_granularity` | 两个都必填。粒度不是装饰：信号 11 必须报**月份**、信号 27 必须报**季度**、信号 31 必须报**是哪一个周五那期 FactSet**。粒度丢了，滞后就算不出来 | `signals-b-positioning.md`「报告中必须标注数据所属月份」、`signals-e-cycle-valuation.md`「必须同季度对齐」、`signals-f-monday.md` §「31. 标普500 前瞻本益比（Forward P/E）」「FactSet 每周五发布」 |
-| `caliber` | 口径标签**跟着数字走**，不是注释。Equity vs Total、8h vs 4h vs 1h、USA Overall Market vs openinsider、百万 vs 十亿 | `signals-b-positioning.md`「总和里混了指数期权」、`signals-c-crypto.md` §「⚠️ 口径统一（最容易搞错的一步）」、`signals-b-positioning.md` §「🚨 口径陷阱：替代源不能拿来比对 0.17」 |
-| `staleness` | **只要 `last_known` 有值就必须有**——没有滞后周数的「数据暂缺」是不合格输出。**唯一的例外是 `last_known` 本身为 `null`**（首跑、或该项从来没有过基准）：此时滞后**在数学上算不出来**，`staleness` 记 `null`，并在 payload 写死 `signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」 那句「**无历史基准，本项完全不可判定**」。**绝不允许为了满足本栏而编一个周数**——那是红线一，而且 §8 已说明这些字段是仓位输入。 | `known-traps.md`「必须老实报出滞后周数」 ＋ `signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」 |
-| `last_known` | `{value, date}`；查不到写 `null`，并在 payload 里说明「无历史基准，本项完全不可判定」 | `signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」「最后一次已知读数的日期与值」 |
-| `attempted[]` 长度 | 检索不重试超过 2 次 | `data-cadence.md` §「数据更新节奏」 |
+| 字段                          | 要求                                                                                                                                                                                                                                                                                                                                                                                                                                 | 依据                                                                                                                                                                                               |
+|-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `attempted[]`                 | **成功时也要有**，按文档化顺序排列。父级不看 snippet 就能审计「写死的来源顺序有没有被真的走过」；第一级没被尝试就打回重取                                                                                                                                                                                                                                                                                                            | `SKILL.md` §「1.2 检索分组（与 1.1 同时派发，不等脚本）」「逐项按各 `references/signals-*.md` 里写明的搜索顺序与来源优先级执行」                                                                   |
+| `attempted[].http`            | 实测到的 HTTP 码要照填。403 / 418 / 451 这些是本仓库已知陷阱清单上的常客，父级要能在第 8 部分列出来                                                                                                                                                                                                                                                                                                                                  | `known-traps.md` §「已知失效 / 陷阱清单」、`output-format.md` §「第 8 部分 · 数据品质附注」                                                                                                        |
+| `as_of` + `as_of_granularity` | 两个都必填。粒度不是装饰：信号 11 必须报**月份**、信号 27 必须报**季度**、信号 31 必须报**是哪一个周五那期 FactSet**。粒度丢了，滞后就算不出来                                                                                                                                                                                                                                                                                       | `signals-b-positioning.md`「报告中必须标注数据所属月份」、`signals-e-cycle-valuation.md`「必须同季度对齐」、`signals-f-monday.md` §「31. 标普500 前瞻本益比（Forward P/E）」「FactSet 每周五发布」 |
+| `caliber`                     | 口径标签**跟着数字走**，不是注释。Equity vs Total、8h vs 4h vs 1h、USA Overall Market vs openinsider、百万 vs 十亿                                                                                                                                                                                                                                                                                                                   | `signals-b-positioning.md`「总和里混了指数期权」、`signals-c-crypto.md` §「⚠️ 口径统一（最容易搞错的一步）」、`signals-b-positioning.md` §「🚨 口径陷阱：替代源不能拿来比对 0.17」                 |
+| `staleness`                   | **只要 `last_known` 有值就必须有**——没有滞后周数的「数据暂缺」是不合格输出。**唯一的例外是 `last_known` 本身为 `null`**（首跑、或该项从来没有过基准）：此时滞后**在数学上算不出来**，`staleness` 记 `null`，并在 payload 写死 `signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」 那句「**无历史基准，本项完全不可判定**」。**绝不允许为了满足本栏而编一个周数**——那是红线一，而且 §8 已说明这些字段是仓位输入。 | `known-traps.md`「必须老实报出滞后周数」 ＋ `signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」                                                                                |
+| `last_known`                  | `{value, date}`；查不到写 `null`，并在 payload 里说明「无历史基准，本项完全不可判定」                                                                                                                                                                                                                                                                                                                                                | `signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」「最后一次已知读数的日期与值」                                                                                              |
+| `attempted[]` 长度            | 检索不重试超过 2 次                                                                                                                                                                                                                                                                                                                                                                                                                  | `data-cadence.md` §「数据更新节奏」                                                                                                                                                                |
 
 `staleness` 与 `last_known` 是一对：速览卡要把它们渲染成一行内联文字
 「⚪️ 无法判定（上次 6.2 @07-18，滞后 3 周）」（`output-format.md` §「第 0 部分 · 极简速览卡（5 项核心）」），
@@ -149,11 +149,11 @@ payload                  # 逐项定义，见 §6
 
 本技能同时在用三个哨兵，会计规则各不相同：
 
-| 哨兵 | 用在哪 | 会计规则 |
-|------|--------|----------|
-| `⚪️` | 信号档位、7 项硬阈值那一格 | **既不进分子也不进分母**（N = 7 − M），但必须在完整版列出、必须带滞后周数 |
-| `N/A` | 一行里**某个子字段**缺（如 CNN F&G 的四个对照读数之一）：该读数印 `N/A`、变动栏印「N/A（缺对照读数，不计算变动）」 | 该行**仍是 ok**，只是变动栏不计算；**不补 0、不估算** |
-| `null` | `--json` 机读面的三态 | `null` = ⚪️（分子分母都不进）；`false` = ❌（进分母不进分子）。**把 `null` 读成 `false` 就是把「不知道」记成「查过了没事」** |
+| 哨兵   | 用在哪                                                                                                             | 会计规则                                                                                                                     |
+|--------|--------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| `⚪️`   | 信号档位、7 项硬阈值那一格                                                                                         | **既不进分子也不进分母**（N = 7 − M），但必须在完整版列出、必须带滞后周数                                                    |
+| `N/A`  | 一行里**某个子字段**缺（如 CNN F&G 的四个对照读数之一）：该读数印 `N/A`、变动栏印「N/A（缺对照读数，不计算变动）」 | 该行**仍是 ok**，只是变动栏不计算；**不补 0、不估算**                                                                        |
+| `null` | `--json` 机读面的三态                                                                                              | `null` = ⚪️（分子分母都不进）；`false` = ❌（进分母不进分子）。**把 `null` 读成 `false` 就是把「不知道」记成「查过了没事」** |
 
 依据：`decision-framework.md` §「🚨 数据暂缺的计数规则（不可省略）」、`SKILL.md`「`null` 是 ⚪️，`false` 是 ❌」、`scripts/cnn_fng.sh`「一律记 N/A，不估算也不补 0」。
 
@@ -191,15 +191,15 @@ payload                  # 逐项定义，见 §6
 
 统一标量元组装不下其中一半。族由派发时指定，取数方不得自行降级成标量。
 
-| 族 | 项 | 形状 |
-|----|----|------|
-| **标量** | 7 NAAIM、10 Put/Call、25 LEI、29 AAII 配置、30 Margin Debt/GDP、31 Forward P/E、27 Buffett（对照） | `{value, unit}` |
-| **多值** | 11 Margin Debt | `{abs, yoy_pct, mom_direction, three_month_streak[]}` |
-| **多值** | 8 AAII 多空差 | `{bull, bear, spread, weeks_above_30}` |
-| **背离裁决** | 6 A/D Line、2 200DMA 比例 | `{current, prior_peak, peak_date}` + 「SPX 是否创新高」布尔——**已由脚本产出**：`market.py --json` 的 `meta.spx_new_high.at_new_high`（口径见同栏 `caliber`：252 交易日**收盘**新高，非盘中高点）。检索侧只取 A/D 线／比例本身，**不要自己去搜 SPX 有没有创新高** |
-| **记录表** | 13 IPO | `readings[]`（件数腿、金额腿各一）+ 集中度 + 剔除最大单后的重算 |
-| **同源对** | 4 VIX 期限结构 | `{near, far, shared_source, shared_date}` |
-| **纯方向** | 3 BofA、12 内部人 | `{direction_text}` 且 `status = missing` |
+| 族           | 项                                                                                                 | 形状                                                                                                                                                                                                                                                             |
+|--------------|----------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **标量**     | 7 NAAIM、10 Put/Call、25 LEI、29 AAII 配置、30 Margin Debt/GDP、31 Forward P/E、27 Buffett（对照） | `{value, unit}`                                                                                                                                                                                                                                                  |
+| **多值**     | 11 Margin Debt                                                                                     | `{abs, yoy_pct, mom_direction, three_month_streak[]}`                                                                                                                                                                                                            |
+| **多值**     | 8 AAII 多空差                                                                                      | `{bull, bear, spread, weeks_above_30}`                                                                                                                                                                                                                           |
+| **背离裁决** | 6 A/D Line、2 200DMA 比例                                                                          | `{current, prior_peak, peak_date}` + 「SPX 是否创新高」布尔——**已由脚本产出**：`market.py --json` 的 `meta.spx_new_high.at_new_high`（口径见同栏 `caliber`：252 交易日**收盘**新高，非盘中高点）。检索侧只取 A/D 线／比例本身，**不要自己去搜 SPX 有没有创新高** |
+| **记录表**   | 13 IPO                                                                                             | `readings[]`（件数腿、金额腿各一）+ 集中度 + 剔除最大单后的重算                                                                                                                                                                                                  |
+| **同源对**   | 4 VIX 期限结构                                                                                     | `{near, far, shared_source, shared_date}`                                                                                                                                                                                                                        |
+| **纯方向**   | 3 BofA、12 内部人                                                                                  | `{direction_text}` 且 `status = missing`                                                                                                                                                                                                                         |
 
 逐族的理由：
 
@@ -275,26 +275,26 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
 
 ### 7.2 派发清单
 
-| item_id | 信号 | 组 | payload 族 | 硬阈值 | 派发说明 |
-|---------|------|----|------------|--------|----------|
-| `drm-sig2-pct-above-200dma` | 2 200DMA 比例 | A | 背离裁决 | — | 需父级供 SPX 新高布尔 |
-| `drm-sig3-bofa-bull-bear` | 3 BofA 牛熊 | A | 纯方向 / 标量 | **第 6 项** | 搜索顺序最多 2 轮 |
-| `drm-sig4-vixcentral-backup` | 4 VIX 期限结构 | A | 同源对 | 第 1 项（VIX 绝对值） | **仅当 FRED 取不到才派发**；回退必在 warnings 明示不同源 |
-| `drm-sig6-nyse-ad-line` | 6 A/D Line | A | 背离裁决 | **第 5 项** | 需父级供 SPX 新高布尔 |
-| `drm-sig7-naaim` | 7 NAAIM | B | 标量 | — | 周三更新 |
-| `drm-sig8-aaii-bull-bear` | 8 AAII 多空差 | B | 多值 | — | 周四更新；三个数缺一不可 |
-| `drm-sig10-cboe-put-call` | 10 Put/Call | B | 标量 | — | 必须 Equity 口径 |
-| `drm-sig11-finra-margin-debt` | 11 Margin Debt | B | 多值 | **第 2 项** | 必须标注数据所属月份 |
-| `drm-sig12-insider-buy-sell` | 12 内部人 | B | 纯方向 / 标量 | **第 7 项** | GuruFocus 403 是已知实测结果 |
-| `drm-sig13-ipo-issuance` | 13 IPO | B | 记录表 | — | 两个口径分别报 |
-| `drm-sig14-funding-websearch-tier3` | 14 资金费率 | C | 标量 | — | **仅第三级兜底**（Binance → Hyperliquid → 本项） |
-| `drm-sig15-liquidations` | 15 24h 清算 | C | 多值 | — | `crypto.py liquidations` **一定 exit 3**，那是正常结局 |
-| `drm-sig16-dominance-antisearch` | 16 BTC Dominance | C | — | — | **不派发。禁止检索，见 §9.C** |
-| `drm-sig25-conference-board-lei` | 25 LEI | E | 标量 | — | 要的是 6 个月年化变化率 |
-| `drm-sig27-buffett-crosscheck` | 27 Buffett | E | 标量 | — | **仅对照**，不得替代 FRED 计算 |
-| `drm-sig29-aaii-allocation` | 29 AAII 家庭配置 | E | 标量 | — | 与信号 8 是不同调查，不可互换 |
-| `drm-sig30-margin-debt-to-gdp` | 30 Margin Debt/GDP | E | 标量 | — | 两条路径必须标明用了哪条 |
-| `drm-sig31-forward-pe-monday` | 31 Forward P/E | F | 标量 | — | **仅周一**；无阈值、无档位，见 §9.F |
+| item_id                             | 信号               | 组 | payload 族    | 硬阈值                | 派发说明                                                 |
+|-------------------------------------|--------------------|----|---------------|-----------------------|----------------------------------------------------------|
+| `drm-sig2-pct-above-200dma`         | 2 200DMA 比例      | A  | 背离裁决      | —                     | 需父级供 SPX 新高布尔                                    |
+| `drm-sig3-bofa-bull-bear`           | 3 BofA 牛熊        | A  | 纯方向 / 标量 | **第 6 项**           | 搜索顺序最多 2 轮                                        |
+| `drm-sig4-vixcentral-backup`        | 4 VIX 期限结构     | A  | 同源对        | 第 1 项（VIX 绝对值） | **仅当 FRED 取不到才派发**；回退必在 warnings 明示不同源 |
+| `drm-sig6-nyse-ad-line`             | 6 A/D Line         | A  | 背离裁决      | **第 5 项**           | 需父级供 SPX 新高布尔                                    |
+| `drm-sig7-naaim`                    | 7 NAAIM            | B  | 标量          | —                     | 周三更新                                                 |
+| `drm-sig8-aaii-bull-bear`           | 8 AAII 多空差      | B  | 多值          | —                     | 周四更新；三个数缺一不可                                 |
+| `drm-sig10-cboe-put-call`           | 10 Put/Call        | B  | 标量          | —                     | 必须 Equity 口径                                         |
+| `drm-sig11-finra-margin-debt`       | 11 Margin Debt     | B  | 多值          | **第 2 项**           | 必须标注数据所属月份                                     |
+| `drm-sig12-insider-buy-sell`        | 12 内部人          | B  | 纯方向 / 标量 | **第 7 项**           | GuruFocus 403 是已知实测结果                             |
+| `drm-sig13-ipo-issuance`            | 13 IPO             | B  | 记录表        | —                     | 两个口径分别报                                           |
+| `drm-sig14-funding-websearch-tier3` | 14 资金费率        | C  | 标量          | —                     | **仅第三级兜底**（Binance → Hyperliquid → 本项）         |
+| `drm-sig15-liquidations`            | 15 24h 清算        | C  | 多值          | —                     | `crypto.py liquidations` **一定 exit 3**，那是正常结局   |
+| `drm-sig16-dominance-antisearch`    | 16 BTC Dominance   | C  | —             | —                     | **不派发。禁止检索，见 §9.C**                            |
+| `drm-sig25-conference-board-lei`    | 25 LEI             | E  | 标量          | —                     | 要的是 6 个月年化变化率                                  |
+| `drm-sig27-buffett-crosscheck`      | 27 Buffett         | E  | 标量          | —                     | **仅对照**，不得替代 FRED 计算                           |
+| `drm-sig29-aaii-allocation`         | 29 AAII 家庭配置   | E  | 标量          | —                     | 与信号 8 是不同调查，不可互换                            |
+| `drm-sig30-margin-debt-to-gdp`      | 30 Margin Debt/GDP | E  | 标量          | —                     | 两条路径必须标明用了哪条                                 |
+| `drm-sig31-forward-pe-monday`       | 31 Forward P/E     | F  | 标量          | —                     | **仅周一**；无阈值、无档位，见 §9.F                      |
 
 「派发说明」里的**角色**（备援腿 / 第三级兜底 / 仅对照 / 不派发 / 无档位）
 不是信封里的字段——它是**派发时的属性**，写在这张表里。
@@ -321,12 +321,12 @@ wrote 6 items to /tmp/drm-search-b.json, 4 ok / 2 missing
 
 18 项里有**四项同时是 7 项硬阈值那张表上的行**：
 
-| 硬阈值 # | 信号 | 阈值 |
-|----------|------|------|
-| 第 2 项 | 11 Margin Debt | 连续 3 个月月减 |
-| 第 5 项 | 6 A/D Line | SPX 新高但 A/D 未创新高 |
-| 第 6 项 | 3 BofA Bull & Bear | >8.0 |
-| 第 7 项 | 12 Insider Buy/Sell | <0.17 |
+| 硬阈值 # | 信号                | 阈值                    |
+|----------|---------------------|-------------------------|
+| 第 2 项  | 11 Margin Debt      | 连续 3 个月月减         |
+| 第 5 项  | 6 A/D Line          | SPX 新高但 A/D 未创新高 |
+| 第 6 项  | 3 BofA Bull & Bear  | >8.0                    |
+| 第 7 项  | 12 Insider Buy/Sell | <0.17                   |
 
 （另外信号 4 的 VIX 绝对值是第 1 项，但那一项正常走 FRED，只有备援腿会进本契约。）
 
