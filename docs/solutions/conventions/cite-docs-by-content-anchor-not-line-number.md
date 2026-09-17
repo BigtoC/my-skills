@@ -47,11 +47,11 @@ Most were already wrong before the session that fixed them. The trigger that exp
 
 The same audit found the same rot in three other places:
 
-| File | Rot found |
-|---|---|
+| File                                                                        | Rot found                                                                                                          |
+|-----------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
 | `docs/superpowers/specs/2026-09-05-skill-handoff-and-concurrency-design.md` | **9 of 26** line citations rotted — 3 point at files deleted in 2026-09-07, 1 at a blank line, 5 at unrelated code |
-| `CLAUDE.md` (the FRED/Yahoo/CNN evidence table) | `market.py:303` → really `:343-346`; `stock_perp.py:29` → really `:34` |
-| `known-traps.md` | cites 「`CLAUDE.md` 记的 `scrub()` 十处、`rel_display()` 五处」; CLAUDE.md now says **fourteen and six** |
+| `CLAUDE.md` (the FRED/Yahoo/CNN evidence table)                             | `market.py:303` → really `:343-346`; `stock_perp.py:29` → really `:34`                                             |
+| `known-traps.md`                                                            | cites 「`CLAUDE.md` 记的 `scrub()` 十处、`rel_display()` 五处」; CLAUDE.md now says **fourteen and six**           |
 
 Both CLAUDE.md citations were re-verified by hand against the current files. The file that now mandates anchors still carries two stale line numbers in an earlier section — which is the most honest possible demonstration that good intentions do not stop this failure mode.
 
@@ -75,11 +75,11 @@ Four rules make this work:
 
 **A rotted line number looks exactly like a correct one.** That is the whole reason this failure mode is expensive.
 
-| | Broken URL / missing file | Rotted `file:line` |
-|---|---|---|
-| Signal on follow | 404 — announces itself | Renders perfectly; you land *somewhere* |
-| Reader's conclusion | "The document is wrong" | "**I** must have looked in the wrong place" |
-| Gets reported | Usually | Almost never |
+|                     | Broken URL / missing file | Rotted `file:line`                          |
+|---------------------|---------------------------|---------------------------------------------|
+| Signal on follow    | 404 — announces itself    | Renders perfectly; you land *somewhere*     |
+| Reader's conclusion | "The document is wrong"   | "**I** must have looked in the wrong place" |
+| Gets reported       | Usually                   | Almost never                                |
 
 The reader jumps, finds unrelated text, assumes they misread the pointer, and moves on. The document is never corrected, so the rot accumulates silently and compounds: every subsequent reformat of any referenced file breaks a few more, and nobody is counting.
 
@@ -97,35 +97,50 @@ The second-order reason: this repo deliberately keeps two copies of the retrieva
 
 ## Examples
 
-**Before — three citations, all silently wrong:**
+**Before — three citations, all genuinely rotted** (non-contiguous lines, shown together; `…` marks truncation):
 
 ```markdown
-而 `known-traps.md:20` 要求**触发状态严格按阈值判断**；
 `SKILL.md:148` 要求**每项附来源**。
-| `attempted[].http` | … | `known-traps.md:57-70`、`output-format.md:103` |
+| `attempted[].http` | …父级要能在第 8 部分列出来 | `known-traps.md:57-70`、… |
+| `last_known` | …说明「无历史基准，本项完全不可判定」 | `signals-a-macro.md:40-41` |
 ```
+
+Each was wrong in a different way, which is why all three are shown: `SKILL.md:148`
+pointed at an unrelated blockquote (real text `:211`); `known-traps.md:57-70` pointed
+into the measured-baseline table, while 「已知失效 / 陷阱清单」 actually starts at `:75`;
+`signals-a-macro.md:40-41` pointed at the HY/IG/BBB caliber-trap heading (real text `:109`).
 
 **After — every pointer greppable:**
 
 ```markdown
-而 `known-traps.md` §「行为准则」 要求**触发状态严格按阈值判断**；
 `SKILL.md` §「1.2 检索分组（与 1.1 同时派发，不等脚本）」 要求**每项附来源**。
-| `attempted[].http` | … | `known-traps.md` §「已知失效 / 陷阱清单」、`output-format.md` §「第 8 部分 · 数据品质附注」 |
+| `attempted[].http` | … | `known-traps.md` §「已知失效 / 陷阱清单」、… |
+| `last_known` | … | `signals-a-macro.md` §「3. 美银牛熊指标（BofA Bull & Bear Indicator）」 |
 ```
 
 **The whole-file check the convention buys** — every anchor resolves or the file is broken:
 
 ```python
-ANCH = re.compile(r'`([\w./-]+\.(?:md|sh|py|json))`((?:\s*(?:§)?「[^」]*」)*)')
+# `contract` is the citing file's text; `resolve()` maps a bare cited filename
+# (`known-traps.md`, `crypto.py`) to its path — they live in several directories.
+# The trailing `+` matters: with `*` this also matches every backticked filename
+# that carries NO anchor, and the first bare mention blows up in resolve().
+ANCH = re.compile(r'`([\w./-]+\.(?:md|sh|py|json))`((?:\s*(?:§)?「[^」]*」)+)')
 H    = re.compile(r'§「([^」]+)」')
 
+broken = []
 for m in ANCH.finditer(contract):
     body = open(resolve(m.group(1))).read()
     for h in H.findall(m.group(2)):                                # heading anchors
-        assert re.search(r'^(?:>\s*)*#{1,6}\s+.*' + re.escape(h), body, re.M)
+        if not re.search(r'^(?:>\s*)*#{1,6}\s+.*' + re.escape(h), body, re.M):
+            broken.append((m.group(1), h))
     for q in re.findall(r'「([^」]+)」', H.sub('', m.group(2))):     # phrase anchors
-        assert q in body
+        if q not in body:
+            broken.append((m.group(1), q))
 ```
+
+Collect rather than `assert`: the point is a whole-file report, and an assert stops
+at the first failure — which is how the blockquote bug below would have been missed.
 
 Two details in that check earned their place:
 
@@ -137,9 +152,19 @@ Two details in that check earned their place:
 The edits were applied by one script and checked by a **second, independently written** one — deliberately, so a bug in the applier could not certify its own output. The independent pass confirmed:
 
 - **0** `file:line` citations remain anywhere in the file.
-- **60 anchors all resolve.** They decompose into 67 components — 31 heading components (each confirmed to be a real markdown heading line, including blockquoted ones) and 36 phrase components (each an exact substring). Some anchors carry both a heading and a phrase, which is why components exceed anchors.
-- **Line count unchanged**, and **per-row markdown table pipe counts unchanged** — citations live in table cells, where one stray `|` silently wrecks the table.
+- **60 anchors all resolve** — the 59 rewritten citations plus one that already used a
+  bare `` `SKILL.md` `` anchor with no line number and needed no change. They decompose into 67 components — 31 heading components (each confirmed to be a real markdown heading line, including blockquoted ones) and 36 phrase components (each an exact substring). Some anchors carry both a heading and a phrase, which is why components exceed anchors.
+- **Line count unchanged by the rewrite step**, and **per-row markdown table pipe counts unchanged** — citations live in table cells, where one stray `|` silently wrecks the table.
 - **0 self-duplicating anchors.**
+
+(The commit itself is +8 lines, not zero: the editor's note described above was added
+in the same commit. The zero-delta check applies to the citation rewrite alone.)
+
+The convention was then validated by accident, within the hour. An unrelated
+commit (`3d1ac79`, "align table formatting and spacing") reflowed **49 lines** of
+this same file — the tables where most citations live. Re-running the checker
+afterwards: **60 anchors, 0 broken.** Every `file:line` token in those tables
+would have shifted. That is the whole argument in one commit.
 
 One self-referential trap worth remembering: the editor note added to warn against line numbers originally cited `SKILL.md:140` as a *negative example*, and the checker correctly flagged the file's own warning. It had to be reworded to describe the rot without writing a token that greps as a citation — **a rule stated in a file must not violate itself**, or the mechanical check becomes unrunnable.
 
