@@ -33,7 +33,7 @@ tags:
 
 ## Context
 
-`skills/daily-risk-monitor/SKILL.md` step 1.1 used to hand the agent a ~20-line shell block to type verbatim: a `bg()` function definition, `mkdir -p` plus a glob `rm -f "$RUN"/*.json`, and ten `( … ) &` background subshells fetching ten independent sources concurrently.
+`skills/daily-risk-monitor/SKILL.md` step 1.1 used to hand the agent a 45-line shell block to type verbatim (16 executable lines, the rest comments): a `bg()` function definition, `mkdir -p` plus a glob `rm -f "$RUN"/*.json`, and ten `( … ) &` background subshells fetching ten independent sources concurrently.
 
 The backgrounding is load-bearing by design. Launch and join are deliberately **two separate tool calls** with search dispatch in between, so the jobs must outlive the call that started them and report exit codes through `<unit>.rc` files rather than `wait`.
 
@@ -43,7 +43,8 @@ Every run produced a permission dialog showing that whole block, offering only *
 
 - **Add `permissions.allow` rules.** Cannot work. The breaker fires *after* rule matching has already returned `allow`, so no rule of any shape reaches it.
 - **A `PreToolUse` hook returning an allow decision.** Viable in principle and touches only the non-shipping `.claude/` layer, but it approves by matching command *shape*. The identity gate proposed would have accepted any absolute path matching `/…/skills/<name>/scripts/` — which is exactly what the repo's own documented install path produces (`npx skills add`, `cp -r skills/<name> ~/.claude/skills/`). That is blanket approval for running scripts out of any third-party skill.
-- **Decompose the block into smaller, individually allow-listable commands.** Every one of the twenty resulting subcommands would still sit inside a `( … ) &` subshell, so the breaker fires anyway. It splits one dialog into four rather than removing any.
+- **Decompose the block into smaller, individually allow-listable commands.** Every resulting subcommand would still sit inside a `( … ) &` subshell, so the breaker
+fires on each block just the same. It splits one dialog into several rather than removing any.
 - **Assume the persisted rule would be a `:*` prefix.** Measured false — see *Why This Matters*.
 
 ## Guidance
@@ -81,11 +82,13 @@ Because the ten argv lines now live only in `fetch_all.sh`, SKILL.md must not re
 
 ## Why This Matters
 
-Read directly from the shipped binary (`~/.local/share/claude/versions/2.1.274`), the permission layer holds a circuit-breaker registry:
+Read directly from the shipped binary (`~/.local/share/claude/versions/2.1.274`), the
+permission layer holds a circuit-breaker registry. De-minified, and **two further fields
+per entry elided** (`hostPersonOnly`, `localProjectionOnly`):
 
 ```js
-{ dangerousRemoval:   { bypassImmune: true,  classifierRouted: true },
-  backgroundOperator: { bypassImmune: false, classifierRouted: true }, … }
+{ dangerousRemoval:   { bypassImmune: true,  classifierRouted: true, … },
+  backgroundOperator: { bypassImmune: false, classifierRouted: true, … }, … }
 ```
 
 and this decision path. **The snippet below is a readable reconstruction, not
@@ -105,13 +108,23 @@ return { behavior: "ask",
                            classifierApprovable: false }, … };
 ```
 
-`hasRealBackgroundOperator` walks the AST and returns true on any `&` node whose parent is **not** a `binary_expression` — so `&&` and `2>&1` are correctly excluded, and a genuine trailing `&` is not.
+`hasRealBackgroundOperator` walks the AST and returns true on any `&` node whose parent is
+**not** a `binary_expression` — so `&&` and `2>&1` are correctly excluded, and a genuine
+trailing `&` is not. It **also returns true on any `ERROR` node**, which is why "simplify
+the command until it passes" is not a workaround: anything the parser cannot read is
+treated as if it backgrounded. The reconstruction above likewise collapses a parse-bailout
+sentinel in the real guard — the clause that decides the fate of an unparseable command.
 
 Three consequences explain every observed symptom:
 
 - The check runs **after** rule matching already returned `allow`, so **no allowlist entry can ever prevent it**.
 - `classifierApprovable: false` plus `suppressAlwaysAllowRule` is why the dialog drops the "don't ask again" row — the host knows no rule it could write would help.
-- `bypassImmune: false` means bypass-permissions mode *does* skip it. That is why the problem is invisible on a local machine running with bypass and fires on every run in the scheduled cloud container. Its sibling `dangerousRemoval`, tripped by glob or variable `rm` targets, is `bypassImmune: true` — that one asks even under bypass.
+- `bypassImmune: false` means bypass-permissions mode *does* skip it. That is why the problem is invisible on a local machine running with bypass and fires on every run in the scheduled cloud container. Its sibling `dangerousRemoval` is `bypassImmune: true` — that one asks even under bypass.
+Note it is **not** tripped by the mere presence of a glob or variable: the binary resolves
+each removal target against the working directories and asks only when the target is
+genuinely dangerous or statically unresolvable. The old block's
+`rm -f "$RUN"/*.json` never tripped it, which is consistent with local bypass sessions
+never prompting.
 
 The only escape hatch, `sandbox.autoAllowBashIfSandboxed` (default on), is checked *before* the background-operator rule but requires a sandboxable command. These units need broad network egress to FRED, CNN, Binance, Hyperliquid, CoinGecko and multpl, so they do not qualify.
 
@@ -119,11 +132,11 @@ The only escape hatch, `sandbox.autoAllowBashIfSandboxed` (default on), is check
 
 The cross-skill evidence matches the mechanism exactly:
 
-| Skill | Bash blocks with a real background operator | Prompts? |
-|---|---|---|
-| `ai-industry-weekly` | none | never — genuinely unaffected |
-| `ai-pullback-daily` | one (step 1.1 join block) | yes, once per run — **still unfixed** |
-| `daily-risk-monitor` | was one large block | was every run — **now none** |
+| Skill                | Bash blocks with a real background operator | Prompts?                              |
+|----------------------|---------------------------------------------|---------------------------------------|
+| `ai-industry-weekly` | none                                        | never — genuinely unaffected          |
+| `ai-pullback-daily`  | one (step 1.1 **launch** block)             | yes, once per run — **still unfixed** |
+| `daily-risk-monitor` | was one large block                         | was every run — **now none**          |
 
 ## When to Apply
 
@@ -162,5 +175,5 @@ Adding the launcher required **no README change**, which is positive evidence th
 - `docs/solutions/conventions/cite-docs-by-content-anchor-not-line-number.md` — companion learning from the same session; this doc's SKILL.md rewrite is what exposed it
 - Commit `4860376` on branch `fix/drm-fetch-launcher-and-citation-anchors`
 - **Supersedes** `docs/superpowers/specs/2026-09-05-skill-handoff-and-concurrency-design.md` §5.4 on one point: that spec prescribes 「逐 PID 收退出码（`wait $pid` 每一个）」 and predicts 「零脚本改动」. Both are now false — the launch/join split makes PIDs unrecoverable across calls, so exit codes travel via `<unit>.rc` files, and a 237-line script was added. The spec's other three 守则 survive verbatim. It carries a 2026-09-07 note declaring itself frozen; prefer extending that note over editing §5.4.
-- **Open follow-up:** `skills/ai-pullback-daily/SKILL.md` has the identical defect — a real background operator in its step 1.1 block, plus `for`/`while` loops and `rm -f` in blocks the agent is told to type. The fix is a sibling launcher, not a CLAUDE.md edit.
+- **Open follow-up:** `skills/ai-pullback-daily/SKILL.md` has the identical defect — a real background operator at `:239` in its step 1.1 launch block, plus `for`/`while` loops (`:129`, `:274`) and `rm -f` (`:79`, `:211`) in blocks the agent is told to type. The fix is a sibling launcher, not a CLAUDE.md edit.
 - No GitHub issues to link: the repo has never had an issue opened.
