@@ -2,7 +2,7 @@
   "signals": {
     "1": {
       "state": "🟢",
-      "notes": "HY OAS 2.80% @09-24，4週 +17bp；IG 0.79%/BBB 0.97% 觀察腿，分化 none"
+      "notes": "HY OAS 2.80% @09-24，4週 +17bp；IG 0.79%(+0bp)/BBB 0.97%(−1bp) 觀察腿，分化 none"
     },
     "2": {
       "state": "🟢",
@@ -26,7 +26,7 @@
     },
     "7": {
       "state": "⚪️",
-      "notes": "NAAIM 暫缺：官網訂閱制、ycharts 無當期；上次 79.7 @2026-07-29，滯後 8 週"
+      "notes": "NAAIM 暫缺：官網訂閱制、ycharts 無當期、macromicro 403；上次 79.7 @2026-07-29，滯後 8.7 週"
     },
     "8": {
       "state": "🟢",
@@ -34,11 +34,11 @@
     },
     "9": {
       "state": "🟢",
-      "notes": "CNN F&G 37 fear @09-25，未達 >75 亦未跌破 <25"
+      "notes": "CNN F&G 37 fear @09-28，30日峰值 59.6"
     },
     "10": {
       "state": "⚪️",
-      "notes": "Cboe Equity P/C 頁面無交易日期，不引用；上次 0.53 @2026-09-22，滯後 0.4 週"
+      "notes": "Cboe Equity P/C 頁面無交易日期，不引用；上次 0.53 @2026-09-22，滯後 0.9 週"
     },
     "11": {
       "state": "🟡",
@@ -46,7 +46,7 @@
     },
     "12": {
       "state": "⚪️",
-      "notes": "內部人暫缺：GuruFocus 403、openinsider 503×2；上次 0.23 @2026-07，滯後約 8 週"
+      "notes": "內部人暫缺：GuruFocus 403、openinsider 503；上次 0.23 @2026-07，滯後約 8 週"
     },
     "13": {
       "state": "🔴",
@@ -54,27 +54,27 @@
     },
     "14": {
       "state": "🟢",
-      "notes": "資金費率 BTC 0.0053%/ETH 0.0100%/SOL 0.0100% 每8h（Hyperliquid，Binance 451）"
+      "notes": "資金費率 BTC 0.0054%/ETH 0.0100%/SOL 0.0100% 每8h（Hyperliquid，Binance 451）"
     },
     "15": {
-      "state": "🟢",
-      "notes": "24h 清算約 $300M（空 $180M > 多 $121M）@09-25 21:30，ChainCatcher 轉載 CoinGlass；PANews 轉載 $285M"
+      "state": "⚪️",
+      "notes": "清算暫缺：Coinglass v4 需 key、網頁未渲染、無可歸屬當日轉載；上次約 $300M（空>多）@2026-09-25，滯後 0.3 週"
     },
     "16": {
       "state": "🟢",
-      "notes": "Dominance 58.30% @09-26，24h +2.19%(上升)、7d −0.11%(基準 09-19 同源)，皆未觸發"
+      "notes": "Dominance 58.75% @09-28，24h +2.79%(上升)、7d −0.07%(基準 09-22 同源)，皆未觸發"
     },
     "17": {
       "state": "🟢",
-      "notes": "穩定幣 $259.26B @09-26，7d +$1.46B、14d +$1.32B、1d −$0.93B"
+      "notes": "穩定幣 $259.04B @09-28，7d +$1.24B、14d +$1.28B、1d −$0.18B"
     },
     "18": {
       "state": "🟢",
-      "notes": "SP500 perp 隱含跳空 −0.19% / XYZ100 −0.10%（對 09-25 收盤，滯後1個交易日）"
+      "notes": "SP500 perp 隱含跳空 −0.45% / XYZ100 −0.90%（對 09-25 收盤，滯後1個交易日）"
     },
     "19": {
       "state": "🟢",
-      "notes": "SPX +0.51% = 0.75σ @09-25；BTC +0.01% = 0.00σ @09-26"
+      "notes": "SPX +0.51% = 0.75σ @09-25；BTC −1.77% = 0.75σ @09-28"
     },
     "20": {
       "state": "🟢",
@@ -118,7 +118,7 @@
     },
     "30": {
       "state": "🔴",
-      "notes": "Margin Debt/GDP 4.48% @2026-08/Q2 > 3.0%（路徑② 自算；GuruFocus 403，與昨日路徑①口徑不同）"
+      "notes": "Margin Debt/GDP 4.48% @2026-08/Q2 > 3.0%（路徑② 自算；路徑① GuruFocus 403，搜索標題 4.36% @2026-07 僅對照）"
     }
   },
   "hard_thresholds": {
@@ -138,7 +138,7 @@
       "name": "HY Spread 扩张（>4.5%）"
     },
     "4": {
-      "notes": "F&G 37 @09-25；30日峰值 64.31 未曾 >75，腳本回 false",
+      "notes": "F&G 37 @09-28；30日峰值 59.6 未曾 >75，腳本回 false",
       "symbol": "❌",
       "name": "Fear & Greed 从高位回落（>75 跌回 <50）"
     },
@@ -168,8 +168,8 @@
       "dma200_slope_positive": true
     }
   },
-  "date": "2026-09-26",
-  "updated_at": "2026-09-26 08:18:37+0000",
+  "date": "2026-09-28",
+  "updated_at": "2026-09-28 08:16:03+0000",
   "written_by": "snapshot.py",
   "history": [
     {
@@ -238,6 +238,14 @@
     },
     {
       "date": "2026-09-26",
+      "trigger_count": 1,
+      "unknown_count": 1,
+      "strategic_baseline_pct": 100,
+      "tactical_state": "🟢",
+      "above_200dma": true
+    },
+    {
+      "date": "2026-09-28",
       "trigger_count": 1,
       "unknown_count": 1,
       "strategic_baseline_pct": 100,
