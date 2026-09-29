@@ -24,9 +24,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 85.37,
-        "as_of": "2026-09-25",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAE0, 9.625%, maturity 2032-07-15, outstanding 1.27B USD, page YTW 12.87%. The page has no quote-date field; as_of is the observation date (2026-09-25, US post-close ET). The page has no clean/dirty label; treated as clean under the percent-of-par listing convention. Different bond from XS333313928 (8.5% Jul-32 EUR) on the same page. Differs from the previous asset value (85.2 @ 2026-09-24).",
+        "price": 85.44,
+        "as_of": "2026-09-29",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAE0, 9.625%, maturity 2032-07-15, outstanding 1.27B USD, page YTW 12.99%. No quote-date field; as_of is the observation date (2026-09-29, US post-close ET). No clean/dirty label; treated as clean under percent-of-par listing convention. Previous asset value 85.37 @ 2026-09-25.",
         "quote_kind": "close_clean"
       }
     },
@@ -45,9 +45,9 @@
       "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
       "is_l1_benchmark": true,
       "quote": {
-        "price": 86.72,
-        "as_of": "2026-09-25",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAC4, 9.75%, page maturity 2031-10-01, outstanding 2.75B USD, page YTW 13.04%. The page has no quote-date field; as_of is the observation date (2026-09-25, US post-close ET). The page has no clean/dirty label; treated as clean under the percent-of-par listing convention. Differs from the previous asset value (86.15 @ 2026-09-24), so the page has updated.",
+        "price": 86.17,
+        "as_of": "2026-09-29",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAC4, 9.750%, page maturity 2031-10-01, outstanding 2.75B USD, page YTW 13.11%. No quote-date field; as_of is the observation date (2026-09-29, US post-close ET). No clean/dirty label; treated as clean under percent-of-par listing convention. Previous asset value 86.72 @ 2026-09-25.",
         "quote_kind": "close_clean"
       }
     },
@@ -65,9 +65,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 87.21,
-        "as_of": "2026-09-25",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAB6, 9.0%, page maturity 2031-02-01, outstanding 1.77B USD, page YTW 12.38%. The page has no quote-date field; as_of is the observation date (2026-09-25, US post-close ET). The page has no clean/dirty label; treated as clean under the percent-of-par listing convention. Differs from the previous asset value (87.26 @ 2026-09-24). Note: 87.21 equals the 2026-09-23 value recorded for CRWV-9.75-2031, not for this bond (this bond was 88.06 @ 2026-09-23).",
+        "price": 87.29,
+        "as_of": "2026-09-29",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAB6, 9.000%, page maturity 2031-02-01, outstanding 1.77B USD, page YTW 12.38%. No quote-date field; as_of is the observation date (2026-09-29, US post-close ET). No clean/dirty label; treated as clean under percent-of-par listing convention. Previous asset value 87.21 @ 2026-09-25.",
         "quote_kind": "close_clean"
       }
     },
@@ -86,9 +86,9 @@
       "rating_cohort": "single_b",
       "note": "欧元计价，不与美债曲线比；只对 EUR HY 指数(BAMLHE00EHYIOAS)做相对比较",
       "quote": {
-        "price": 84.66,
-        "as_of": "2026-09-25",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN XS333313928, 8.500%, maturity 2032-07-15, EUR, outstanding 2B EUR, page YTW 11.97%. The page has no quote-date field; as_of is the observation date 2026-09-25. The page has no clean/dirty label; treated as clean under the percent-of-par listing convention. EUR-denominated: absolute spread N/A, relative comparison vs EUR HY only, reference only. Differs from the previous asset value (86.13 @ 2026-09-24).",
+        "price": 84.59,
+        "as_of": "2026-09-29",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN XS333313928, 8.500%, maturity 2032-07-15, EUR, outstanding 2B EUR, page YTW 12.07%. No quote-date field; as_of is the observation date 2026-09-29. No clean/dirty label; treated as clean under percent-of-par listing convention. Previous asset value 84.66 @ 2026-09-25.",
         "quote_kind": "close_clean"
       }
     },
@@ -109,7 +109,7 @@
       "quote": {
         "price": 99.34,
         "as_of": "2026-09-21",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CIFR/bonds/ ; entry BLPG6304798 Black Pearl Compute LLC 6.125% 15-FEB-2031, outstanding 1.93B USD, Moody's Ba2, YTW column blank. The page has no quote-date field; observed again 2026-09-25 (US post-close ET). IDENTICAL to the previous asset value (99.34 @ 2026-09-24, also identical on 2026-09-23 and 2026-09-21): the page cannot show whether the listing has updated, and the real quote date may be earlier than as_of. No second source was tried this run. The page has no clean/dirty label; treated as clean under the percent-of-par listing convention. as_of set to 2026-09-21 (earliest recorded observation of this exact 99.34 print) rather than today's observation date, because four identical prints (09-21/23/24/25) mean the page's true quote date cannot be shown to be later; this keeps the 5-day staleness gate honest.",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CIFR/bonds/ ; entry BLPG6304798 Black Pearl Compute LLC 6.125% 15-FEB-2031 (ISIN US09216NAA81), outstanding 1.93B USD, Moody's Ba2, YTW blank. No quote-date field; observed again 2026-09-29 US post-close ET, IDENTICAL to 09-21/23/24/25. TradingView symbol page BLPG6304798 shows 'No trades'. Second sources tried 2026-09-29: Cbonds 403, Deutsche Boerse 404, Business Insider unreachable, FINRA TRACE page no data, justETF no price. as_of kept at 2026-09-21 (earliest observation of this exact print); true quote date cannot be shown to be later. No clean/dirty label; treated as clean. Asset value unchanged (99.34 @ 2026-09-21).",
         "quote_kind": "close_clean"
       }
     },
@@ -127,9 +127,9 @@
       "rating_cohort": null,
       "note": "转债：利差被期权价值污染，不可直读为纯信用利差 → 仅参考，不参与任何判定",
       "quote": {
-        "price": 81.18,
-        "as_of": "2026-09-25",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAL3, 1.000%, page maturity 2033-12-01, outstanding 3B USD, YTW blank. No quote-date field; as_of is the observation date (2026-09-25, US post-close ET). No clean/dirty label; treated as clean under percent-of-par convention. Convertible: reference only. Previous asset value 70.1 @ 2026-07-30 came from a different source (ICE/FactSet).",
+        "price": 75.91,
+        "as_of": "2026-09-29",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAL3, 1.000%, page maturity 2033-12-01, outstanding 3B USD, YTW blank. No quote-date field; as_of is the observation date (2026-09-29, US post-close ET). No clean/dirty label; treated as clean. Convertible: reference only. Previous asset value 81.18 @ 2026-09-25.",
         "quote_kind": "close_clean"
       }
     },
@@ -147,9 +147,9 @@
       "rating_cohort": null,
       "note": "零息转债，同上仅参考",
       "quote": {
-        "price": 79.48,
-        "as_of": "2026-09-25",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAE9, 0.000%, page maturity 2031-07-01, outstanding 1B USD, YTW blank. No quote-date field; as_of is the observation date (2026-09-25, US post-close ET). Zero coupon so clean = full. Convertible: reference only. Previous asset value 73.25 @ 2026-07-30 came from a different source (ICE/FactSet).",
+        "price": 76.06,
+        "as_of": "2026-09-29",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAE9, 0.000%, page maturity 2031-07-01, outstanding 1B USD, YTW blank. No quote-date field; as_of is the observation date (2026-09-29, US post-close ET). Zero coupon so clean = full. Convertible: reference only. Previous asset value 79.48 @ 2026-09-25.",
         "quote_kind": "close_clean"
       }
     }
