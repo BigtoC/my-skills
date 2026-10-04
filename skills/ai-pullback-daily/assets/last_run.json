@@ -1,6 +1,83 @@
 {
   "runs": [
     {
+      "date": "2026-10-04",
+      "mode": "postclose",
+      "generated_at": "2026-10-04T14:14:45+00:00",
+      "tripwires": {
+        "1": {
+          "value": "🟢",
+          "last_evidence_date": "2026-10-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "2": {
+          "value": "🟢",
+          "last_evidence_date": "2026-10-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "3": {
+          "value": "🟢",
+          "last_evidence_date": "2026-10-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "4": {
+          "value": "🟡",
+          "last_evidence_date": "2026-10-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "5": {
+          "value": "🟢",
+          "last_evidence_date": "2026-10-04",
+          "carried_forward": false,
+          "not_supplied": false
+        }
+      },
+      "credit": {
+        "L1": {
+          "value": "🔴",
+          "last_evidence_date": "2026-10-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L2": {
+          "value": "🟢",
+          "last_evidence_date": "2026-10-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L3": {
+          "value": "🟡",
+          "last_evidence_date": "2026-10-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L4": {
+          "value": "🟢",
+          "last_evidence_date": "2026-10-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "T4": {
+          "value": "🟡",
+          "last_evidence_date": "2026-10-04",
+          "carried_forward": false,
+          "not_supplied": false
+        }
+      },
+      "pushed": false,
+      "gate": {
+        "force_full_push": false,
+        "reasons": [],
+        "gate_undetermined": false,
+        "recommended_full_push": false,
+        "baseline_date": "2026-10-03"
+      }
+    },
+    {
       "date": "2026-10-03",
       "mode": "postclose",
       "generated_at": "2026-10-03T14:14:07+00:00",
@@ -312,85 +389,6 @@
         "gate_undetermined": true,
         "recommended_full_push": true,
         "baseline_date": "2026-09-29"
-      }
-    },
-    {
-      "date": "2026-09-29",
-      "mode": "postclose",
-      "generated_at": "2026-09-29T22:16:43+00:00",
-      "tripwires": {
-        "1": {
-          "value": "🟢",
-          "last_evidence_date": "2026-09-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "2": {
-          "value": "🟢",
-          "last_evidence_date": "2026-09-25",
-          "carried_forward": true,
-          "not_supplied": false
-        },
-        "3": {
-          "value": "🟢",
-          "last_evidence_date": "2026-09-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "4": {
-          "value": "🔴",
-          "last_evidence_date": "2026-09-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "5": {
-          "value": "🟢",
-          "last_evidence_date": "2026-09-29",
-          "carried_forward": false,
-          "not_supplied": false
-        }
-      },
-      "credit": {
-        "L1": {
-          "value": "🔴",
-          "last_evidence_date": "2026-09-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L2": {
-          "value": "🟢",
-          "last_evidence_date": "2026-09-25",
-          "carried_forward": true,
-          "not_supplied": false
-        },
-        "L3": {
-          "value": "🟡",
-          "last_evidence_date": "2026-09-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L4": {
-          "value": "🟢",
-          "last_evidence_date": "2026-09-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "T4": {
-          "value": "🔴",
-          "last_evidence_date": "2026-09-29",
-          "carried_forward": false,
-          "not_supplied": false
-        }
-      },
-      "pushed": false,
-      "gate": {
-        "force_full_push": true,
-        "reasons": [
-          "引爆点 🔴：4"
-        ],
-        "gate_undetermined": true,
-        "recommended_full_push": true,
-        "baseline_date": "2026-09-25"
       }
     }
   ],
