@@ -1,20 +1,20 @@
 {
   "signals": {
     "1": {
-      "state": "🟡",
-      "notes": "HY OAS 3.24% @10-01，4周 +59bp（1.28× 自身 p95）利差腿成立；SPX 未创新高→触发未成立；IG 0.86%(+5bp)/BBB 1.06%(+6bp) 观察腿，分化 high_yield_only"
+      "state": "🟢",
+      "notes": "HY OAS 3.10% @10-02，4周 +42bp（0.91× 自身 p95）利差腿未成立；SPX 未创新高；IG 0.85%(+4bp)/BBB 1.04%(+5bp) 观察腿，分化 none"
     },
     "2": {
       "state": "🟢",
-      "notes": "SPX 未创新高(10-02 收 7722.72，距 08-13 高点 −0.98%)→前提不成立；barchart/stockcharts 未取得"
+      "notes": "SPX 未创新高(10-05 收 7773.95，距 08-13 高点 −0.32%)→前提不成立；barchart/stockcharts JS 壳页未取得比例"
     },
     "3": {
-      "state": "⚪️",
-      "notes": "BofA 10-02 期 Flow Show 未取得（3 段检索）；上次 9.3 @2026-09-25，滞后 1.4 周"
+      "state": "🔴",
+      "notes": "BofA Bull & Bear 8.8 @Flow Show 2026-10-02（资金周至 09-30，Newsquawk 转载，前值 9.3）≥8.0"
     },
     "4": {
       "state": "🟢",
-      "notes": "VIX 16.39 vs VIX3M 18.58 @10-01（FRED 同源同日），正价差 +2.19"
+      "notes": "VIX 15.31 vs VIX3M 18.01 @10-02（FRED 同源同日），正价差 +2.70"
     },
     "5": {
       "state": "🟢",
@@ -26,7 +26,7 @@
     },
     "7": {
       "state": "⚪️",
-      "notes": "NAAIM 暂缺：订阅制/公开数据延迟3个月；上次 79.7 @2026-07-29，滞后 9.7 周"
+      "notes": "NAAIM 暂缺：公开数据延迟3个月；上次 79.7 @2026-07-29，滞后 9.9 周"
     },
     "8": {
       "state": "🟢",
@@ -34,11 +34,11 @@
     },
     "9": {
       "state": "🟢",
-      "notes": "CNN F&G 31.2 fear @10-05（=10-02 收盘值），30日峰值 59.6 @08-25"
+      "notes": "CNN F&G 43.1 fear @10-06（前收 43.0），30日峰值 59.6 @08-25"
     },
     "10": {
       "state": "⚪️",
-      "notes": "Cboe Equity P/C 页面无交易日期，不引用；上次 0.53 @2026-09-22，滞后 1.9 周"
+      "notes": "Cboe Equity P/C 页面无交易日期，不引用；上次 0.53 @2026-09-22，滞后 2.0 周"
     },
     "11": {
       "state": "🟡",
@@ -46,7 +46,7 @@
     },
     "12": {
       "state": "⚪️",
-      "notes": "内部人暂缺：GuruFocus 403、openinsider 503；上次 0.23 @2026-07，滞后约 9.4 周"
+      "notes": "内部人暂缺：GuruFocus 403、openinsider 503；上次 0.23 @2026-07，滞后约 9.6 周"
     },
     "13": {
       "state": "🔴",
@@ -58,39 +58,39 @@
     },
     "15": {
       "state": "⚪️",
-      "notes": "清算暂缺：Coinglass v4 需 key、搜寻无 10-04/05 可核实读数；上次约 $300M（空>多）@2026-09-25，滞后 1.4 周"
+      "notes": "清算暂缺：Coinglass v4 需 key、检索无 10-05/06 可核实读数（候选 HTTP 410）；上次约 $300M（空>多）@2026-09-25，滞后 1.6 周"
     },
     "16": {
-      "state": "🟢",
-      "notes": "Dominance 59.24% @10-05；24h +3.00%（上升）；7d +0.84%(基准 09-28 同源 CoinGecko)"
+      "state": "⚪️",
+      "notes": "Dominance 56.42% @10-06 来自 CoinPaprika（CoinGecko 429）；24h 与 7d 腿皆 ⚪️ 来源不同（基准为 CoinGecko），拒绝比较；上次 59.24% @10-05 CoinGecko"
     },
     "17": {
       "state": "🔴",
-      "notes": "稳定币 $258.26B @10-05，7d −$0.78B 净流出已触发；14d +$0.46B；1d −$0.02B"
+      "notes": "稳定币 $258.51B @10-06，7d −$0.20B 净流出已触发；14d −$0.77B 萎缩确认；1d +$0.25B"
     },
     "18": {
       "state": "🟢",
-      "notes": "SP500 perp 隐含跳空 −0.02% / XYZ100 +0.06%（对 10-02 收盘，滞后3天）"
+      "notes": "SP500 perp 隐含跳空 +0.20% / XYZ100 +0.21%（对 10-05 收盘，滞后1个交易日）"
     },
     "19": {
       "state": "🟢",
-      "notes": "SPX +0.73% = 1.13σ @10-02；BTC −0.08% = 0.04σ @10-05"
+      "notes": "SPX +0.66% = 1.00σ @10-05；BTC −0.00% = 0.00σ @10-06"
     },
     "20": {
       "state": "🟢",
-      "notes": "VRP +5.67（VIX 16.39 @10-01 − RV20 10.72 @10-01）"
+      "notes": "VRP +4.96（VIX 15.31 @10-02 − RV20 10.35 @10-02）"
     },
     "21": {
       "state": "🟢",
-      "notes": "SPY +0.74% @10-02，未跌逾 1%，不适用"
+      "notes": "SPY +0.67% @10-05，未跌逾 1%，不适用"
     },
     "22": {
       "state": "🟢",
-      "notes": "RSP−SPY −0.39pt @10-02，广度一致"
+      "notes": "RSP−SPY −0.01pt @10-05，广度一致"
     },
     "23": {
       "state": "🟢",
-      "notes": "T10Y2Y +0.45 / T10Y3M +1.09 @10-02，30日内未倒挂"
+      "notes": "T10Y2Y +0.47 / T10Y3M +1.09 @10-05，30日内未倒挂"
     },
     "24": {
       "state": "🟢",
@@ -98,19 +98,19 @@
     },
     "25": {
       "state": "🟢",
-      "notes": "LEI 99.5 @2026-08，六个月 −0.1%（年化约 −0.2%，换算值）"
+      "notes": "LEI 99.5 @2026-08，六个月 −0.1%（年化约 −0.2%，换算值）；9月未公布"
     },
     "26": {
       "state": "🟢",
-      "notes": "SPX 7722.72 vs 200DMA 7225.82，+6.88%，斜率 +1.25%，连续站稳 124 交易日 @10-02"
+      "notes": "SPX 7773.95 vs 200DMA 7230.69，+7.51%，斜率 +1.25%，连续站稳 125 交易日 @10-05"
     },
     "27": {
       "state": "🔴",
-      "notes": "Buffett 255.05% @2026-Q2（FRED 同季对齐）> 200%；对照源 244%"
+      "notes": "Buffett 255.05% @2026-Q2（FRED 同季对齐）> 200%；对照源 244%（页面 06-30）"
     },
     "28": {
       "state": "🔴",
-      "notes": "Shiller CAPE 41.38 @10-02 > 30"
+      "notes": "Shiller CAPE 41.67 @10-05 > 30"
     },
     "29": {
       "state": "🔴",
@@ -123,7 +123,7 @@
   },
   "hard_thresholds": {
     "1": {
-      "notes": "VIX 16.39 @10-01（FRED），30日最高 17.84",
+      "notes": "VIX 15.31 @10-02（FRED），30日最高 17.84",
       "symbol": "❌",
       "name": "VIX 突破并站稳（>25 且连续 3 个交易日）"
     },
@@ -133,12 +133,12 @@
       "name": "Margin Debt 月减（连续 3 个月）"
     },
     "3": {
-      "notes": "HY OAS 3.24% @10-01 < 4.5%",
+      "notes": "HY OAS 3.10% @10-02 < 4.5%",
       "symbol": "❌",
       "name": "HY Spread 扩张（>4.5%）"
     },
     "4": {
-      "notes": "F&G 31.2 @10-05；30日峰值 59.6 未曾 >75，脚本回 false",
+      "notes": "F&G 43.1 @10-06；30日峰值 59.6 未曾 >75，脚本回 false",
       "symbol": "❌",
       "name": "Fear & Greed 从高位回落（>75 跌回 <50）"
     },
@@ -148,12 +148,12 @@
       "name": "A/D Line 顶背离（SPX 新高但 A/D 未创新高）"
     },
     "6": {
-      "notes": "BofA 10-02 期未取得；上次 9.3 @2026-09-25，滞后 1.4 周",
-      "symbol": "⚪️",
+      "notes": "BofA 8.8 @2026-10-02 期 Flow Show > 8.0",
+      "symbol": "✅",
       "name": "BofA Bull & Bear（>8.0）"
     },
     "7": {
-      "notes": "GuruFocus 403、openinsider 503；上次 0.23 @2026-07，滞后约 9.4 周",
+      "notes": "GuruFocus 403、openinsider 503；上次 0.23 @2026-07，滞后约 9.6 周",
       "symbol": "⚪️",
       "name": "Insider Buy/Sell（<0.17）"
     }
@@ -168,18 +168,10 @@
       "dma200_slope_positive": true
     }
   },
-  "date": "2026-10-05",
-  "updated_at": "2026-10-05 08:19:12+0000",
+  "date": "2026-10-06",
+  "updated_at": "2026-10-06 08:19:10+0000",
   "written_by": "snapshot.py",
   "history": [
-    {
-      "date": "2026-09-19",
-      "trigger_count": 1,
-      "unknown_count": 1,
-      "strategic_baseline_pct": 100,
-      "tactical_state": "🟢",
-      "above_200dma": true
-    },
     {
       "date": "2026-09-22",
       "trigger_count": 0,
@@ -280,6 +272,14 @@
       "date": "2026-10-05",
       "trigger_count": 0,
       "unknown_count": 2,
+      "strategic_baseline_pct": 100,
+      "tactical_state": "🟢",
+      "above_200dma": true
+    },
+    {
+      "date": "2026-10-06",
+      "trigger_count": 1,
+      "unknown_count": 1,
       "strategic_baseline_pct": 100,
       "tactical_state": "🟢",
       "above_200dma": true
