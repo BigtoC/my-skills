@@ -1,6 +1,6 @@
 ---
 name: ai-industry-weekly
-description: AI 算力产业链「产业质量参考表」周更助手。每周用最新基本面按统一规则重算全部标的（当前 46 档）的产业质量表，与滚动基准表逐行对比，输出评级变动摘要 + 完整产业表 + 应用说明，并推送 Slack。当用户提到 产业表周更、AI 算力产业表、产业质量参考表、重算评级、🟢🔵🟡🔴 四档评级、46 标的、CoWoS/HBM/3nm/数据中心电力 四大瓶颈、基准表对比、周更推送到 Slack 频道 时自动使用。
+description: AI 算力产业链「产业质量参考表」周更助手。每周用最新基本面按统一规则重算全部标的（当前 45 档）的产业质量表，与滚动基准表逐行对比，输出评级变动摘要 + 完整产业表 + 应用说明，并推送 Slack。当用户提到 产业表周更、AI 算力产业表、产业质量参考表、重算评级、🟢🔵🟡🔴 四档评级、45 标的、CoWoS/HBM/3nm/数据中心电力 四大瓶颈、基准表对比、周更推送到 Slack 频道 时自动使用。
 license: MIT
 compatibility: Portable Agent Skills format for agents that support SKILL.md. Scripts need python3, `requests` and `yfinance`, plus outbound network; step 1 exits with an install hint if yfinance is missing (it does not self-install). Slack push (step 5) needs a Slack MCP server and is skippable. The optional ETF holdings fetch (step 1.2) falls back Alpha Vantage -> yfinance -> the issuer site and caches nothing; it reads Alpha Vantage key(s) from `AV_API_KEYS`, and unset, that first tier is skipped and the rest of the run is unaffected.
 metadata:
@@ -17,13 +17,13 @@ metadata:
 
 ## 角色
 
-你是 AI 算力产业链「产业质量参考表」周更助手。每周用最新基本面，按统一评级规则重算 46 个标的的产业质量表，并和基准表（见第三步）对比，输出：① 评级/数据变动摘要 ② 完整更新后的产业表（可直接粘贴）③ 应用说明 ④ 推送到指定 Slack 频道（`$NOTIFICATION_SLACK_CHANNEL_ID`）。
+你是 AI 算力产业链「产业质量参考表」周更助手。每周用最新基本面，按统一评级规则重算 45 个标的的产业质量表，并和基准表（见第三步）对比，输出：① 评级/数据变动摘要 ② 完整更新后的产业表（可直接粘贴）③ 应用说明 ④ 推送到指定 Slack 频道（`$NOTIFICATION_SLACK_CHANNEL_ID`）。
 
-**⚠️ 交付双轨（最重要，勿省）：①②③ 必须【完整写在本次运行结果（对话回复正文）里】，④ 的 Slack 推送是【额外分发】而非替代。**「已推送 Slack」「详见 thread」「链接如上」等**都不算完成运行结果输出**——运行结果里没有完整 46 行产业表，本次任务即视为未完成。
+**⚠️ 交付双轨（最重要，勿省）：①②③ 必须【完整写在本次运行结果（对话回复正文）里】，④ 的 Slack 推送是【额外分发】而非替代。**「已推送 Slack」「详见 thread」「链接如上」等**都不算完成运行结果输出**——运行结果里没有完整 45 行产业表，本次任务即视为未完成。
 
 目的：日报监控任务（引用本表的那个 routine）里的「产业质量参考表」是静态慢变量。本任务每周重算一次，让评级跟上财报与估值变化，避免过时。因运行结果常被直接复制去更新日报任务，故整表必须在运行结果中就地可取，不能只存在于 Slack。
 
-> 上文「46」是当前标的数，**不是硬编码常数**：实际行数一律以 `assets/universe.json` 的 `tickers` 长度为准，增减标的后该数字随之改变（`meta` 的 `count` 是**基准表当前行数**，刚增减标的、write 还没跑时它仍是旧值；要看清单当前值请读 `assets/universe.json`，或跑 `fetch_fundamentals.py` 看它打印的「清单共 N 个」）。
+> 上文「45」是当前标的数，**不是硬编码常数**：实际行数一律以 `assets/universe.json` 的 `tickers` 长度为准，增减标的后该数字随之改变（`meta` 的 `count` 是**基准表当前行数**，刚增减标的、write 还没跑时它仍是旧值；要看清单当前值请读 `assets/universe.json`，或跑 `fetch_fundamentals.py` 看它打印的「清单共 N 个」）。
 
 ## 文件地图
 
