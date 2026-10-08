@@ -1,5 +1,5 @@
 {
-  "_comment": "46 标的的权威清单与行序。baseline.py 用它校验产业表；fetch_fundamentals.py 用它取数。增减标的只改本文件。",
+  "_comment": "45 标的的权威清单与行序。baseline.py 用它校验产业表；fetch_fundamentals.py 用它取数。增减标的只改本文件。",
   "columns": [
     "代码",
     "主题",
@@ -229,36 +229,30 @@
     },
     {
       "order": 34,
-      "ticker": "CSCO",
-      "theme": "推理",
-      "layer": "L4"
-    },
-    {
-      "order": 35,
       "ticker": "NET",
       "theme": "推理",
       "layer": "L4+L7"
     },
     {
-      "order": 36,
+      "order": 35,
       "ticker": "VRT",
       "theme": "基建",
       "layer": "L6"
     },
     {
-      "order": 37,
+      "order": 36,
       "ticker": "BE",
       "theme": "基建",
       "layer": "L6"
     },
     {
-      "order": 38,
+      "order": 37,
       "ticker": "DELL",
       "theme": "基建",
       "layer": "L6"
     },
     {
-      "order": 39,
+      "order": 38,
       "ticker": "0941.HK",
       "theme": "基建",
       "layer": "L6",
@@ -267,47 +261,47 @@
       "ratio_distorted": true
     },
     {
-      "order": 40,
+      "order": 39,
       "ticker": "RKLB",
       "theme": "太空",
       "layer": "L8"
     },
     {
-      "order": 41,
+      "order": 40,
       "ticker": "SPCX",
       "theme": "太空",
       "layer": "L8"
     },
     {
-      "order": 42,
+      "order": 41,
       "ticker": "DRAM",
       "theme": "ETF",
       "layer": "ETF",
       "etf": true
     },
     {
-      "order": 43,
+      "order": 42,
       "ticker": "LYTE",
       "theme": "ETF",
       "layer": "ETF",
       "etf": true
     },
     {
-      "order": 44,
+      "order": 43,
       "ticker": "NCLD",
       "theme": "ETF",
       "layer": "ETF",
       "etf": true
     },
     {
-      "order": 45,
+      "order": 44,
       "ticker": "SMH",
       "theme": "ETF",
       "layer": "ETF",
       "etf": true
     },
     {
-      "order": 46,
+      "order": 45,
       "ticker": "SOXX",
       "theme": "ETF",
       "layer": "ETF",

@@ -43,7 +43,7 @@ curl -s -X POST https://api.hyperliquid.xyz/info \
 | **主用**（OI ≥ $10M，读数可信）   | MU, SPCX, NVDA, GOOGL, DRAM, SNDK, TSLA, INTC, MRVL, AMD, AMZN                                   | $15M–$208M   |
 | **薄盘·仅参考**（$3–10M，须标注） | TSM, RKLB, AVGO, ARM, LITE, BE                                                                   | $3.6M–$8.4M  |
 | **过薄·不输出**（< $3M）          | SMH, NOK, DELL                                                                                   | $1.6M–$1.9M  |
-| **未上架**（跳过，不要硬找替代）  | GFS, TTMI, MRAAY, ADI, TXN, COHR, GLW, AXTI, ALAB, AAOI, SOXX, ANET, VRT, CSCO, 0700.HK, 1810.HK | —            |
+| **未上架**（跳过，不要硬找替代）  | GFS, TTMI, MRAAY, ADI, TXN, COHR, GLW, AXTI, ALAB, AAOI, SOXX, ANET, VRT, 0700.HK, 1810.HK       | —            |
 
 - **SK海力士务必用 `xyz:SKHX`**（$1,235.8 = 000660.KS 收盘 1,816,000 KRW ÷ USD/KRW 1468.6，吻合到 0.06%，OI ≈ $506M）。**`xyz:SKHY` 是另一个口径（比值 0.132），不可混用。**汇率用同池的 `xyz:KRW`。
 - **上述分档是基线，不是定论**：每次运行**都要重算名义 OI**，按门槛现场分档。若某标的 OI 骤降到 $3M 以下，说明池子在迁移或停摆，该报价不可信、直接跳过。
