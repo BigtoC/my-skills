@@ -24,9 +24,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 84.03,
-        "as_of": "2026-10-07",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAE0, 9.625% 2032-07-15, outstanding 1.27B USD, page YTW 13.47%. No quote-date field; as_of is observation date 2026-10-07 US post-close ET (print changed vs prior asset value 84.9 @ 2026-10-06). No clean/dirty label; treated as clean.",
+        "price": 83.23,
+        "as_of": "2026-10-12",
+        "source": "finanzen.net https://www.finanzen.net/suchergebnis.asp?_search=USU2069EAE06 ; CoreWeave-Anleihe 9,625% bis 15.07.2032, WKN A4EWUB, ISIN USU2069EAE06; venue gettex (BMN), last traded Kurszeit 12.10.2026 22:42:55 (German local); clean bid/ask 82,84 / 83,93 and dirty bid/ask 85,17 / 86,26 at 18:00:02 (undated). Tier 2.",
         "quote_kind": "close_clean"
       }
     },
@@ -45,9 +45,9 @@
       "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
       "is_l1_benchmark": true,
       "quote": {
-        "price": 86.29,
-        "as_of": "2026-10-07",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAC4, 9.75% 2031-10-01, outstanding 2.75B USD, page YTW 13.25%. No quote-date field; as_of is observation date 2026-10-07 US post-close ET (print changed vs prior asset value 87.07 @ 2026-10-06). No clean/dirty label; treated as clean.",
+        "price": 84.79,
+        "as_of": "2026-10-12",
+        "source": "finanzen.net https://www.finanzen.net/suchergebnis.asp?_search=USU2069EAC40 ; CoreWeave-Anleihe 9,750% bis 01.10.2031, WKN A4EUCN, ISIN USU2069EAC40 (asset ISIN USU2069EAC4 + check digit); venue Quotrix (XQTX), Kurszeit 12.10.2026 17:32:45 (German local); clean 84,79 / dirty 85,08; bid/ask 84,79 / 85,78; Frankfurt also 84,79, Duesseldorf 84,81. Tier 2 (TradingView NASDAQ-CRWV bonds page no longer lists this bond).",
         "quote_kind": "close_clean"
       }
     },
@@ -65,9 +65,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 87.53,
-        "as_of": "2026-10-07",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAB6, 9.0% 2031-02-01, outstanding 1.77B USD, page YTW 12.44%. No quote-date field; as_of is observation date 2026-10-07 US post-close ET (print changed vs prior asset value 87.41 @ 2026-10-06). No clean/dirty label; treated as clean.",
+        "price": 86.37,
+        "as_of": "2026-10-12",
+        "source": "finanzen.net https://www.finanzen.net/suchergebnis.asp?_search=A4EEQ4 ; COREWEAVE 25/31 REGS, WKN A4EEQ4, ISIN USU2069EAB66 (asset shows USU2069EAB6); venue Frankfurt (FSE), Kurszeit 12.10.2026 08:27:06 (German local, before US open); clean bid/ask 86,11 / 89,11, dirty bid/ask 87,87 / 90,87 at 14:19:00. Tier 2.",
         "quote_kind": "close_clean"
       }
     },
@@ -86,9 +86,9 @@
       "rating_cohort": "single_b",
       "note": "欧元计价，不与美债曲线比；只对 EUR HY 指数(BAMLHE00EHYIOAS)做相对比较",
       "quote": {
-        "price": 85.01,
-        "as_of": "2026-10-07",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN XS333313928 (as displayed, 11 chars), 8.5% 2032-07-15, EUR, outstanding 2B EUR, page YTW 12.30%. No quote-date field; as_of is observation date 2026-10-07 (print changed vs prior asset value 83.83 @ 2026-10-06). No clean/dirty label; treated as clean. EUR: absolute spread N/A.",
+        "price": 83.54,
+        "as_of": "2026-10-12",
+        "source": "finanzen.net https://www.finanzen.net/suchergebnis.asp?_search=A4EWUD ; COREWEAVE 26/32 REGS, WKN A4EWUD, ISIN XS3333139288 (asset shows 11-char XS333313928), issue currency EUR; venue gettex (BMN), Kurszeit 12.10.2026 22:43:40 (German local); clean bid/ask 82,33 / 83,71, dirty bid/ask 84,39 / 85,76 at 22:46:23; Boerse Stuttgart bid/ask 81,49 / 83,78 at 21:46:47. A second 8.5% 2032 line exists (WKN A4EWUE, XS3333139528), not used. EUR: absolute spread N/A. Tier 2.",
         "quote_kind": "close_clean"
       }
     },
@@ -127,9 +127,9 @@
       "rating_cohort": null,
       "note": "转债：利差被期权价值污染，不可直读为纯信用利差 → 仅参考，不参与任何判定",
       "quote": {
-        "price": 66.87,
-        "as_of": "2026-10-09",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAL3 IREN Limited 1.0% 01-DEC-2033, outstanding 3B USD, YTW blank. No quote-date field. Observed 2026-10-10 (Sat, no session): print 66.87 CHANGED vs asset value 66.47 @ 2026-10-09; as_of set to 2026-10-09 (last complete trading day) — same date uncertainty as above. No clean/dirty label; treated as clean.",
+        "price": 66.89,
+        "as_of": "2026-10-12",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAL3 IREN Limited 1.0% 01-DEC-2033, outstanding 3B USD, YTW blank. No quote-date field; print changed vs asset 66.87 (observed 2026-10-10); as_of 2026-10-12 inferred, venue unknown, Columbus Day US bond close. Reference only.",
         "quote_kind": "close_clean"
       }
     },
@@ -147,9 +147,9 @@
       "rating_cohort": null,
       "note": "零息转债，同上仅参考",
       "quote": {
-        "price": 67.69,
-        "as_of": "2026-10-09",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAE9 IREN Limited 0.0% 01-JUL-2031, outstanding 1B USD, YTW blank. No quote-date field. Observed 2026-10-10 (Sat, no session): print 67.69 CHANGED vs asset value 69.01 @ 2026-10-09; as_of set to 2026-10-09 (last complete trading day) — date uncertainty: the print may be a late update of the 2026-10-09 session. Zero coupon so clean = full.",
+        "price": 68.76,
+        "as_of": "2026-10-12",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAE9 IREN Limited 0.0% 01-JUL-2031, outstanding 1B USD, YTW blank. No quote-date field; print changed vs asset 67.69 (observed 2026-10-10); as_of 2026-10-12 inferred, venue unknown, Columbus Day US bond close. Zero coupon so clean = full. Reference only.",
         "quote_kind": "close_clean"
       }
     }
