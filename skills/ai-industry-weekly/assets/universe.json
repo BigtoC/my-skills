@@ -1,5 +1,5 @@
 {
-  "_comment": "45 标的的权威清单与行序。baseline.py 用它校验产业表；fetch_fundamentals.py 用它取数。增减标的只改本文件。",
+  "_comment": "46 标的的权威清单与行序。baseline.py 用它校验产业表；fetch_fundamentals.py 用它取数。增减标的只改本文件。",
   "columns": [
     "代码",
     "主题",
@@ -306,6 +306,15 @@
       "theme": "ETF",
       "layer": "ETF",
       "etf": true
+    },
+    {
+      "order": 46,
+      "ticker": "CIBR",
+      "theme": "ETF",
+      "layer": "ETF",
+      "etf": true,
+      "issuer": "First Trust",
+      "issuer_page": "https://www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker=CIBR"
     }
   ]
 }
