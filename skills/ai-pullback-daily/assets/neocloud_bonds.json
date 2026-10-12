@@ -107,9 +107,9 @@
       "note": "项目层 SPV，背后是 AWS 10-15 年租约 → L2 真正的主题指标。这条走阔才是论点崩坏",
       "is_l2_benchmark": true,
       "quote": {
-        "price": 97.31,
-        "as_of": "2026-10-01",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CIFR/bonds/ ; BLPG6304798 Black Pearl Compute LLC 6.125% 15-FEB-2031, outstanding 1.93B USD, Moody's Ba2, YTW blank. 2026-10-07 re-check: print UNCHANGED 97.31 (same as 2026-10-01, 10-02, 10-05, 10-06 checks); symbol page https://www.tradingview.com/symbols/BLPG6304798/ 'No trades'; FINRA TRACE lookup returned no public last sale; WebSearch 2026-10-07: no dated current quote. as_of kept at 2026-10-01 (date the print last changed), not advanced to observation date. No clean/dirty label; treated as clean.",
+        "price": 99.25,
+        "as_of": "2026-10-08",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CIFR/bonds/ ; BLPG6304798 Black Pearl Compute LLC 6.125% 15-FEB-2031, outstanding 1.93B USD, Moody's Ba2, YTW blank. Print CHANGED vs prior asset value 97.31 (unchanged 2026-10-01 through 2026-10-07 checks). No quote-date field on page (page shows 'Market closed' / 'No trades'); as_of is observation date 2026-10-08 US post-close ET, the date the print was first seen changed. No clean/dirty label; treated as clean.",
         "quote_kind": "close_clean"
       }
     },
@@ -127,9 +127,9 @@
       "rating_cohort": null,
       "note": "转债：利差被期权价值污染，不可直读为纯信用利差 → 仅参考，不参与任何判定",
       "quote": {
-        "price": 74.07,
-        "as_of": "2026-10-07",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAL3, 1.000% 01-DEC-2033, outstanding 3B USD, YTW blank. No quote-date field; as_of is observation date 2026-10-07 US post-close ET (print changed vs prior asset value 74.63 @ 2026-10-06). Convertible: reference only.",
+        "price": 66.87,
+        "as_of": "2026-10-09",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAL3 IREN Limited 1.0% 01-DEC-2033, outstanding 3B USD, YTW blank. No quote-date field. Observed 2026-10-10 (Sat, no session): print 66.87 CHANGED vs asset value 66.47 @ 2026-10-09; as_of set to 2026-10-09 (last complete trading day) — same date uncertainty as above. No clean/dirty label; treated as clean.",
         "quote_kind": "close_clean"
       }
     },
@@ -147,9 +147,9 @@
       "rating_cohort": null,
       "note": "零息转债，同上仅参考",
       "quote": {
-        "price": 74.44,
-        "as_of": "2026-10-07",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAE9, 0.000% 01-JUL-2031, outstanding 1B USD, YTW blank. No quote-date field; as_of is observation date 2026-10-07 US post-close ET (print changed vs prior asset value 74.88 @ 2026-10-06). Zero coupon so clean = full. Convertible: reference only.",
+        "price": 67.69,
+        "as_of": "2026-10-09",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAE9 IREN Limited 0.0% 01-JUL-2031, outstanding 1B USD, YTW blank. No quote-date field. Observed 2026-10-10 (Sat, no session): print 67.69 CHANGED vs asset value 69.01 @ 2026-10-09; as_of set to 2026-10-09 (last complete trading day) — date uncertainty: the print may be a late update of the 2026-10-09 session. Zero coupon so clean = full.",
         "quote_kind": "close_clean"
       }
     }
@@ -289,6 +289,21 @@
         "status": "priced",
         "purpose": "Fund GPU compute infrastructure tied to customer contracts (plan to deploy >68,000 NVIDIA GPUs by mid-2027); first of an expected series of GPU financings",
         "source": "Issuer 8-K ex99-1 https://www.sec.gov/Archives/edgar/data/0002068385/000149315226045368/ex99-1.htm (release dated 2026-10-01): 'entered into' US$356 million committed senior secured facility, 'fixed rate of 9.95%, excluding fees'; Jarden Australia sole financial advisor and arranger; investors incl. Goldman Sachs and select large private credit funds. CCIR tracker https://ccir.io/credit lists Facility B $206M dated 2026-09-28. Date uncertainty: 2026-09-28 (tracker) vs 2026-10-01 (release); date takes release date. Status 'priced' is nearest enum value, source says 'entered into'. Fees/OID not disclosed; fixed rate so spread fields null (not estimated). Issuer is a smaller APAC neocloud, not in the named issuer list."
+      },
+      {
+        "date": "2026-10-06",
+        "issuer": "Crusoe",
+        "instrument": "Loan from Goldman Sachs backstopped by AMD (AMD commits to lease the chips back if Crusoe cannot fill capacity)",
+        "size_usd_mm": 300,
+        "base_rate": null,
+        "initial_spread_bp": null,
+        "final_spread_bp": null,
+        "initial_oid": null,
+        "final_oid": null,
+        "final_yield_pct": 6.0,
+        "status": "priced",
+        "purpose": "Buy AMD AI chips for a data center campus in Springfield, Ohio",
+        "source": "https://startupfortune.com/amd-guarantees-a-300-million-crusoe-loan-backed-by-its-own-ai-chips (article 2026-10-06, citing The Information). Wording: 'AMD has agreed to backstop a $300 million loan'; 'priced Crusoe's loan at roughly 6% interest' (approximate; fixed vs floating not stated). Spread/base rate/OID/maturity not disclosed → null, not estimated. Status 'priced' is nearest enum value; no closing reported. date = article date, not necessarily pricing date. Secondary source only; no issuer release found."
       }
     ]
   },
