@@ -127,9 +127,9 @@
       "rating_cohort": null,
       "note": "转债：利差被期权价值污染，不可直读为纯信用利差 → 仅参考，不参与任何判定",
       "quote": {
-        "price": 65.64,
-        "as_of": "2026-10-13",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ (HTTP 200); US46270CAL3 IREN Limited 1.0% 01-DEC-2033, outstanding 3B USD, YTW blank. No quote-date field on page ('Market closed' / 'No trades'); print changed vs asset 66.89 (2026-10-12); as_of 2026-10-13 is the observation date (US post-close ET), not a page-evidenced quote date. No clean/dirty label on page; treated as clean. Venue unknown. Reference only.",
+        "price": 63.7,
+        "as_of": "2026-10-14",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ (HTTP 200); US46270CAL3 IREN Ltd. 1.000% 2033-12-01, outstanding 3 B USD, YTW '—'; no quote-date field ('Market closed' / 'No trades'); print differs from asset 65.64 (2026-10-13); as_of 2026-10-14 is observation date (US post-close ET), not a page-evidenced quote date; no clean/dirty label, treated as clean; venue unknown. Convert: reference only.",
         "quote_kind": "close_clean"
       }
     },
@@ -147,9 +147,9 @@
       "rating_cohort": null,
       "note": "零息转债，同上仅参考",
       "quote": {
-        "price": 67.25,
-        "as_of": "2026-10-13",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ (HTTP 200); US46270CAE9 IREN Limited 0.0% 01-JUL-2031, outstanding 1B USD, YTW blank. No quote-date field on page; print changed vs asset 68.76 (2026-10-12); as_of 2026-10-13 is the observation date (US post-close ET), not a page-evidenced quote date. Zero coupon so clean = full. Venue unknown. Reference only.",
+        "price": 65.15,
+        "as_of": "2026-10-14",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ (HTTP 200); US46270CAE9 IREN Ltd. 0.000% 2031-07-01, outstanding 1 B USD, YTW '—'; no quote-date field; print differs from asset 67.25 (2026-10-13); as_of 2026-10-14 is observation date (US post-close ET); zero coupon so clean = full; venue unknown. Convert: reference only.",
         "quote_kind": "close_clean"
       }
     }
@@ -304,6 +304,20 @@
         "status": "priced",
         "purpose": "Buy AMD AI chips for a data center campus in Springfield, Ohio",
         "source": "https://startupfortune.com/amd-guarantees-a-300-million-crusoe-loan-backed-by-its-own-ai-chips (article 2026-10-06, citing The Information). Wording: 'AMD has agreed to backstop a $300 million loan'; 'priced Crusoe's loan at roughly 6% interest' (approximate; fixed vs floating not stated). Spread/base rate/OID/maturity not disclosed → null, not estimated. Status 'priced' is nearest enum value; no closing reported. date = article date, not necessarily pricing date. Secondary source only; no issuer release found."
+      },
+      {
+        "date": "2026-10-14",
+        "issuer": "Cipher Digital Inc. (formerly Cipher Mining)",
+        "instrument": "0.00% Convertible Senior Notes due 2032-11-01 (144A private offering); 13-day option for additional $150.0mm",
+        "size_usd_mm": 850,
+        "base_rate": "FIXED",
+        "initial_spread_bp": null,
+        "final_spread_bp": null,
+        "initial_oid": null,
+        "final_oid": null,
+        "status": "priced",
+        "purpose": "~$89.7mm capped call cost; remainder to Barber Lake equity investment, HPC build-out, development pipeline expansion, general corporate purposes",
+        "source": "Issuer 8-K ex99.1 https://www.sec.gov/Archives/edgar/data/0001819989/000119312526421035/d77312dex991.htm (dateline 2026-10-14). Initial conversion price ~ $15.31 (~35.0% premium over $11.34 last sale 2026-10-13); settlement 2026-10-16. Concurrent exchange of ~$165.9mm 1.75% CB due 2030 for ~40.7mm shares. Proposed offering announced 2026-10-13; release does not state an initial marketed size, so upsize unknown. date = release date (pricing date per release). Fixed-rate convertible: no SOFR spread / OID, fields null (not estimated)."
       }
     ]
   },
