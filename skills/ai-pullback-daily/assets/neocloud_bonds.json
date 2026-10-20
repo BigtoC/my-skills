@@ -25,8 +25,8 @@
       "note": "公司层无担保高收益债",
       "quote": {
         "price": 80.5,
-        "as_of": "2026-10-19",
-        "source": "finanzen.net https://www.finanzen.net/anleihen/a4ewub-coreweave-anleihe ; WKN A4EWUB, ISIN USU2069EAE06; headline Aktueller Kurs 80,50 % Kurszeit 19.10.2026 22:47:16 (German local, after US close), venue gettex (BMN), same venue as 2026-10-15; Vortag 79,86. Bid/ask table 22:53:22 clean 79,36 / 81,98, dirty 81,87 / 84,49 (Stueckzinsen 2,511). Other venues (no per-venue timestamps): Baader 80,65, Duesseldorf 80,07, Frankfurt 79,85, Muenchen 80,50, Quotrix 79,69. Tier 2 (TradingView lists the bond at 79.85 but shows no quote date).",
+        "as_of": "2026-10-20",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/a4ewub-coreweave-anleihe ; WKN A4EWUB, ISIN USU2069EAE06; headline Aktueller Kurs 80,50 % Kurszeit 20.10.2026 22:43:29 (German local, after US close), venue gettex (BMN), same venue as 2026-10-19; Vortag 80,50 and Eroeffnung 80,50 (headline equals prior day's value). Bid/ask table 22:22:14 clean 78,19 / 80,81, dirty 80,73 / 83,35 (Stueckzinsen 2,537). Duesseldorf realtime 21:29:58 bid 78,15 / ask 80,85. Other venues (no per-venue timestamps): Baader 79,47, Duesseldorf 79,89, Frankfurt 79,90, Muenchen 79,19, Quotrix 78,15. Headline not itself labelled clean/dirty; treated as clean consistent with prior runs (clean bid/ask straddles it).",
         "quote_kind": "close_clean"
       }
     },
@@ -45,9 +45,9 @@
       "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
       "is_l1_benchmark": true,
       "quote": {
-        "price": 80.91,
-        "as_of": "2026-10-19",
-        "source": "finanzen.net https://www.finanzen.net/anleihen/a4eucn-coreweave-anleihe ; WKN A4EUCN, ISIN USU2069EAC40; headline Aktueller Kurs 80,91 % Kurszeit 19.10.2026 19:46:07 (German local = about 13:46 ET, during US hours), venue Quotrix (XQTX), same venue as 2026-10-15; Vortag 80,01. Bid/ask table 19:46:07 clean 80,91 / 84,43, dirty 81,39 / 84,91 (Stueckzinsen 0,482). Other venues (no per-venue timestamps): Duesseldorf 79,32, Frankfurt 80,92. Duesseldorf realtime 17:16:20 bid 80,92 / ask 84,43. Tier 2 (TradingView lists the bond at 80.92 but shows no quote date).",
+        "price": 80.47,
+        "as_of": "2026-10-20",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/a4eucn-coreweave-anleihe ; WKN A4EUCN, ISIN USU2069EAC40; headline Aktueller Kurs 80,47 % Kurszeit 20.10.2026 17:20:13 (German local = about 11:20 ET, during US hours), venue Quotrix (XQTX), same venue as 2026-10-19; Vortag 80,91. Bid/ask table 17:20:13 clean 80,47 / 86,16, dirty 80,98 / 86,67 (Stueckzinsen 0,509). Duesseldorf realtime 17:20:13 bid 80,47 / ask 86,16. Other venues (no per-venue timestamps): Duesseldorf 79,91, Frankfurt 80,39. Headline equals the clean bid. Page key-figure YTM 15,5579% is stated on clean 80,915 (page's own computation, not used).",
         "quote_kind": "close_clean"
       }
     },
@@ -65,9 +65,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 79.03,
-        "as_of": "2026-10-19",
-        "source": "finanzen.net https://www.finanzen.net/anleihen/a4eeq4-coreweave-anleihe ; WKN A4EEQ4, ISIN USU2069EAB66; venue Frankfurt (FSE) only, same venue as 2026-10-15; last 79,03 % at 19.10.2026 08:00:56 (German local, before US open); Vortag 80,78. Undated bid/ask table 17:29:00 clean 81,20 / 84,20, dirty 83,13 / 86,13 (Stueckzinsen 1,932). Tier 2 (TradingView lists the bond at 79.03 but shows no quote date).",
+        "price": 80.7,
+        "as_of": "2026-10-20",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/a4eeq4-coreweave-anleihe ; WKN A4EEQ4, ISIN USU2069EAB66; venue Frankfurt (FSE) only, same venue as 2026-10-19; last 80,70 % at 20.10.2026 08:03:02 (German local, before US open); Vortag 79,03. Undated bid/ask table 17:22:00 clean 80,71 / 83,71, dirty 82,67 / 85,67 (Stueckzinsen 1,957). Headline not itself labelled clean/dirty; treated as clean consistent with prior runs.",
         "quote_kind": "close_clean"
       }
     },
@@ -86,9 +86,9 @@
       "rating_cohort": "single_b",
       "note": "欧元计价，不与美债曲线比；只对 EUR HY 指数(BAMLHE00EHYIOAS)做相对比较",
       "quote": {
-        "price": 78.72,
-        "as_of": "2026-10-19",
-        "source": "finanzen.net https://www.finanzen.net/anleihen/a4ewud-coreweave-anleihe ; WKN A4EWUD, ISIN XS3333139288, EUR; headline Aktueller Kurs 78,72 % Kurszeit 19.10.2026 22:44:11 (German local, after US close), venue gettex (BMN), same venue as 2026-10-15; Vortag 79,20. Bid/ask table 22:46:15 clean 78,40 / 79,81, dirty 80,62 / 82,03 (Stueckzinsen 2,217). Other venues (no per-venue timestamps): Baader 79,08, Duesseldorf 77,48, Frankfurt 77,24, Muenchen 78,40, Quotrix 78,58, Stuttgart 76,67. EUR: absolute spread N/A. Tier 2 (TradingView lists the bond at 77.24 but shows no quote date).",
+        "price": 77.0,
+        "as_of": "2026-10-20",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/a4ewud-coreweave-anleihe ; WKN A4EWUD, ISIN XS3333139288, EUR; headline Aktueller Kurs 77,00 % Kurszeit 20.10.2026 22:43:23 (German local, after US close), venue gettex (BMN), same venue as 2026-10-19; Vortag 78,72. Bid/ask table 22:47:24 clean 76,94 / 78,28, dirty 79,18 / 80,52 (Stueckzinsen 2,241). Other venues (no per-venue timestamps): Baader 77,56, Duesseldorf 77,94, Frankfurt 76,15, Muenchen 75,06, Quotrix 79,06, Stuttgart 74,25. EUR: absolute spread N/A. Headline not itself labelled clean/dirty; treated as clean consistent with prior runs (clean bid/ask straddles it).",
         "quote_kind": "close_clean"
       }
     },
