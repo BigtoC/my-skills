@@ -621,59 +621,90 @@ def validate_table(table: Table, universe: dict) -> list[str]:
 CAPS_MAX_AGE_DAYS = 7  # 周更节奏：超过一周的取数不是「本周」的上限
 
 
-def check_caps(table: Table, universe: dict, caps_arg: str | None) -> tuple[list[str], dict]:
-    """返回 (上限相关错误, 进 JSON 的字段)。错误与 validate_table 的错误合并后一起拒收。"""
+def _load_caps_file(path: Path) -> tuple[dict | None, datetime | None, list[str]]:
+    """读一份 --caps 文件：返回 (caps, fetched_at, 该文件本身的问题)。caps 为 None 表示整份不可用。"""
+    try:
+        data = json.loads(read_text(path))
+    except (OSError, ValueError) as exc:  # ValueError 含 JSONDecodeError 与 UnicodeDecodeError
+        return None, None, [f"[评级上限] 读不了 --caps 文件 {path.name}（{type(exc).__name__}），无法校验上限。"]
+    cash_debt = data.get("cash_debt") if isinstance(data, dict) else None
+    caps = cash_debt.get("caps") if isinstance(cash_debt, dict) else None
+    if not isinstance(caps, dict):
+        return None, None, [
+            f"[评级上限] {path.name} 里没有 cash_debt.caps——它不是新版 fetch_fundamentals.py --json 的输出"
+            "（2026-10-22 之前的版本不产此字段），请重跑取数。"]
+    fetched = data.get("fetched_at")
+    try:
+        ts = datetime.fromisoformat(str(fetched))
+    except ValueError:
+        return caps, None, [
+            f"[评级上限] {path.name} 的 fetched_at「{fetched}」不是合法时间，判断不了是不是本周的取数。"]
+    age_s = (datetime.now(ts.tzinfo) - ts).total_seconds()
+    if age_s > CAPS_MAX_AGE_DAYS * 86400:
+        return caps, ts, [
+            f"[评级上限] {path.name} 取数于 {fetched}（{int(age_s // 86400)} 天前），"
+            "不是本周的上限，请重跑 fetch_fundamentals.py。"]
+    if age_s < -86400:
+        # 未来时间会让「7 天过期」永远不触发，一份旧上限就能被当成本周的一直用下去
+        return caps, ts, [
+            f"[评级上限] {path.name} 的 fetched_at {fetched} 在未来，判断不了是不是本周的取数，请重跑 fetch_fundamentals.py。"]
+    return caps, ts, []
+
+
+def _ts_key(ts: datetime | None) -> float:
+    """比较不同文件的取数时间：带时区与不带时区的混在一起不能直接比，一律换成时间戳；缺失的当最旧。"""
+    return ts.timestamp() if ts is not None else float("-inf")
+
+
+def check_caps(table: Table, universe: dict, caps_args: list[str] | None) -> tuple[list[str], dict]:
+    """返回 (上限相关错误, 进 JSON 的字段)。错误与 validate_table 的错误合并后一起拒收。
+
+    --caps 可以给多次：全量取数之后用 --tickers 补抓了几档，就把补抓的文件也传进来。
+    同一个代码出现在多份文件里时，**取数时间最新的那份胜出**——补抓的就是为了替换旧判定
+    （新鲜的读数优于陈旧的，与回退链规则 7 同理）。缺标的按所有文件的并集判。
+    """
     info: dict = {
         "caps_checked": False,
-        "caps_source": None,
-        "caps_fetched_at": None,
+        "caps_source": None,           # 文件名列表（只回显文件名，理由同 load_table）
+        "caps_fetched_at": None,       # 与 caps_source 一一对应
+        "caps_overrides": None,        # [{ticker, file}]：被后传入的较新文件覆盖了判定的标的
         "caps_violations": None,
         "caps_violation_list": None,   # [{ticker, row, rating, cap, reasons}]：要下调哪几行，不必解析错误文本
         "caps_file_problems": None,    # caps 文件本身的问题（过期/缺标的/格式）：要重跑取数，不是改表
         "caps_unevaluated": None,      # 该判却没判全的标的：上限未知，不等于没有上限
         "caps_notice": None,
     }
-    if not caps_arg:
+    if not caps_args:
         info["caps_notice"] = (
             "未传 --caps：本次**未**校验现金流/负债评级上限（rating-rules.md 的压档规则）；"
             "周更正式流程必须带 --caps <fetch_fundamentals.py --json 的输出文件>"
         )
         return [], info
 
-    path = Path(caps_arg).expanduser()
-    info["caps_source"] = path.name  # 只回显文件名，理由同 load_table
-    try:
-        data = json.loads(read_text(path))
-    except (OSError, ValueError) as exc:  # ValueError 含 JSONDecodeError 与 UnicodeDecodeError
-        problem = f"[评级上限] 读不了 --caps 文件 {path.name}（{type(exc).__name__}），无法校验上限。"
-        info["caps_file_problems"] = [problem]
-        return [problem], info
-    cash_debt = data.get("cash_debt") if isinstance(data, dict) else None
-    caps = cash_debt.get("caps") if isinstance(cash_debt, dict) else None
-    if not isinstance(caps, dict):
-        problem = (f"[评级上限] {path.name} 里没有 cash_debt.caps——它不是新版 fetch_fundamentals.py --json 的输出"
-                   "（2026-10-22 之前的版本不产此字段），请重跑取数。")
-        info["caps_file_problems"] = [problem]
-        return [problem], info
+    paths = [Path(a).expanduser() for a in caps_args]
+    info["caps_source"] = [p.name for p in paths]
+    loaded = [(p, *_load_caps_file(p)) for p in paths]
+    info["caps_fetched_at"] = [ts.isoformat() if ts else None for _, _, ts, _ in loaded]
+    file_problems = [msg for _, _, _, probs in loaded for msg in probs]
+    usable = [(p, caps, ts) for p, caps, ts, _ in loaded if caps is not None]
+    if not usable:
+        info["caps_file_problems"] = file_problems
+        return file_problems, info
 
-    file_problems: list[str] = []
-    fetched = data.get("fetched_at")
-    info["caps_fetched_at"] = fetched
-    try:
-        ts = datetime.fromisoformat(str(fetched))
-    except ValueError:
-        file_problems.append(
-            f"[评级上限] {path.name} 的 fetched_at「{fetched}」不是合法时间，判断不了是不是本周的取数。")
-    else:
-        age_s = (datetime.now(ts.tzinfo) - ts).total_seconds()
-        if age_s > CAPS_MAX_AGE_DAYS * 86400:
-            file_problems.append(
-                f"[评级上限] {path.name} 取数于 {fetched}（{int(age_s // 86400)} 天前），"
-                "不是本周的上限，请重跑 fetch_fundamentals.py。")
-        elif age_s < -86400:
-            # 未来时间会让「7 天过期」永远不触发，一份旧上限就能被当成本周的一直用下去
-            file_problems.append(
-                f"[评级上限] {path.name} 的 fetched_at {fetched} 在未来，判断不了是不是本周的取数，请重跑 fetch_fundamentals.py。")
+    # 合并：按取数时间从旧到新覆盖，最新的胜出；记下谁覆盖了谁，好让读者知道哪几档来自补抓
+    caps: dict = {}
+    origin: dict = {}
+    seen: dict = {}
+    for p, file_caps, ts in sorted(usable, key=lambda u: _ts_key(u[2])):
+        for code, entry in file_caps.items():
+            caps[code] = entry
+            origin[code] = p.name
+            seen[code] = seen.get(code, 0) + 1
+    # 只有同时出现在多份文件里的代码才算「被覆盖」，记下胜出的那份
+    info["caps_overrides"] = [
+        {"ticker": code, "file": origin[code]} for code, n in seen.items() if n > 1
+    ]
+    label = "、".join(info["caps_source"])
 
     ratings: list[str] = universe["ratings"]
     code_idx = column_index(universe, "代码", 0)
@@ -709,7 +740,7 @@ def check_caps(table: Table, universe: dict, caps_arg: str | None) -> tuple[list
         if cap is None:
             continue
         if cap not in ratings:
-            file_problems.append(f"[评级上限] {path.name} 里 {code} 的上限「{cap}」不在 {'/'.join(ratings)} 内。")
+            file_problems.append(f"[评级上限] {origin[code]} 里 {code} 的上限「{cap}」不在 {'/'.join(ratings)} 内。")
             continue
         if rating in ratings and ratings.index(rating) < ratings.index(cap):
             why = "；".join(str(r) for r in reasons) or "（caps 文件未给理由）"
@@ -720,8 +751,9 @@ def check_caps(table: Table, universe: dict, caps_arg: str | None) -> tuple[list
             )
     if missing:
         file_problems.append(
-            f"[评级上限] {path.name} 缺以下标的的判定：{'、'.join(missing)}"
-            "——多半是用 --tickers 只取了部分标的；请全量重跑 fetch_fundamentals.py --json 后再校验。"
+            f"[评级上限] {label} 缺以下标的的判定：{'、'.join(missing)}"
+            "——多半是用 --tickers 只取了部分标的；补抓这几档（--tickers … --json <另一个文件>）"
+            "并把那份文件也加一个 --caps 传进来，或全量重跑 fetch_fundamentals.py --json。"
         )
     info["caps_checked"] = True
     info["caps_violations"] = len(violation_list)
@@ -744,7 +776,11 @@ def caps_status_line(info: dict) -> str:
     """validate / diff / write 共用的一行 stdout 状态：第六步自检第 9 条要能从任一步的输出里核对。"""
     if not info["caps_checked"]:
         return "注意：未传 --caps，本次未校验现金流/负债评级上限。"
-    line = f"评级均未高于现金流/负债上限（{info['caps_source']}，取数于 {info['caps_fetched_at']}）。"
+    files = "、".join(f"{n}@{t}" for n, t in zip(info["caps_source"], info["caps_fetched_at"]))
+    line = f"评级均未高于现金流/负债上限（{files}）。"
+    if info.get("caps_overrides"):
+        line += (f"其中 {len(info['caps_overrides'])} 档在多份文件里都有，取较新的那份："
+                 + "、".join(f"{o['ticker']}←{o['file']}" for o in info["caps_overrides"]))
     if info.get("caps_unevaluated"):
         line += ("但以下标的上限未知（未能完整判定，论点栏须注明 N/A）："
                  + "、".join(u["ticker"] for u in info["caps_unevaluated"]))
@@ -1299,24 +1335,25 @@ def build_parser() -> argparse.ArgumentParser:
                  "stderr 的诊断信息照旧输出")
 
     caps_help = ("fetch_fundamentals.py --json 的输出文件；给了就校验每行评级不高于其 cash_debt.caps 上限"
-                 "（现金流/负债压档），不给则跳过该项并在 stderr 与 JSON 里注明")
+                 "（现金流/负债压档），不给则跳过该项并在 stderr 与 JSON 里注明。可给多次（全量 + --tickers 补抓），"
+                 "同一代码以取数时间最新的文件为准")
     p_val = sub.add_parser("validate", help="只校验不写；通过 exit 0，失败 exit 1 并逐条列错")
     p_val.add_argument("new_table", metavar="new_table.md", help="待校验的新表文件")
     p_val.add_argument("--json", action="store_true", help=json_help)
-    p_val.add_argument("--caps", metavar="fundamentals.json", help=caps_help)
+    p_val.add_argument("--caps", metavar="fundamentals.json", action="append", help=caps_help)
     p_val.set_defaults(func=cmd_validate)
 
     p_diff = sub.add_parser("diff", help="与当前基准表逐行对比，输出评级变动与其他字段漂移（不写文件）")
     p_diff.add_argument("new_table", metavar="new_table.md", help="待对比的新表文件")
     p_diff.add_argument("--json", action="store_true", help=json_help)
-    p_diff.add_argument("--caps", metavar="fundamentals.json", help=caps_help)
+    p_diff.add_argument("--caps", metavar="fundamentals.json", action="append", help=caps_help)
     p_diff.set_defaults(func=cmd_diff)
 
     p_write = sub.add_parser("write", help="先 validate，通过才原子覆写 baseline.md")
     p_write.add_argument("new_table", metavar="new_table.md", help="要写入的新表文件")
     p_write.add_argument("--date", required=True, metavar="YYYY-MM-DD", help="本次数据日期")
     p_write.add_argument("--json", action="store_true", help=json_help)
-    p_write.add_argument("--caps", metavar="fundamentals.json", help=caps_help)
+    p_write.add_argument("--caps", metavar="fundamentals.json", action="append", help=caps_help)
     p_write.set_defaults(func=cmd_write)
 
     return parser

@@ -39,8 +39,8 @@ AI 算力产业链 · 基本面批量取数（yfinance）
 
 import argparse
 import datetime
+import importlib.util
 import json
-import re
 import subprocess
 import sys
 import time
@@ -1037,26 +1037,37 @@ CASH_DEBT_PROHIBITIONS = [
 ]
 
 
-def baseline_ratings(columns):
+def _baseline_module():
+    """按路径加载同目录的 baseline.py（纯标准库、导入无副作用）。
+
+    基准表的格式与解析只由 baseline.py 维护：这里若另写一套拆格逻辑，两边一漂移，
+    第一步「须下调」的预告就会和第三步 --caps 实际拒收的行对不上。
+    """
+    spec = importlib.util.spec_from_file_location("_ai_industry_baseline", HERE / "baseline.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def baseline_ratings(universe):
     """只读当前基准表的评级（代码 -> 评级），用来提前点名「本周须下调」的行。
 
     读不到就返回 None（不是 {}）：「没比」与「比过了没有要下调的」必须分得开。
-    列位置按 universe.json 的 columns 找，与 baseline.py 一致；拆格尊重 `\\|` 转义。
+    解析与列定位全部复用 baseline.py（Table / extract_table_lines / column_index）。
     """
-    path = SKILL_DIR / "assets" / "baseline.md"
-    cols = columns or []
-    code_i = cols.index("代码") if "代码" in cols else 0
-    rate_i = cols.index("评级") if "评级" in cols else 4
     try:
-        lines = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()
-                 if ln.strip().startswith("|")]
-    except (OSError, UnicodeDecodeError):
+        bl = _baseline_module()
+        path = bl.BASELINE_PATH
+        table = bl.Table(path, bl.extract_table_lines(bl.read_text(path)))
+    except Exception:
         return None
-    out = {}
-    for ln in lines[2:]:                     # 跳过表头与分隔行
-        cells = [c.strip() for c in re.split(r"(?<!\\)\|", ln.strip().strip("|"))]
-        if len(cells) > max(code_i, rate_i):
-            out[cells[code_i]] = cells[rate_i]
+    code_i = bl.column_index(universe, "代码", 0)
+    rate_i = bl.column_index(universe, "评级", 4)
+    out = {
+        table.code_at(cells, code_i): cells[rate_i]
+        for _, cells in table.rows
+        if rate_i < len(cells) and table.code_at(cells, code_i)
+    }
     return out or None
 
 
@@ -1316,7 +1327,9 @@ def print_rows(records, uni_meta, warnings, failed, partial):
     if failed:
         print(f"## 取数失败（{len(failed)}）: 重跑命令")
         print("  " + ", ".join(failed))
-        print(f"  python3 {rel_path(Path(__file__))} --tickers {','.join(failed)}" + "   # 从技能目录下跑，或改用绝对路径")
+        print(f"  python3 {rel_path(Path(__file__))} --tickers {','.join(failed)} --json <另一个文件>"
+              + "   # 从技能目录下跑，或改用绝对路径")
+        print("  补抓的 JSON 别覆盖全量那份：第三步给 baseline.py 再加一个 --caps <补抓文件>，同一代码以较新的为准")
         print("")
     if not failed and not partial:
         print("## 全部标的取数成功")
@@ -1437,7 +1450,7 @@ def main():
 
     uni_meta = {"total": len(uni.get("tickers") or []), "columns": uni.get("columns")}
 
-    cd_payload = cash_debt_payload(records, baseline_ratings(uni.get("columns")))
+    cd_payload = cash_debt_payload(records, baseline_ratings(uni))
     # --quiet 只关人类可读渲染、从不关告警（JSON 规则 4）：现金流/负债的降级与「须下调」照样进 stderr
     for reason in cd_payload["degraded_reasons"]:
         print(f"⚠ 现金流/负债: {reason}", file=sys.stderr)
