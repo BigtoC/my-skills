@@ -37,6 +37,10 @@
     baseline.py diff <new_table.md>                    先校验新表，通过才逐行对比输出评级变动 + 其他字段漂移（不写文件）
     baseline.py write <new_table.md> --date YYYY-MM-DD 先 validate，通过才原子覆写 baseline.md
 
+validate / diff / write 均可加 `--caps <fundamentals.json>`：把 fetch_fundamentals.py --json 的
+cash_debt.caps 当作每行评级的上限（现金流/负债压档，2026-10-22 起），评级高于上限即校验不过、
+拒绝对比、拒绝写入；不传则跳过该项，并在 stderr 与 JSON（caps_checked=false）里注明。
+
 validate / diff / write 均可加 `--json`：stdout 换成机器可读结果，stderr 的诊断照旧。
 调用方据此**按字段**判断，不必只靠 exit code：ok / degraded / degraded_reasons 是每份
 输出的固定信封，文本分支里的每一句拒绝语、提示与口径提醒都有对应字段。
@@ -604,10 +608,153 @@ def validate_table(table: Table, universe: dict) -> list[str]:
     return errors
 
 
+# ------------------------------------------------- 现金流/负债评级上限（--caps）
+#
+# 2026-10-22 起评级规则有一条硬性压档：FCF 低、负债高 -> 评级上限更低。上限由
+# fetch_fundamentals.py 机器算出（阈值只定义在它的 CASH_DEBT_TH），写在其 --json 的
+# cash_debt.caps：{代码: {cap, applicable, evaluated, reasons, na_reasons}}，cap 为 null 表示不设限。
+# 只写在文档里的规则靠模型自觉，所以这里把它变成拒收条件：评级高于上限的表过不了 validate，
+# 也就进不了 diff 与 write。--caps 是可选参数（手工调试时不必取数），但不传时一定在
+# stderr 与 JSON（caps_checked=false + degraded_reasons）里说出来——没查不等于查过没问题。
+
+CAPS_MAX_AGE_DAYS = 7  # 周更节奏：超过一周的取数不是「本周」的上限
+
+
+def check_caps(table: Table, universe: dict, caps_arg: str | None) -> tuple[list[str], dict]:
+    """返回 (上限相关错误, 进 JSON 的字段)。错误与 validate_table 的错误合并后一起拒收。"""
+    info: dict = {
+        "caps_checked": False,
+        "caps_source": None,
+        "caps_fetched_at": None,
+        "caps_violations": None,
+        "caps_violation_list": None,   # [{ticker, row, rating, cap, reasons}]：要下调哪几行，不必解析错误文本
+        "caps_file_problems": None,    # caps 文件本身的问题（过期/缺标的/格式）：要重跑取数，不是改表
+        "caps_unevaluated": None,      # 该判却没判全的标的：上限未知，不等于没有上限
+        "caps_notice": None,
+    }
+    if not caps_arg:
+        info["caps_notice"] = (
+            "未传 --caps：本次**未**校验现金流/负债评级上限（rating-rules.md 的压档规则）；"
+            "周更正式流程必须带 --caps <fetch_fundamentals.py --json 的输出文件>"
+        )
+        return [], info
+
+    path = Path(caps_arg).expanduser()
+    info["caps_source"] = path.name  # 只回显文件名，理由同 load_table
+    try:
+        data = json.loads(read_text(path))
+    except (OSError, ValueError) as exc:  # ValueError 含 JSONDecodeError 与 UnicodeDecodeError
+        problem = f"[评级上限] 读不了 --caps 文件 {path.name}（{type(exc).__name__}），无法校验上限。"
+        info["caps_file_problems"] = [problem]
+        return [problem], info
+    cash_debt = data.get("cash_debt") if isinstance(data, dict) else None
+    caps = cash_debt.get("caps") if isinstance(cash_debt, dict) else None
+    if not isinstance(caps, dict):
+        problem = (f"[评级上限] {path.name} 里没有 cash_debt.caps——它不是新版 fetch_fundamentals.py --json 的输出"
+                   "（2026-10-22 之前的版本不产此字段），请重跑取数。")
+        info["caps_file_problems"] = [problem]
+        return [problem], info
+
+    file_problems: list[str] = []
+    fetched = data.get("fetched_at")
+    info["caps_fetched_at"] = fetched
+    try:
+        ts = datetime.fromisoformat(str(fetched))
+    except ValueError:
+        file_problems.append(
+            f"[评级上限] {path.name} 的 fetched_at「{fetched}」不是合法时间，判断不了是不是本周的取数。")
+    else:
+        age_s = (datetime.now(ts.tzinfo) - ts).total_seconds()
+        if age_s > CAPS_MAX_AGE_DAYS * 86400:
+            file_problems.append(
+                f"[评级上限] {path.name} 取数于 {fetched}（{int(age_s // 86400)} 天前），"
+                "不是本周的上限，请重跑 fetch_fundamentals.py。")
+        elif age_s < -86400:
+            # 未来时间会让「7 天过期」永远不触发，一份旧上限就能被当成本周的一直用下去
+            file_problems.append(
+                f"[评级上限] {path.name} 的 fetched_at {fetched} 在未来，判断不了是不是本周的取数，请重跑 fetch_fundamentals.py。")
+
+    ratings: list[str] = universe["ratings"]
+    code_idx = column_index(universe, "代码", 0)
+    rating_idx = column_index(universe, "评级", 4)
+    missing: list[str] = []
+    rule_errors: list[str] = []
+    violation_list: list[dict] = []
+    unevaluated: list[dict] = []
+    for order, (_, cells) in enumerate(table.rows, start=1):
+        code = table.code_at(cells, code_idx)
+        if not code:
+            continue
+        entry = caps.get(code)
+        if not isinstance(entry, dict):
+            missing.append(code)
+            continue
+        rating = cells[rating_idx] if rating_idx < len(cells) else None
+        reasons = entry.get("reasons") if isinstance(entry.get("reasons"), list) else []
+        na = entry.get("na_reasons") if isinstance(entry.get("na_reasons"), list) else []
+        evaluated = entry.get("evaluated")
+        if entry.get("applicable") and evaluated != "full":
+            # cap 为 null 在这里的意思是「上限未知」，不是「不设限」——缺数据从来不是悄悄安全
+            unevaluated.append({"ticker": code, "evaluated": evaluated, "rating": rating, "na_reasons": na})
+            if evaluated != "partial" and rating == ratings[0]:
+                rule_errors.append(
+                    f"[评级上限] {code}（第 {order} 行）现金流与负债都没判成（{'；'.join(na) or '无原因'}），"
+                    f"却评 {rating}——判不了不等于通过，不得以现金流/负债为 {rating} 依据；"
+                    "请重跑 fetch_fundamentals.py 取回数据，或把评级降到 🟢 以下并在论点栏注明 N/A。")
+        cap = entry.get("cap")
+        if cap is None:
+            continue
+        if cap not in ratings:
+            file_problems.append(f"[评级上限] {path.name} 里 {code} 的上限「{cap}」不在 {'/'.join(ratings)} 内。")
+            continue
+        if rating in ratings and ratings.index(rating) < ratings.index(cap):
+            why = "；".join(str(r) for r in reasons) or "（caps 文件未给理由）"
+            violation_list.append({"ticker": code, "row": order, "rating": rating, "cap": cap, "reasons": reasons})
+            rule_errors.append(
+                f"[评级上限] {code}（第 {order} 行）评级 {rating} 高于本周现金流/负债上限 {cap}：{why}"
+                "\n        评级只能等于或低于上限；变动摘要里注明「现金流/负债压档」及触发数字。"
+            )
+    if missing:
+        file_problems.append(
+            f"[评级上限] {path.name} 缺以下标的的判定：{'、'.join(missing)}"
+            "——多半是用 --tickers 只取了部分标的；请全量重跑 fetch_fundamentals.py --json 后再校验。"
+        )
+    info["caps_checked"] = True
+    info["caps_violations"] = len(violation_list)
+    info["caps_violation_list"] = violation_list
+    info["caps_file_problems"] = file_problems
+    info["caps_unevaluated"] = unevaluated
+    return file_problems + rule_errors, info
+
+
+def caps_reasons(info: dict) -> list[str]:
+    """没查上限、或有标的上限未知，都要进 degraded_reasons：只读 ok 的调用方不能把它读成「查过没问题」。"""
+    out = [info["caps_notice"]] if info.get("caps_notice") else []
+    if info.get("caps_unevaluated"):
+        out.append("以下标的现金流/负债未能完整判定，上限未知（不是没有上限）：" + "、".join(
+            u["ticker"] for u in info["caps_unevaluated"]))
+    return out
+
+
+def caps_status_line(info: dict) -> str:
+    """validate / diff / write 共用的一行 stdout 状态：第六步自检第 9 条要能从任一步的输出里核对。"""
+    if not info["caps_checked"]:
+        return "注意：未传 --caps，本次未校验现金流/负债评级上限。"
+    line = f"评级均未高于现金流/负债上限（{info['caps_source']}，取数于 {info['caps_fetched_at']}）。"
+    if info.get("caps_unevaluated"):
+        line += ("但以下标的上限未知（未能完整判定，论点栏须注明 N/A）："
+                 + "、".join(u["ticker"] for u in info["caps_unevaluated"]))
+    return line
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     universe = load_universe()
     table = load_table(Path(args.new_table).expanduser())
     errors = validate_table(table, universe)
+    cap_errors, caps_info = check_caps(table, universe, args.caps)
+    errors += cap_errors
+    if caps_info["caps_notice"]:
+        err(caps_info["caps_notice"])
     source = rel_path(Path(table.source))  # JSON 里只回显文件名，见 load_table 的注释
     if errors:
         err(f"校验未通过：{table.source}")
@@ -620,20 +767,21 @@ def cmd_validate(args: argparse.Namespace) -> int:
             emit_json(envelope(
                 "validate",
                 ok=False,
-                reasons=[f"新表校验未通过（{len(errors)} 条问题）"],
+                reasons=[f"新表校验未通过（{len(errors)} 条问题）"] + caps_reasons(caps_info),
                 source=source,
                 error_count=len(errors),
                 errors=errors,
                 baseline=rel_path(BASELINE_PATH),
                 baseline_modified=False,
                 notice="基准表未被修改。请修正上述问题后重跑。",
+                **caps_info,
             ))
         return 1
     if args.json:
         emit_json(envelope(
             "validate",
             ok=True,
-            reasons=[],
+            reasons=caps_reasons(caps_info),
             source=source,
             error_count=0,
             errors=[],
@@ -644,10 +792,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
             baseline=rel_path(BASELINE_PATH),
             baseline_modified=False,  # validate 永远不写文件
             notice=None,
+            **caps_info,
         ))
         return 0
     print(f"校验通过：{table.source}")
     print(f"表头 {len(table.header)} 列、数据 {len(table.rows)} 行，行序与 universe.json 完全一致。")
+    print(caps_status_line(caps_info))
     return 0
 
 
@@ -707,6 +857,10 @@ def _brief_change(old: str, new: str, width: int = 56) -> tuple[str, str]:
     return wrap(o_mid), wrap(n_mid)
 
 
+DIFF_REFUSAL = ("本次**没有**产出任何变动摘要：新表未通过校验（结构问题，或评级高于现金流/负债上限），"
+                "带着它对出来的结论一定是错的，不得贴进正文。")
+
+
 def cmd_diff(args: argparse.Namespace) -> int:
     universe = load_universe()
     columns: list[str] = universe["columns"]
@@ -721,6 +875,10 @@ def cmd_diff(args: argparse.Namespace) -> int:
     # （漏行会报成「移除 XXX」，错位会把论点当评级报成「MU 🟢→HBM三巨头之一」），
     # 而它下一步就会被抄进运行结果正文。宁可一个字不出，也不出错摘要。
     errors = validate_table(new_table, universe)
+    cap_errors, caps_info = check_caps(new_table, universe, args.caps)
+    errors += cap_errors
+    if caps_info["caps_notice"]:
+        err(caps_info["caps_notice"])
     source = rel_path(Path(new_table.source))  # JSON 里只回显文件名，见 load_table 的注释
     if errors:
         err(f"校验未通过，拒绝对比：{new_table.source}")
@@ -728,21 +886,22 @@ def cmd_diff(args: argparse.Namespace) -> int:
         for i, e in enumerate(errors, start=1):
             err(f"  {i}. {e}")
         err("")
-        err("本次**没有**产出任何变动摘要：结构不对的表对出来的结论一定是错的，不得贴进正文。")
-        err("请按上面逐条修好新表后重跑 diff。")
+        err(DIFF_REFUSAL)
+        err("请按上面逐条修好新表后重跑 diff（「[评级上限]」里说 caps 文件过期/缺标的的，要重跑取数而不是改表）。")
         # 拒绝对比时 result 保持 None（见 envelope）：JSON 里不存在任何长得像
         # 变动摘要的东西，拒绝语本身也是字段，只读 stdout 的调用方一样看得见。
         if args.json:
             emit_json(envelope(
                 "diff",
                 ok=False,
-                reasons=[f"新表校验未通过（{len(errors)} 条问题），拒绝对比"],
-                refusal="本次**没有**产出任何变动摘要：结构不对的表对出来的结论一定是错的，不得贴进正文。",
+                reasons=[f"新表校验未通过（{len(errors)} 条问题），拒绝对比"] + caps_reasons(caps_info),
+                refusal=DIFF_REFUSAL,
                 source=source,
                 error_count=len(errors),
                 errors=errors,
                 baseline=rel_path(BASELINE_PATH),
-                next_step="请按上面逐条修好新表后重跑 diff。",
+                next_step="请按上面逐条修好新表后重跑 diff（caps_file_problems 非空时要重跑取数而不是改表）。",
+                **caps_info,
             ))
         return 1
 
@@ -855,7 +1014,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
         emit_json(envelope(
             "diff",
             ok=True,
-            reasons=[],
+            reasons=caps_reasons(caps_info),
             summary_produced=True,
             source=source,
             baseline=rel_path(BASELINE_PATH),
@@ -880,6 +1039,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
                 "drift": drift_records,
                 "identical": identical,
             },
+            **caps_info,
         ))
         return 0
 
@@ -915,6 +1075,8 @@ def cmd_diff(args: argparse.Namespace) -> int:
     if identical:
         print()
         print("新表与基准表逐行完全一致。")
+    print()
+    print(caps_status_line(caps_info))
     return 0
 
 
@@ -1024,6 +1186,10 @@ def cmd_write(args: argparse.Namespace) -> int:
     source = rel_path(Path(table.source))  # JSON 里只回显文件名，见 load_table 的注释
 
     errors = validate_table(table, universe)
+    cap_errors, caps_info = check_caps(table, universe, args.caps)
+    errors += cap_errors
+    if caps_info["caps_notice"]:
+        err(caps_info["caps_notice"])
     if errors:
         err(f"校验未通过，拒绝写入：{table.source}")
         err(f"共 {len(errors)} 条问题：")
@@ -1035,13 +1201,14 @@ def cmd_write(args: argparse.Namespace) -> int:
             emit_json(envelope(
                 "write",
                 ok=False,
-                reasons=[f"新表校验未通过（{len(errors)} 条问题），拒绝写入"],
+                reasons=[f"新表校验未通过（{len(errors)} 条问题），拒绝写入"] + caps_reasons(caps_info),
                 source=source,
                 date_input=args.date,
                 error_count=len(errors),
                 errors=errors,
                 baseline=rel_path(BASELINE_PATH),
                 notice=f"基准表 {rel_path(BASELINE_PATH)} 未被修改（一个字节都没动）。",
+                **caps_info,
             ))
         return 1
 
@@ -1073,7 +1240,7 @@ def cmd_write(args: argparse.Namespace) -> int:
         emit_json(envelope(
             "write",
             ok=True,
-            reasons=[],
+            reasons=caps_reasons(caps_info),
             written=True,
             baseline_modified=True,
             source=source,
@@ -1088,6 +1255,7 @@ def cmd_write(args: argparse.Namespace) -> int:
                 "注意：口径说明行按原样保留，如已过期请手动更新 assets/baseline.md 的这一行："
                 if caliber else None
             ),
+            **caps_info,
         ))
         return 0
     print(
@@ -1097,6 +1265,7 @@ def cmd_write(args: argparse.Namespace) -> int:
     )
     if caliber:
         print(f"注意：口径说明行按原样保留，如已过期请手动更新 assets/baseline.md 的这一行：\n  {caliber.strip()}")
+    print(caps_status_line(caps_info))
     return 0
 
 
@@ -1125,20 +1294,25 @@ def build_parser() -> argparse.ArgumentParser:
     json_help = ("stdout 改出机器可读 JSON（含 ok / degraded / degraded_reasons 及全部拒绝语与提示）；"
                  "stderr 的诊断信息照旧输出")
 
+    caps_help = ("fetch_fundamentals.py --json 的输出文件；给了就校验每行评级不高于其 cash_debt.caps 上限"
+                 "（现金流/负债压档），不给则跳过该项并在 stderr 与 JSON 里注明")
     p_val = sub.add_parser("validate", help="只校验不写；通过 exit 0，失败 exit 1 并逐条列错")
     p_val.add_argument("new_table", metavar="new_table.md", help="待校验的新表文件")
     p_val.add_argument("--json", action="store_true", help=json_help)
+    p_val.add_argument("--caps", metavar="fundamentals.json", help=caps_help)
     p_val.set_defaults(func=cmd_validate)
 
     p_diff = sub.add_parser("diff", help="与当前基准表逐行对比，输出评级变动与其他字段漂移（不写文件）")
     p_diff.add_argument("new_table", metavar="new_table.md", help="待对比的新表文件")
     p_diff.add_argument("--json", action="store_true", help=json_help)
+    p_diff.add_argument("--caps", metavar="fundamentals.json", help=caps_help)
     p_diff.set_defaults(func=cmd_diff)
 
     p_write = sub.add_parser("write", help="先 validate，通过才原子覆写 baseline.md")
     p_write.add_argument("new_table", metavar="new_table.md", help="要写入的新表文件")
     p_write.add_argument("--date", required=True, metavar="YYYY-MM-DD", help="本次数据日期")
     p_write.add_argument("--json", action="store_true", help=json_help)
+    p_write.add_argument("--caps", metavar="fundamentals.json", help=caps_help)
     p_write.set_defaults(func=cmd_write)
 
     return parser

@@ -9,6 +9,12 @@
 > 增减标的只改该文件。内联的 T 列表连同代码一并删除：它虽与 `universe.json` 同为 46 个代码，
 > **行序早已不一致**（T 的第 3 个是 INTC，清单的第 3 行是 ASML），留着只会让人抓错顺序。
 >
+> **编者注（2026-10-22）**：字段映射 `F` 的 23 个字段**仍未改动**。现金流/负债压档需要的 FCF 率、OCF 率、
+> 净负债/EBITDA、资产负债率另由脚本拉现金流量表 / 损益表 / 资产负债表算出，以新字段并列输出
+> （`fcf_margin` / `ocf_margin` / `fcf_basis` / `fcf_period_end` / `net_debt` / `nd_ebitda` / `liab_to_assets` / `rating_cap`，
+> 以及 `--json` 的 `cash_debt` 一节）。`F` 里的 `freeCashflow→FCF` 照旧取，但**不作评级依据**——
+> 它与报表口径实测偏离可达 28pt，详见 `rating-rules.md` 2026-10-22 编者注。
+>
 > **编者注**：原文写的是 `pip install -q yfinance pandas`。本技能实际依赖为
 > **`yfinance` + `requests`**（`requests.Session` 是绕过代理下 curl_cffi TLS 失败的硬约束）；
 > `pandas` 两个脚本都未 import，可不装。脚本不会自动安装 yfinance，缺失时会退出并打印安装提示。

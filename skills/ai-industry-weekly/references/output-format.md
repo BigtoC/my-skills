@@ -7,6 +7,10 @@
 > **编者注**：Slack 频道 ID 取自环境变量 `NOTIFICATION_SLACK_CHANNEL_ID`（见 SKILL.md 第零步）；
 > 未设置时跳过 Slack 推送，运行结果正文照常完整输出。日报 routine 的 ID 不在本技能内保存。
 > 本 repo 为公开仓库，**任何文件里都不得回填真实 ID**。
+>
+> **编者注（2026-10-22）**：评级规则新增「现金流/负债压档」（见 `rating-rules.md`）。因压档而变的评级，
+> 下文「一句原因」写成「现金流/负债压档：FCF 率 x%（TTM/年报，截至 YYYY-MM-DD）、净负债/EBITDA y.yx」，
+> 数字照抄 `fetch_fundamentals.py` 输出，**不得**写成本周基本面变化；FCF 引报表口径 `fcf_margin`，不引 `.info` 的 `FCF` 字段。
 
 ## 输出格式（以下四节**全部**要写进运行结果正文，缺一节即未完成）
 
