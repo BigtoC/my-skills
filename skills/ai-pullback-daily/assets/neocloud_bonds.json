@@ -24,9 +24,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 84.03,
-        "as_of": "2026-10-07",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAE0, 9.625% 2032-07-15, outstanding 1.27B USD, page YTW 13.47%. No quote-date field; as_of is observation date 2026-10-07 US post-close ET (print changed vs prior asset value 84.9 @ 2026-10-06). No clean/dirty label; treated as clean.",
+        "price": 80.5,
+        "as_of": "2026-10-21",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/a4ewub-coreweave-anleihe ; WKN A4EWUB, ISIN USU2069EAE06; headline Aktueller Kurs 80,50 % Kurszeit 21.10.2026 22:40:57 (German local, after US close), selected venue gettex (BMN), same venue as 2026-10-20; Vortag 80,50, Eroeffnung 80,50, Tagestief/Tageshoch 80,50/80,50 (headline equals prior day's value, as also on 2026-10-20). Bid/ask table 22:45:51 clean 79,61 / 82,55, dirty 82,17 / 85,11 (Stueckzinsen 2,563 per Kennzahlen). Duesseldorf realtime 21:19:08 bid 80,05 / ask 82,11. Other venues (no per-venue timestamps): Baader 81,11, Duesseldorf 79,46, Frankfurt 79,23, Muenchen 78,39, Quotrix 80,04. Headline not itself labelled clean/dirty; treated as clean consistent with prior runs (clean bid/ask straddles it).",
         "quote_kind": "close_clean"
       }
     },
@@ -45,9 +45,9 @@
       "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
       "is_l1_benchmark": true,
       "quote": {
-        "price": 86.29,
-        "as_of": "2026-10-07",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAC4, 9.75% 2031-10-01, outstanding 2.75B USD, page YTW 13.25%. No quote-date field; as_of is observation date 2026-10-07 US post-close ET (print changed vs prior asset value 87.07 @ 2026-10-06). No clean/dirty label; treated as clean.",
+        "price": 79.7,
+        "as_of": "2026-10-21",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/a4eucn-coreweave-anleihe ; WKN A4EUCN, ISIN USU2069EAC40; headline Aktueller Kurs 79,70 % Kurszeit 21.10.2026 17:23:54 (German local = about 11:23 ET, during US hours), venue Quotrix (XQTX), same venue as 2026-10-20; Vortag 80,47; Eroeffnung shown as 0,00 (no opening price). Bid/ask table 17:23:54 clean 79,70 / 85,70, dirty 80,23 / 86,23 (Stueckzinsen 0,536). Other venues (no per-venue timestamps): Duesseldorf 78,67, Frankfurt 79,61, Quotrix 79,70. Headline equals the clean bid. L1 benchmark bond.",
         "quote_kind": "close_clean"
       }
     },
@@ -65,9 +65,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 87.53,
-        "as_of": "2026-10-07",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN USU2069EAB6, 9.0% 2031-02-01, outstanding 1.77B USD, page YTW 12.44%. No quote-date field; as_of is observation date 2026-10-07 US post-close ET (print changed vs prior asset value 87.41 @ 2026-10-06). No clean/dirty label; treated as clean.",
+        "price": 79.76,
+        "as_of": "2026-10-21",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/a4eeq4-coreweave-anleihe ; WKN A4EEQ4, ISIN USU2069EAB66; venue Frankfurt (FSE) only, same venue as 2026-10-20; headline Aktueller Kurs 79,76 % Kurszeit 21.10.2026 08:01:56 (German local, before US open); Vortag 80,70; Eroeffnung 79,76; Tagestief/Tageshoch 79,76/79,76. Bid/ask table 17:23:00 clean 79,95 / 82,95, dirty 81,93 / 84,93 (Stueckzinsen 1,981). No other venues listed. Headline not itself labelled clean/dirty; treated as clean consistent with prior runs.",
         "quote_kind": "close_clean"
       }
     },
@@ -86,9 +86,9 @@
       "rating_cohort": "single_b",
       "note": "欧元计价，不与美债曲线比；只对 EUR HY 指数(BAMLHE00EHYIOAS)做相对比较",
       "quote": {
-        "price": 85.01,
-        "as_of": "2026-10-07",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CRWV/bonds/ ; ISIN XS333313928 (as displayed, 11 chars), 8.5% 2032-07-15, EUR, outstanding 2B EUR, page YTW 12.30%. No quote-date field; as_of is observation date 2026-10-07 (print changed vs prior asset value 83.83 @ 2026-10-06). No clean/dirty label; treated as clean. EUR: absolute spread N/A.",
+        "price": 77.82,
+        "as_of": "2026-10-21",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/a4ewud-coreweave-anleihe ; WKN A4EWUD, ISIN XS3333139288, EUR; headline Aktueller Kurs 77,82 % Kurszeit 21.10.2026 22:46:34 (German local, after US close), venue gettex (BMN), same venue as 2026-10-20; Vortag 77,00; Eroeffnung 77,00; Tagestief/Tageshoch 77,00/77,82. Bid/ask table 22:47:13 clean 77,47 / 79,12, dirty 79,73 / 81,38 (Stueckzinsen 2,264). Stuttgart realtime 21:45:02 bid 76,79 / ask 80,13. Other venues (no per-venue timestamps): Baader 78,10, Duesseldorf 76,76, Frankfurt 76,61, Muenchen 77,83, Quotrix 77,07, Stuttgart 76,79. EUR: absolute spread N/A. Headline not itself labelled clean/dirty; treated as clean consistent with prior runs (clean bid/ask straddles it).",
         "quote_kind": "close_clean"
       }
     },
@@ -107,9 +107,9 @@
       "note": "项目层 SPV，背后是 AWS 10-15 年租约 → L2 真正的主题指标。这条走阔才是论点崩坏",
       "is_l2_benchmark": true,
       "quote": {
-        "price": 99.25,
-        "as_of": "2026-10-08",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CIFR/bonds/ ; BLPG6304798 Black Pearl Compute LLC 6.125% 15-FEB-2031, outstanding 1.93B USD, Moody's Ba2, YTW blank. Print CHANGED vs prior asset value 97.31 (unchanged 2026-10-01 through 2026-10-07 checks). No quote-date field on page (page shows 'Market closed' / 'No trades'); as_of is observation date 2026-10-08 US post-close ET, the date the print was first seen changed. No clean/dirty label; treated as clean.",
+        "price": 97.67,
+        "as_of": "2026-10-21",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CIFR/bonds/ (HTTP 200); BLPG6304798 Black Pearl Compute LLC 6.125% 15-FEB-2031, outstanding 1.93B USD, Moody's Ba2, YTW '—'; no quote-date field ('Market closed' / 'No trades'); as_of 2026-10-21 is observation date (US post-close ET), not a quote date shown on the page; price 97.67 is identical to the value recorded on 2026-10-19 from the same page, so the underlying print may be older than the observation date; no clean/dirty label, treated as clean; venue unknown.",
         "quote_kind": "close_clean"
       }
     },
@@ -127,9 +127,9 @@
       "rating_cohort": null,
       "note": "转债：利差被期权价值污染，不可直读为纯信用利差 → 仅参考，不参与任何判定",
       "quote": {
-        "price": 66.87,
-        "as_of": "2026-10-09",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAL3 IREN Limited 1.0% 01-DEC-2033, outstanding 3B USD, YTW blank. No quote-date field. Observed 2026-10-10 (Sat, no session): print 66.87 CHANGED vs asset value 66.47 @ 2026-10-09; as_of set to 2026-10-09 (last complete trading day) — same date uncertainty as above. No clean/dirty label; treated as clean.",
+        "price": 55.31,
+        "as_of": "2026-10-21",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ (HTTP 200); US46270CAL3 IREN Limited 1.0% 01-DEC-2033, outstanding 3 B USD, YTW '—'; no quote-date field ('Market closed' / 'No trades'); as_of 2026-10-21 is observation date (US post-close ET); no clean/dirty label, treated as clean; venue unknown. Page lists maturity 2033-12-01 (asset file has 2033-12-15, maturity_precision month). Convert: reference only.",
         "quote_kind": "close_clean"
       }
     },
@@ -147,9 +147,9 @@
       "rating_cohort": null,
       "note": "零息转债，同上仅参考",
       "quote": {
-        "price": 67.69,
-        "as_of": "2026-10-09",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ ; US46270CAE9 IREN Limited 0.0% 01-JUL-2031, outstanding 1B USD, YTW blank. No quote-date field. Observed 2026-10-10 (Sat, no session): print 67.69 CHANGED vs asset value 69.01 @ 2026-10-09; as_of set to 2026-10-09 (last complete trading day) — date uncertainty: the print may be a late update of the 2026-10-09 session. Zero coupon so clean = full.",
+        "price": 57.88,
+        "as_of": "2026-10-19",
+        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ (HTTP 200); US46270CAE9 IREN Limited 0.0% 01-JUL-2031, outstanding 1 B USD, YTW '—'; no quote-date field; as_of 2026-10-19 is observation date (US post-close ET); zero coupon so clean = full; venue unknown. Convert: reference only.",
         "quote_kind": "close_clean"
       }
     }
@@ -304,6 +304,20 @@
         "status": "priced",
         "purpose": "Buy AMD AI chips for a data center campus in Springfield, Ohio",
         "source": "https://startupfortune.com/amd-guarantees-a-300-million-crusoe-loan-backed-by-its-own-ai-chips (article 2026-10-06, citing The Information). Wording: 'AMD has agreed to backstop a $300 million loan'; 'priced Crusoe's loan at roughly 6% interest' (approximate; fixed vs floating not stated). Spread/base rate/OID/maturity not disclosed → null, not estimated. Status 'priced' is nearest enum value; no closing reported. date = article date, not necessarily pricing date. Secondary source only; no issuer release found."
+      },
+      {
+        "date": "2026-10-14",
+        "issuer": "Cipher Digital Inc. (formerly Cipher Mining)",
+        "instrument": "0.00% Convertible Senior Notes due 2032-11-01 (144A private offering); 13-day option for additional $150.0mm",
+        "size_usd_mm": 850,
+        "base_rate": "FIXED",
+        "initial_spread_bp": null,
+        "final_spread_bp": null,
+        "initial_oid": null,
+        "final_oid": null,
+        "status": "priced",
+        "purpose": "~$89.7mm capped call cost; remainder to Barber Lake equity investment, HPC build-out, development pipeline expansion, general corporate purposes",
+        "source": "Issuer 8-K ex99.1 https://www.sec.gov/Archives/edgar/data/0001819989/000119312526421035/d77312dex991.htm (dateline 2026-10-14). Initial conversion price ~ $15.31 (~35.0% premium over $11.34 last sale 2026-10-13); settlement 2026-10-16. Concurrent exchange of ~$165.9mm 1.75% CB due 2030 for ~40.7mm shares. Proposed offering announced 2026-10-13; release does not state an initial marketed size, so upsize unknown. date = release date (pricing date per release). Fixed-rate convertible: no SOFR spread / OID, fields null (not estimated)."
       }
     ]
   },
