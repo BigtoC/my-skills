@@ -640,7 +640,10 @@ are load-bearing:
   rated above its cap, refuses a caps file older than 7 days, dated in the
   future or missing a ticker, and without `--caps` says so on stdout, stderr and
   in JSON (`caps_checked: false` plus a `degraded_reasons` entry). That JSON is
-  the contract between the two scripts. `cap: null` is ambiguous on its own — it
+  the contract between the two scripts. `--caps` may be given more than once —
+  a full fetch plus a `--tickers` rerun written to a *separate* file — and per
+  ticker the entry from the most recently fetched file wins; a missing ticker is
+  judged against the union. `cap: null` is ambiguous on its own — it
   means "no cap" only when `evaluated` is `"full"`; an applicable ticker that was
   not fully evaluated has an *unknown* cap, is listed in `caps_unevaluated` /
   `degraded_reasons`, and may not be rated 🟢 if its FCF leg was not evaluated —

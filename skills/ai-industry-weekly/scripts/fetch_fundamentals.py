@@ -1316,7 +1316,9 @@ def print_rows(records, uni_meta, warnings, failed, partial):
     if failed:
         print(f"## 取数失败（{len(failed)}）: 重跑命令")
         print("  " + ", ".join(failed))
-        print(f"  python3 {rel_path(Path(__file__))} --tickers {','.join(failed)}" + "   # 从技能目录下跑，或改用绝对路径")
+        print(f"  python3 {rel_path(Path(__file__))} --tickers {','.join(failed)} --json <另一个文件>"
+              + "   # 从技能目录下跑，或改用绝对路径")
+        print("  补抓的 JSON 别覆盖全量那份：第三步给 baseline.py 再加一个 --caps <补抓文件>，同一代码以较新的为准")
         print("")
     if not failed and not partial:
         print("## 全部标的取数成功")

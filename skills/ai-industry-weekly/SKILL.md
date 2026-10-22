@@ -111,7 +111,7 @@ python3 "$SKILL_DIR/scripts/fetch_fundamentals.py" --json /tmp/fundamentals.json
 
 **留意脚本输出末尾的「⚠ 利润率完整性」一节**：yfinance `.info` 的 `operatingMargins` 会单字段损坏（`om>gm` 算术不可能等），脚本已自动检出并给出年报/TTM 重算值；命中行怎么取舍见 `references/rating-rules.md` 顶部编者注（命中标的每周不同，勿当固定名单）。
 
-**再留意最后的「现金流与负债 · 评级上限」一节**（2026-10-22 起）：脚本逐档算出 FCF 率（现金流量表口径，TTM → 年报 → N/A）、净负债/EBITDA，并按 `CASH_DEBT_TH` 判出每档的**评级上限** `rating_cap`，同时点名「基准表现有评级高于本周上限」的行——那几行本周必须下调。**FCF 一律引这一节的 `fcf_margin`，不得引每档那行的 `FCF=` 字段**（那是 `.info` 的 freeCashflow，实测与报表口径偏离可达 28pt，见 `rating-rules.md` 2026-10-22 编者注）。资产负债率只作参考。`--json` 的 `cash_debt.caps` 是第三步 `--caps` 要读的东西，所以**这份 JSON 必须是全量取数**（`--tickers` 只取部分会让 `--caps` 报缺标的）。
+**再留意最后的「现金流与负债 · 评级上限」一节**（2026-10-22 起）：脚本逐档算出 FCF 率（现金流量表口径，TTM → 年报 → N/A）、净负债/EBITDA，并按 `CASH_DEBT_TH` 判出每档的**评级上限** `rating_cap`，同时点名「基准表现有评级高于本周上限」的行——那几行本周必须下调。**FCF 一律引这一节的 `fcf_margin`，不得引每档那行的 `FCF=` 字段**（那是 `.info` 的 freeCashflow，实测与报表口径偏离可达 28pt，见 `rating-rules.md` 2026-10-22 编者注）。资产负债率只作参考。`--json` 的 `cash_debt.caps` 是第三步 `--caps` 要读的东西，所以**这份 JSON 必须是全量取数**。个别标的被限流、要用 `--tickers` 补抓时，**补抓结果写到另一个文件**（别覆盖全量那份），第三步把两份都传给 `--caps`（`--caps /tmp/fundamentals.json --caps /tmp/fundamentals_rerun.json`），同一代码以取数时间较新的为准。
 
 ### 1.2 ETF 持仓取数（可选增强，每周一次）
 
@@ -298,7 +298,7 @@ AV（全量）、yfinance（top-N）、官网（权威）**口径互不相同**�
 python3 "$SKILL_DIR/scripts/baseline.py" write /tmp/industry_table_new.md --date <数据日期 YYYY-MM-DD> --caps /tmp/fundamentals.json
 ```
 
-`--caps` 三处（validate / diff / write）都要带、指向第一步 `--json` 写出的同一个文件。不带时脚本**跳过**上限检查并在 stderr 与 JSON（`caps_checked: false`）里注明——那是手工调试用的，周更正式流程不许省。`--caps` 文件取数超过 7 天（或日期在未来）、缺标的、或不是新版取数输出，都会被当成校验不过；**FCF 没判成**的标的评 🟢 也会被拒（判不了不等于通过；第一步输出会提前点名这类行），其余判不全的会在输出里列为「上限未知」。
+`--caps` 三处（validate / diff / write）都要带、指向第一步 `--json` 写出的同一个文件（有补抓文件时三处都一并带上）。不带时脚本**跳过**上限检查并在 stderr 与 JSON（`caps_checked: false`）里注明——那是手工调试用的，周更正式流程不许省。`--caps` 文件取数超过 7 天（或日期在未来）、缺标的、或不是新版取数输出，都会被当成校验不过；**FCF 没判成**的标的评 🟢 也会被拒（判不了不等于通过；第一步输出会提前点名这类行），其余判不全的会在输出里列为「上限未知」。
 
 执行时机（两条都是硬性的）：
 
