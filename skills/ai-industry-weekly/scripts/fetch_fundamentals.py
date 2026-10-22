@@ -371,7 +371,7 @@ def _new_ticker(yf, sym, sess):
         return yf.Ticker(sym)
 
 
-def _frame(t, attr, renew=None):
+def _frame(t, attr, renew=None, retries=RETRIES):
     """取一张财报表。yfinance 偶发返回空表（限流），重试 RETRIES 次；始终失败返回 None。
 
     重试必须换一个新的 Ticker（renew）：yfinance 会把一次失败取回的**空表缓存在 Ticker 对象上**
@@ -379,7 +379,7 @@ def _frame(t, attr, renew=None):
     在同一个对象上重读只会读到缓存、一次新请求都不发。2026-10-22 实测这让一次瞬时限流就把
     INTC 的 FCF 从 TTM 打回年报口径、上限 🔵 变 🟡——重试形同虚设，还会改动硬上限。
     """
-    for attempt in range(RETRIES):
+    for attempt in range(retries):
         if attempt and renew is not None:
             t = renew()
         df = None
@@ -389,7 +389,7 @@ def _frame(t, attr, renew=None):
             df = None
         if df is not None and not getattr(df, "empty", True) and len(getattr(df, "columns", [])):
             return df
-        if attempt < RETRIES - 1:
+        if attempt < retries - 1:
             time.sleep(RETRY_SLEEP)
     return None
 
@@ -694,11 +694,16 @@ CASH_DEBT_TH = {
     # FCF < 0（且不属资本开支期）叠加上一条的高负债 -> 🔴（现金流与负债双弱）
     "ttm_max_span_days": 300,            # TTM 4 季的期末跨度上限：超过即非连续季，不拼 TTM
     "ttm_stale_days": 240,               # TTM 最近一季期末距今超过即标「陈旧」（仍用，但须注明）
-    "annual_max_age_days": 550,          # 年报回退：期末距今超过即弃用记 N/A（新鲜的低级源优于陈旧的高级源）
+    # 两级共用的硬年龄上限：期末距今超过即弃用（TTM 弃用后退年报，年报弃用记 N/A）。
+    # TTM 也要设：否则一组季报断更两年的 TTM 只标「陈旧」就照样当硬上限，而同龄年报反倒被拒。
+    "max_period_age_days": 550,
 }
 
-# 评级档位从好到坏，与 universe.json 的 ratings 同序（baseline.py 按那份清单比较高低）。
-RATING_LADDER = ("🟢", "🔵", "🟡", "🔴")
+# 评级档位从好到坏。唯一来源是 universe.json 的 ratings（baseline.py 按它比较高低）；
+# main() 启动时用它覆盖这里，并核对它仍是本规则写定的四档——规则的判语与 🔵/🟡/🔴 上限
+# 是按这四档写的，清单若改了档位，宁可拒跑也不能悄悄按另一套顺序比较。
+RATING_RULE_TIERS = ("🟢", "🔵", "🟡", "🔴")
+RATING_LADDER = RATING_RULE_TIERS
 
 # **FCF 一律取现金流量表，绝不用 .info 的 freeCashflow。** 2026-10-22 全量实测，.info 的
 # freeCashflow 与报表 TTM「Free Cash Flow」（OCF − CapEx）两个方向都会大幅偏离：
@@ -771,8 +776,8 @@ def _fcf_window(cf, inc, periods, basis, today):
         return None, (f"最近 {periods} 个有值的季度不连续（{dates[-1]}~{dates[0]}），"
                       "不拿非连续季拼 TTM")
     age = (today - dates[0]).days
-    if periods == 1 and age > CASH_DEBT_TH["annual_max_age_days"]:
-        return None, f"最近年报期末 {dates[0]} 距今 {age} 天，过旧弃用"
+    if age > CASH_DEBT_TH["max_period_age_days"]:
+        return None, f"最近{'一季' if periods > 1 else '年报'}期末 {dates[0]} 距今 {age} 天，过旧弃用"
     fcf = sum(_num(fcf_s, c) for c in cols)
     rev = sum(_num(rev_s, c) for c in cols)
     ocf_vals = [_num(ocf_s, c) for c in cols]
@@ -793,10 +798,13 @@ def _fcf_window(cf, inc, periods, basis, today):
     }, None
 
 
-def _liab_to_assets(t, renew=None):
-    """资产负债率（参考值）：最近一季资产负债表，取不到退年报；仍取不到 None。"""
+def _liab_to_assets(t):
+    """资产负债率（参考值）：最近一季资产负债表，取不到退年报；仍取不到 None。
+
+    只试一次、不重试：它不影响任何上限，多打的请求只会招来限流，而限流正是会改动上限的东西。
+    """
     for attr in ("quarterly_balance_sheet", "balance_sheet"):
-        df = _frame(t, attr, renew)
+        df = _frame(t, attr, retries=1)
         liab, assets = _series(df, _CD_BS["liab"]), _series(df, _CD_BS["assets"])
         if liab is None or assets is None:
             continue
@@ -807,21 +815,27 @@ def _liab_to_assets(t, renew=None):
     return None
 
 
+def _statement_pair(t, renew, cf_attr, inc_attr):
+    """先取现金流量表，取到了才取损益表：现金流表为空时损益表取了也用不上，白招限流。"""
+    cf = _frame(t, cf_attr, renew)
+    return (cf, _frame(t, inc_attr, renew)) if cf is not None else (None, None)
+
+
 def fetch_cash_debt_statements(yf, sym, sess, today):
-    """拉报表算 FCF 率（TTM -> 年报 -> N/A）与资产负债率。每档 3~5 次网络请求。"""
+    """拉报表算 FCF 率（TTM -> 年报 -> N/A）与资产负债率。正常档每档 3~5 次网络请求。"""
     renew = lambda: _new_ticker(yf, sym, sess)  # noqa: E731
     t = renew()
     out = {"fcf": None, "fcf_fallback_notes": [], "liab": None, "errors": []}
     try:
-        res, why = _fcf_window(_frame(t, "quarterly_cashflow", renew),
-                               _frame(t, "quarterly_income_stmt", renew), 4, "TTM(季报4季)", today)
+        res, why = _fcf_window(*_statement_pair(t, renew, "quarterly_cashflow", "quarterly_income_stmt"),
+                               4, "TTM(季报4季)", today)
         if res is None:
             # 回退必须响：记下 TTM 为什么不可用，年报口径的行要能看出它是回退来的。
             # 「拿不到报表」分不清是限流还是该标的本来就没有季报（港股常态），所以照实说两种可能。
             if why == _NO_FRAME:
                 why += f"（已换新连接重试 {RETRIES} 次；港股/部分 ADR 本就无季度现金流，其余标的多半是限流，重跑可能取回 TTM）"
             out["fcf_fallback_notes"].append(f"TTM 不可用：{why}")
-            res, why = _fcf_window(_frame(t, "cashflow", renew), _frame(t, "income_stmt", renew),
+            res, why = _fcf_window(*_statement_pair(t, renew, "cashflow", "income_stmt"),
                                    1, "年报(最近1期)", today)
             if res is None:
                 out["fcf_fallback_notes"].append(f"年报不可用：{why}")
@@ -829,7 +843,7 @@ def fetch_cash_debt_statements(yf, sym, sess, today):
     except Exception as e:
         out["errors"].append(f"fcf:{type(e).__name__}")   # 异常讯息常带绝对路径，只记类名
     try:
-        out["liab"] = _liab_to_assets(t, renew)
+        out["liab"] = _liab_to_assets(t)
     except Exception as e:
         out["errors"].append(f"liab:{type(e).__name__}")
     return out
@@ -963,16 +977,23 @@ def evaluate_cash_debt(sym, info, stm):
     # ---- 合成
     cap = _worse(fcf["cap"], lev["cap"])
     reasons = [v["verdict"] for v in (fcf, lev) if v["capped"]]
-    if fcf["cap"] == "🟡" and lev["cap"] == "🟡":
+    # 🔴 只给「确认不属资本开支期」的负 FCF：例外判不了（capex_exempt=None）时不能断言「非资本开支期」
+    if fcf["cap"] == "🟡" and lev["cap"] == "🟡" and fcf["capex_exempt"] is False:
         cap = "🔴"
         reasons.append("FCF 为负（非资本开支期）且高负债 -> 现金流与负债双弱，评 🔴")
     na = [f"{k}: {v['na_reason']}" for k, v in (("FCF", fcf), ("负债", lev)) if not v["evaluated"]]
-    evaluated = ("full" if fcf["evaluated"] and lev["evaluated"]
+    # FCF 为负而资本开支例外判不了：上限按默认规则落 🟡（例外是放宽，须有证据才给），
+    # 但这一档不算「完整判定」——判不了的东西不能藏进 full 里
+    exempt_unknown = fcf["evaluated"] and fcf["margin"] < 0 and fcf["capex_exempt"] is None
+    if exempt_unknown:
+        na.append("FCF: 资本开支例外判不了（OCF 或杠杆 N/A），上限按默认 🟡，未升 🔴")
+    evaluated = ("full" if fcf["evaluated"] and lev["evaluated"] and not exempt_unknown
                  else "partial" if fcf["evaluated"] or lev["evaluated"] else "none")
     return {
         "ticker": sym,
         "applicable": True,
         "evaluated": evaluated,
+        "fcf_evaluated": fcf["evaluated"],
         "cap": cap,
         "reasons": reasons,
         "na_reasons": na,
@@ -982,7 +1003,7 @@ def evaluate_cash_debt(sym, info, stm):
 
 
 def not_applicable_cash_debt(sym, why):
-    return {"ticker": sym, "applicable": False, "evaluated": "none", "cap": None,
+    return {"ticker": sym, "applicable": False, "evaluated": "none", "fcf_evaluated": False, "cap": None,
             "reasons": [], "na_reasons": [why], "fcf": None, "leverage": None}
 
 
@@ -990,7 +1011,7 @@ def cash_debt_row_fields(cd, stm, info, row):
     """摊平进 row 的字段：**所有**标的都有这些键（不适用/判不了为 None），下游直读不会 KeyError。"""
     fcf, lev = cd.get("fcf") or {}, cd.get("leverage") or {}
     liab = (stm or {}).get("liab") or {}
-    fcf_i, rev_i = row.get("FCF"), info.get("totalRevenue")
+    fcf_i, rev_i = _finite(row.get("FCF")), _finite(info.get("totalRevenue"))
     return {
         "fcf_margin": fcf.get("margin"),
         "ocf_margin": fcf.get("ocf_margin"),
@@ -998,7 +1019,7 @@ def cash_debt_row_fields(cd, stm, info, row):
         "fcf_period_end": fcf.get("period_end"),
         "net_debt": lev.get("net_debt"),
         "nd_ebitda": lev.get("nd_ebitda"),
-        "debt_to_equity": info.get("debtToEquity"),   # 参考值（%），负权益时 yfinance 给 None
+        "debt_to_equity": _finite(info.get("debtToEquity")),   # 参考值（%），负权益时 yfinance 给 None
         "liab_to_assets": liab.get("ratio"),          # 参考值，不触发压档
         "info_fcf_margin": (fcf_i / rev_i) if (fcf_i is not None and rev_i) else None,  # 仅供对照，禁作依据
         "rating_cap": cd.get("cap"),
@@ -1043,10 +1064,11 @@ def cash_debt_payload(records, base):
     """JSON 里与「现金流与负债 · 评级上限」一节同名的结构化字段。
 
     caps 是 baseline.py validate --caps 读取的契约：每个本次取数的代码一项，
-    {cap, applicable, evaluated, reasons, na_reasons}。
+    {cap, applicable, evaluated, fcf_evaluated, reasons, na_reasons}。
     """
     cds = [r["meta"]["cash_debt"] for r in records]
-    caps = {cd["ticker"]: {k: cd[k] for k in ("cap", "applicable", "evaluated", "reasons", "na_reasons")}
+    caps = {cd["ticker"]: {k: cd[k] for k in
+                           ("cap", "applicable", "evaluated", "fcf_evaluated", "reasons", "na_reasons")}
             for cd in cds}
     capped = [cd["ticker"] for cd in cds if cd["cap"]]
     not_eval = [cd["ticker"] for cd in cds if cd["applicable"] and cd["evaluated"] != "full"]
@@ -1056,14 +1078,24 @@ def cash_debt_payload(records, base):
         if cd["cap"] and base.get(cd["ticker"]) in RATING_LADDER
         and RATING_LADDER.index(base[cd["ticker"]]) < RATING_LADDER.index(cd["cap"])
     ]
+    # 与 baseline.py check_caps 同一条件：FCF 没判成的标的不得评 🟢。第一步就点名，免得第三步才返工
+    green_blocked = None if base is None else [
+        {"ticker": cd["ticker"], "baseline_rating": base.get(cd["ticker"]), "na_reasons": cd["na_reasons"]}
+        for cd in cds
+        if cd["applicable"] and not cd.get("fcf_evaluated") and base.get(cd["ticker"]) == RATING_LADDER[0]
+    ]
     stale = [cd["ticker"] for cd in cds if (cd.get("fcf") or {}).get("stale")]
     annual = [cd["ticker"] for cd in cds if ((cd.get("fcf") or {}).get("basis") or "").startswith("年报")]
     reasons = []
     if base is None:
         reasons.append("读不到 assets/baseline.md 的评级，未能比对「基准表现有评级是否高于本周上限」")
-    elif over:
-        reasons.append("基准表现有评级高于本周上限（本周须下调）：" + "；".join(
-            f"{o['ticker']} {o['baseline_rating']}->至多{o['cap']}" for o in over))
+    else:
+        if over:
+            reasons.append("基准表现有评级高于本周上限（本周须下调）：" + "；".join(
+                f"{o['ticker']} {o['baseline_rating']}->至多{o['cap']}" for o in over))
+        if green_blocked:
+            reasons.append(f"基准表现评 {RATING_LADDER[0]} 但本周 FCF 判不了、第三步会被拒（重跑取数或下调）：" + "、".join(
+                g["ticker"] for g in green_blocked))
     if not_eval:
         reasons.append(f"{len(not_eval)} 档现金流/负债未能完整判定：{', '.join(not_eval)}")
     if annual:
@@ -1082,6 +1114,7 @@ def cash_debt_payload(records, base):
         "capped_tickers": capped,
         "not_fully_evaluated": not_eval,
         "baseline_above_cap": over,
+        "baseline_green_fcf_unevaluated": green_blocked,
         "degraded": bool(reasons),
         "degraded_reasons": reasons,
         "caps": caps,
@@ -1129,6 +1162,11 @@ def print_cash_debt_section(records, payload):
         print("  ⚠ 基准表现有评级高于本周上限（本周须下调，摘要里注明「现金流/负债压档」及触发数字）：")
         for o in payload["baseline_above_cap"]:
             print(f"    {pad(o['ticker'], 11)}{o['baseline_rating']} -> 至多 {o['cap']}")
+    if payload.get("baseline_green_fcf_unevaluated"):
+        print("")
+        print(f"  ⚠ 基准表现评 {RATING_LADDER[0]} 但本周 FCF 判不了（第三步 --caps 会拒收；重跑取数，或下调并在论点注明 N/A）：")
+        for g in payload["baseline_green_fcf_unevaluated"]:
+            print(f"    {pad(g['ticker'], 11)}" + "；".join(g["na_reasons"]))
     gaps = [r["meta"]["cash_debt"] for r in records
             if r["meta"]["cash_debt"]["applicable"] and r["meta"]["cash_debt"]["evaluated"] != "full"]
     if gaps:
@@ -1301,6 +1339,15 @@ def main():
     args = ap.parse_args()
 
     uni, rows = load_universe()
+    global RATING_LADDER
+    ladder = tuple(uni.get("ratings") or ())
+    if ladder != RATING_RULE_TIERS:
+        sys.exit(
+            f"universe.json 的 ratings {list(ladder)} 与现金流/负债压档规则写定的档位 "
+            f"{list(RATING_RULE_TIERS)} 不一致：规则判语与上限是按那四档（从好到坏）写的，"
+            "请同步修改 fetch_fundamentals.py 的 RATING_RULE_TIERS 与 evaluate_cash_debt 后再跑"
+        )
+    RATING_LADDER = ladder
 
     if args.tickers:
         want = [t.strip() for t in args.tickers.split(",") if t.strip()]

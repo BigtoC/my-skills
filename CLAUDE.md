@@ -380,7 +380,7 @@ same line (`Free Cash Flow` / revenue) over a 12-month window and differ only in
 as-of date, which is why the same `CASH_DEBT_TH` thresholds apply to both — the
 one place rule 4 is deliberately *not* invoked, and the reason is written here so
 it is not mistaken for an oversight. Every verdict carries the tier and period
-end, an annual statement older than `annual_max_age_days` is refused (rule 7),
+end, a period older than `max_period_age_days` is refused on either tier (rule 7),
 and the TTM-unavailable reason is recorded in `fcf_fallback_notes` (rule 6).
 
 They were each written separately; these constraints are common
@@ -635,7 +635,7 @@ are load-bearing:
   do not copy the numbers into the rule body. Dated editor notes may record the
   *readings* a calibration was made on, never the thresholds themselves.
 - **The cap is enforced, not requested.** The script emits `cash_debt.caps`
-  (`{ticker: {cap, applicable, evaluated, reasons, na_reasons}}`) and
+  (`{ticker: {cap, applicable, evaluated, fcf_evaluated, reasons, na_reasons}}`) and
   `baseline.py validate/diff/write --caps <fundamentals.json>` refuses any row
   rated above its cap, refuses a caps file older than 7 days, dated in the
   future or missing a ticker, and without `--caps` says so on stdout, stderr and
@@ -643,7 +643,11 @@ are load-bearing:
   the contract between the two scripts. `cap: null` is ambiguous on its own — it
   means "no cap" only when `evaluated` is `"full"`; an applicable ticker that was
   not fully evaluated has an *unknown* cap, is listed in `caps_unevaluated` /
-  `degraded_reasons`, and may not be rated 🟢 if nothing was evaluated at all.
+  `degraded_reasons`, and may not be rated 🟢 if its FCF leg was not evaluated —
+  every cap seen at calibration came from the FCF leg, so a net-cash leverage
+  reading cannot stand in for it. The rating order comes from `universe.json`
+  `ratings`; `fetch_fundamentals.py` refuses to run if that list stops matching
+  the four tiers the rule is written for.
 - **Statement retries must use a fresh `yf.Ticker`.** yfinance caches an empty
   frame from a failed fetch on the Ticker object, so retrying on the same object
   re-reads the cache without a single new request. Measured 2026-10-22: one
@@ -656,7 +660,7 @@ are load-bearing:
   is reference only. TTM must take the **same** four quarter-ends from the
   cash-flow statement and the income statement; picking each table's own "first
   four non-empty columns" misaligned MU's revenue to 0.68× of the real TTM. The
-  order is TTM → latest annual (rejected if older than `annual_max_age_days`) →
+  order is TTM → latest annual (either rejected if older than `max_period_age_days`) →
   N/A, and the tier is labelled — HK rows and MRAAY have no quarterly cash flow.
 - **Leverage is net debt / EBITDA, not 资产负债率.** Liabilities-to-assets counts
   customer prepayments and deferred revenue as debt (NET 75% while net cash,

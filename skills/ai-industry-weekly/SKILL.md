@@ -298,7 +298,7 @@ AV（全量）、yfinance（top-N）、官网（权威）**口径互不相同**�
 python3 "$SKILL_DIR/scripts/baseline.py" write /tmp/industry_table_new.md --date <数据日期 YYYY-MM-DD> --caps /tmp/fundamentals.json
 ```
 
-`--caps` 三处（validate / diff / write）都要带、指向第一步 `--json` 写出的同一个文件。不带时脚本**跳过**上限检查并在 stderr 与 JSON（`caps_checked: false`）里注明——那是手工调试用的，周更正式流程不许省。`--caps` 文件取数超过 7 天（或日期在未来）、缺标的、或不是新版取数输出，都会被当成校验不过；现金流与负债**都没判成**的标的评 🟢 也会被拒（判不了不等于通过），只判成一半的会在输出里列为「上限未知」。
+`--caps` 三处（validate / diff / write）都要带、指向第一步 `--json` 写出的同一个文件。不带时脚本**跳过**上限检查并在 stderr 与 JSON（`caps_checked: false`）里注明——那是手工调试用的，周更正式流程不许省。`--caps` 文件取数超过 7 天（或日期在未来）、缺标的、或不是新版取数输出，都会被当成校验不过；**FCF 没判成**的标的评 🟢 也会被拒（判不了不等于通过；第一步输出会提前点名这类行），其余判不全的会在输出里列为「上限未知」。
 
 执行时机（两条都是硬性的）：
 

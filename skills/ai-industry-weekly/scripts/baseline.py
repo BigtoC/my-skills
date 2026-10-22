@@ -612,7 +612,8 @@ def validate_table(table: Table, universe: dict) -> list[str]:
 #
 # 2026-10-22 起评级规则有一条硬性压档：FCF 低、负债高 -> 评级上限更低。上限由
 # fetch_fundamentals.py 机器算出（阈值只定义在它的 CASH_DEBT_TH），写在其 --json 的
-# cash_debt.caps：{代码: {cap, applicable, evaluated, reasons, na_reasons}}，cap 为 null 表示不设限。
+# cash_debt.caps：{代码: {cap, applicable, evaluated, fcf_evaluated, reasons, na_reasons}}；
+# cap 为 null 只有在 evaluated == "full" 时才表示不设限，否则是「上限未知」。
 # 只写在文档里的规则靠模型自觉，所以这里把它变成拒收条件：评级高于上限的表过不了 validate，
 # 也就进不了 diff 与 write。--caps 是可选参数（手工调试时不必取数），但不传时一定在
 # stderr 与 JSON（caps_checked=false + degraded_reasons）里说出来——没查不等于查过没问题。
@@ -696,11 +697,14 @@ def check_caps(table: Table, universe: dict, caps_arg: str | None) -> tuple[list
         if entry.get("applicable") and evaluated != "full":
             # cap 为 null 在这里的意思是「上限未知」，不是「不设限」——缺数据从来不是悄悄安全
             unevaluated.append({"ticker": code, "evaluated": evaluated, "rating": rating, "na_reasons": na})
-            if evaluated != "partial" and rating == ratings[0]:
+            # FCF 这条腿没判成就不许 🟢：校准时全部上限都出自 FCF 腿，负债腿是净现金也兜不住
+            # （BABA 若被限流到 FCF 两级都取不到，负债腿判出「净现金、不设限」，cap 就成了 null）。
+            # 旧版 caps 没有 fcf_evaluated 字段时按「没判成」处理——宁可多拒一次。
+            if entry.get("fcf_evaluated") is not True and rating == ratings[0]:
                 rule_errors.append(
-                    f"[评级上限] {code}（第 {order} 行）现金流与负债都没判成（{'；'.join(na) or '无原因'}），"
+                    f"[评级上限] {code}（第 {order} 行）FCF 没判成（{'；'.join(str(x) for x in na) or '无原因'}），"
                     f"却评 {rating}——判不了不等于通过，不得以现金流/负债为 {rating} 依据；"
-                    "请重跑 fetch_fundamentals.py 取回数据，或把评级降到 🟢 以下并在论点栏注明 N/A。")
+                    f"请重跑 fetch_fundamentals.py 取回数据，或把评级降到 {rating} 以下并在论点栏注明 N/A。")
         cap = entry.get("cap")
         if cap is None:
             continue
