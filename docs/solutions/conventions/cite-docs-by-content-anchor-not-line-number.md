@@ -182,7 +182,7 @@ Surfaced while checking and *not* fixed, because it genuinely is two-place: the 
 ## Related
 
 - `skills/daily-risk-monitor/references/search-contract.md` — the file fixed; its header note now states the convention
-- `CLAUDE.md`「The contract is deliberately duplicated」 — records the anchor convention and the open `as_of` drift
+- `docs/architecture/cross-cutting.md`「The contract is deliberately duplicated」 — records the anchor convention and the open `as_of` drift
 - `docs/solutions/workflow-issues/background-operator-forces-permission-prompt-every-run.md` — companion learning; its SKILL.md rewrite is what exposed this rot
 - `known-traps.md` 2026-09-14 editor's note — prior art for the same discipline applied to *values* rather than citations: 「改之前先 `grep -rn`」, count don't trust
 - Commit `24df096` on branch `fix/drm-fetch-launcher-and-citation-anchors`
