@@ -650,7 +650,10 @@ are load-bearing:
   every cap seen at calibration came from the FCF leg, so a net-cash leverage
   reading cannot stand in for it. The rating order comes from `universe.json`
   `ratings`; `fetch_fundamentals.py` refuses to run if that list stops matching
-  the four tiers the rule is written for.
+  the four tiers the rule is written for. Its step-1 preview of rows that must
+  come down reads `baseline.md` through `baseline.py`'s own `Table` /
+  `column_index`, so the preview and the step-3 refusal cannot parse the table
+  two different ways.
 - **Statement retries must use a fresh `yf.Ticker`.** yfinance caches an empty
   frame from a failed fetch on the Ticker object, so retrying on the same object
   re-reads the cache without a single new request. Measured 2026-10-22: one
