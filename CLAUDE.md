@@ -804,3 +804,45 @@ their own descriptive names — `AI_INDUSTRY_WEEKLY_DIR` (sibling-skill location
 `git push` uses the SSH host alias `github.com-personal`, while `gh` may be
 authenticated as a different account — check `gh auth status` before assuming
 PR creation will work.
+
+## Commits and pull requests
+
+The two follow **different** conventions on purpose: a commit subject names the
+change, a PR title names the problem that motivated it. Do not use one form
+where the other belongs.
+
+- **Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/)**:
+  `<type>[(scope)][!]: <description>`, then a blank line, then the body, then a
+  blank line before any footers.
+  - **Types in use here:** `feat`, `fix`, `docs`, `chore`, `refactor`, `style`.
+    The spec also allows `perf`, `test`, `ci` and `build`; this repo has no test
+    suite, no CI and no build, so reach for those only when the change really is
+    one of them.
+  - **Scope is the skill directory**: `ai-industry-weekly`, `ai-pullback-daily`,
+    `daily-risk-monitor`, `rust-best-practices`. Use `claude` for `CLAUDE.md`
+    and `.claude/`, `readme` for `README.md`. Comma-separate when a change
+    genuinely spans two — `refactor(ai-pullback-daily,daily-risk-monitor):`.
+    The routines' own data commits keep their established shape,
+    `chore(<skill>): daily run YYYY-MM-DD`.
+  - **Breaking changes** take `!` before the colon (`feat(ai-industry-weekly)!:`)
+    and/or a `BREAKING CHANGE:` footer. That token is the one part of the format
+    that MUST be uppercase. Here "breaking" means a script's CLI, its `--json`
+    shape, or a state file's format changed in a way an existing caller or the
+    sibling skill would trip over.
+  - **Footers are git trailers** (`Token: value`, hyphens not spaces), so the
+    `Co-Authored-By:` trailer belongs there — after a blank line, never glued to
+    the body.
+- **PR titles start with `Problem`** — `Problem: <the problem>` or, scoped,
+  `Problem(ai-industry-weekly): <the problem>`. State what is wrong, not what you
+  did: "Problem: one throttled ticker forces a full 46-ticker refetch before
+  `--caps` will accept the table", not "allow multiple --caps files". The
+  reviewer then reads the diff as an answer to a question rather than a claim to
+  audit, and the merge commit records why the work happened. GitHub appends
+  `(#NN)` itself — do not add it.
+- **Each commit should leave every script runnable on its own**, so a regression
+  bisects. There is no type-checker or test suite here, so "runnable" means the
+  scripts still compile (`python3 -m py_compile`) and the verification commands
+  for the area you touched still pass. Split by concern, not by file count, and
+  when two files cannot change apart (a `--json` field renamed in one script
+  while its reader in the other is repointed, say) keep them in one commit and
+  say so in the body rather than shipping a commit that breaks the hand-off.
