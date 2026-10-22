@@ -149,7 +149,7 @@ The cross-skill evidence matches the mechanism exactly:
 
 ### Verification method — the part worth copying
 
-The repo's `CLAUDE.md` records a precedent where a frozen-fixture oracle scored **119/130 green while `stock_perp.py` was 100% broken against the real network**. So this fix was validated live, not against fixtures:
+`docs/architecture/daily-risk-monitor.md` records a precedent where a frozen-fixture oracle scored **119/130 green while `stock_perp.py` was 100% broken against the real network**. So this fix was validated live, not against fixtures:
 
 - **Interleaved live comparison.** The old inline block and the new script were each run once against real upstreams, then diffed field by field: all ten units' **exit codes identical**, all **JSON keys identical**, **zero structural differences**. The only deltas were live market values and fetch timestamps between two launches ~30s apart.
 - `launch --serial` (the no-job-control degradation path): full run **14.2s**, all ten `exit 0`.
@@ -171,7 +171,7 @@ Adding the launcher required **no README change**, which is positive evidence th
 
 - `skills/daily-risk-monitor/scripts/fetch_all.sh` — the launcher (`launch` / `join` / `list`, `--serial`, `--run DIR`, `--timeout N`)
 - `skills/daily-risk-monitor/SKILL.md` step 1.1 — now names the script instead of carrying the block
-- `CLAUDE.md`「`fetch_all.sh` owns the ten fetch invocations」 — the durable record of the mechanism
+- `docs/architecture/daily-risk-monitor.md`「`fetch_all.sh` owns the ten fetch invocations」 — the durable record of the mechanism
 - `docs/solutions/conventions/cite-docs-by-content-anchor-not-line-number.md` — companion learning from the same session; this doc's SKILL.md rewrite is what exposed it
 - Commit `4860376` on branch `fix/drm-fetch-launcher-and-citation-anchors`
 - **Supersedes** `docs/superpowers/specs/2026-09-05-skill-handoff-and-concurrency-design.md` §5.4 on one point: that spec prescribes 「逐 PID 收退出码（`wait $pid` 每一个）」 and predicts 「零脚本改动」. Both are now false — the launch/join split makes PIDs unrecoverable across calls, so exit codes travel via `<unit>.rc` files, and a 237-line script was added. The spec's other three 守则 survive verbatim. It carries a 2026-09-07 note declaring itself frozen; prefer extending that note over editing §5.4.
