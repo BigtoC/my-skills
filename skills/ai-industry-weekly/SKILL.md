@@ -1,6 +1,6 @@
 ---
 name: ai-industry-weekly
-description: AI 算力产业链「产业质量参考表」周更助手。每周用最新基本面按统一规则重算全部标的（当前 46 档）的产业质量表，与滚动基准表逐行对比，输出评级变动摘要 + 完整产业表 + 应用说明，并推送 Slack。当用户提到 产业表周更、AI 算力产业表、产业质量参考表、重算评级、🟢🔵🟡🔴 四档评级、46 标的、CoWoS/HBM/3nm/数据中心电力 四大瓶颈、基准表对比、周更推送到 Slack 频道 时自动使用。
+description: AI 算力产业链「产业质量参考表」周更助手。每周用最新基本面按统一规则重算全部标的（当前 46 档）的产业质量表（含自由现金流/负债压档），与滚动基准表逐行对比，输出评级变动摘要 + 完整产业表 + 应用说明，并推送 Slack。当用户提到 产业表周更、AI 算力产业表、产业质量参考表、重算评级、🟢🔵🟡🔴 四档评级、46 标的、CoWoS/HBM/3nm/数据中心电力 四大瓶颈、基准表对比、周更推送到 Slack 频道 时自动使用。
 license: MIT
 compatibility: Portable Agent Skills format for agents that support SKILL.md. Scripts need python3, `requests` and `yfinance`, plus outbound network; step 1 exits with an install hint if yfinance is missing (it does not self-install). Slack push (step 5) needs a Slack MCP server and is skippable. The optional ETF holdings fetch (step 1.2) falls back Alpha Vantage -> yfinance -> the issuer site and caches nothing; it reads Alpha Vantage key(s) from `AV_API_KEYS`, and unset, that first tier is skipped and the rest of the run is unaffected.
 metadata:
@@ -34,10 +34,10 @@ metadata:
 | `references/data-sources.md`    | 第一步取数口径与数据源细则                   |
 | `references/rating-rules.md`    | 第二步评级规则与逐标的特例（全文）           |
 | `references/output-format.md`   | 输出格式、Slack 推送、交付自检清单           |
-| `scripts/fetch_fundamentals.py` | 批量取基本面                                 |
+| `scripts/fetch_fundamentals.py` | 批量取基本面 + 现金流/负债评级上限           |
 | `scripts/hk_quote.py`           | 港股原始未复权实时行情                       |
 | `scripts/etf_holdings.py`       | ETF 持仓/费率取数（AV→yfinance→官网，可选）  |
-| `scripts/baseline.py`           | 基准表 show / meta / validate / diff / write |
+| `scripts/baseline.py`           | 基准表 show / meta / validate / diff / write（`--caps` 校验评级上限） |
 
 脚本**内部**用 `__file__` 相对定位 `assets/`，所以脚本自己找得到数据文件，与 cwd 无关。但**调用脚本的那条命令**仍要给对路径：本技能被触发时 cwd 通常是用户自己的项目，`python3 scripts/baseline.py ...` 这种相对写法会直接 `can't open file`。因此下文所有命令一律用第零步定下的 `$SKILL_DIR` 绝对路径调用。
 
@@ -110,6 +110,8 @@ python3 "$SKILL_DIR/scripts/fetch_fundamentals.py" --json /tmp/fundamentals.json
 数据缺失记 `N/A`，**不估算、不编造**。抓空就重跑一次；仍空则记 N/A。
 
 **留意脚本输出末尾的「⚠ 利润率完整性」一节**：yfinance `.info` 的 `operatingMargins` 会单字段损坏（`om>gm` 算术不可能等），脚本已自动检出并给出年报/TTM 重算值；命中行怎么取舍见 `references/rating-rules.md` 顶部编者注（命中标的每周不同，勿当固定名单）。
+
+**再留意最后的「现金流与负债 · 评级上限」一节**（2026-10-22 起）：脚本逐档算出 FCF 率（现金流量表口径，TTM → 年报 → N/A）、净负债/EBITDA，并按 `CASH_DEBT_TH` 判出每档的**评级上限** `rating_cap`，同时点名「基准表现有评级高于本周上限」的行——那几行本周必须下调。**FCF 一律引这一节的 `fcf_margin`，不得引每档那行的 `FCF=` 字段**（那是 `.info` 的 freeCashflow，实测与报表口径偏离可达 28pt，见 `rating-rules.md` 2026-10-22 编者注）。资产负债率只作参考。`--json` 的 `cash_debt.caps` 是第三步 `--caps` 要读的东西，所以**这份 JSON 必须是全量取数**（`--tickers` 只取部分会让 `--caps` 报缺标的）。
 
 ### 1.2 ETF 持仓取数（可选增强，每周一次）
 
@@ -248,9 +250,10 @@ AV（全量）、yfinance（top-N）、官网（权威）**口径互不相同**�
 - **四大瓶颈**（① CoWoS ② HBM ③ 3nm/2nm ④ 数据中心电力，卡瓶颈打 🔥 并注编号）
 - **四档评级**（🟢 强烈关注 / 🔵 关注 / 🟡 观望 / 🔴 迴避）
 - **一致性阈值**（亏损或 FCF 为负且目标价低于现价 → 压 🟡；fwdPE>80 无对等增速 或 目标价远低于现价(>20%) → 至多 🔵；ETF 默认 🔵）
+- **现金流/负债压档**（FCF 低、负债高 → 评级上限更低；只压不抬，与一致性阈值取更严者）——每档的上限直接用第一步脚本算出的 `rating_cap`，阈值只在脚本 `CASH_DEBT_TH` 定义、不要自己另算或另记数字；判不了（N/A）的行论点栏注明哪项 N/A，且不得以现金流/负债作 🟢 依据
 - **逐标的特例**（ADR/外币失真、DELL/RKLB/VRT、三档 Roundhill ETF、SPCX、0941.HK 等）
 
-逐档重算。评级规则每周保持一致以减少主观漂移，**任何评级变动都必须有本周基本面依据**。
+逐档重算。评级规则每周保持一致以减少主观漂移，**任何评级变动都必须有本周基本面依据**。规则本身改动引起的变动（如 2026-10-22 新增的现金流/负债压档）也算有据，但摘要里要写明「现金流/负债压档」并附触发数字（FCF 率及其口径/期末、净负债/EBITDA），不要包装成本周基本面变化。
 
 ## 第三步 · 对比基准并输出
 
@@ -272,15 +275,15 @@ AV（全量）、yfinance（top-N）、官网（权威）**口径互不相同**�
 3. **先校验，再对比**（顺序不可颠倒）：
 
    ```bash
-   python3 "$SKILL_DIR/scripts/baseline.py" validate /tmp/industry_table_new.md
+   python3 "$SKILL_DIR/scripts/baseline.py" validate /tmp/industry_table_new.md --caps /tmp/fundamentals.json
    ```
 
-   **exit 0 才继续。** 校验不过时脚本会逐条列错（行数与 `universe.json` 不符、代码集合或行序不对、评级不在合法四档、列数不对、含「见 Slack」类占位符等）——**回去修表，改完重跑 validate，通过后才做下一步**。绝不能带着未校验的表去 diff 或写正文：那样产出的摘要①是建立在一张可能缺行、串行、评级非法的表上的，等于交付了假摘要。
+   **exit 0 才继续。** 校验不过时脚本会逐条列错（行数与 `universe.json` 不符、代码集合或行序不对、评级不在合法四档、列数不对、含「见 Slack」类占位符、**评级高于第一步算出的现金流/负债上限**等）——**回去修表，改完重跑 validate，通过后才做下一步**。绝不能带着未校验的表去 diff 或写正文：那样产出的摘要①是建立在一张可能缺行、串行、评级非法的表上的，等于交付了假摘要。
 
 4. 生成变动摘要素材：
 
    ```bash
-   python3 "$SKILL_DIR/scripts/baseline.py" diff /tmp/industry_table_new.md
+   python3 "$SKILL_DIR/scripts/baseline.py" diff /tmp/industry_table_new.md --caps /tmp/fundamentals.json
    ```
 
    输出评级变动 + 其他字段漂移，作为「本周变动摘要」的事实底稿——但摘要里每条变动的**原因**要你自己按第一步数据写。
@@ -292,8 +295,10 @@ AV（全量）、yfinance（top-N）、官网（权威）**口径互不相同**�
 > **这是本技能相对原 prompt 的关键改动。** 原 prompt 用「内置种子基准表」——每周都跟同一张固定的表比。本技能改为**滚动文件基准**：`assets/baseline.md` 每周被新表覆写，所以每周是**跟上周比**。
 
 ```bash
-python3 "$SKILL_DIR/scripts/baseline.py" write /tmp/industry_table_new.md --date <数据日期 YYYY-MM-DD>
+python3 "$SKILL_DIR/scripts/baseline.py" write /tmp/industry_table_new.md --date <数据日期 YYYY-MM-DD> --caps /tmp/fundamentals.json
 ```
+
+`--caps` 三处（validate / diff / write）都要带、指向第一步 `--json` 写出的同一个文件。不带时脚本**跳过**上限检查并在 stderr 与 JSON（`caps_checked: false`）里注明——那是手工调试用的，周更正式流程不许省。`--caps` 文件取数超过 7 天（或日期在未来）、缺标的、或不是新版取数输出，都会被当成校验不过；**FCF 没判成**的标的评 🟢 也会被拒（判不了不等于通过；第一步输出会提前点名这类行），其余判不全的会在输出里列为「上限未知」。
 
 执行时机（两条都是硬性的）：
 
@@ -331,6 +336,7 @@ python3 "$SKILL_DIR/scripts/baseline.py" write /tmp/industry_table_new.md --date
 **外加第 8 条**：
 
 8. [ ] `python3 "$SKILL_DIR/scripts/baseline.py" write` 是否已成功执行（exit 0），且 `python3 "$SKILL_DIR/scripts/baseline.py" meta` 打印的 `date` 等于本次数据日期？
+9. [ ] validate / diff / write 三步是否都带了 `--caps /tmp/fundamentals.json`（输出里是「评级均未高于现金流/负债上限」而不是「未传 --caps」）？因压档而变的评级，摘要里是否写明了「现金流/负债压档」与触发数字？
 
 ## 增减标的
 
@@ -347,6 +353,7 @@ python3 "$SKILL_DIR/scripts/baseline.py" write /tmp/industry_table_new.md --date
 ## 规则
 
 - 评级规则每周保持一致，减少主观漂移，变动必须有基本面依据；
+- 自由现金流低、负债高的评级更低：上限由 `fetch_fundamentals.py` 算出、`baseline.py --caps` 强制执行，FCF 只引现金流量表口径；
 - 数据缺失记 N/A 绝不编造；
 - 港股价格/52 周高低/距高点% 一律以 `scripts/hk_quote.py` 输出为准（原始未复权、实时），yfinance 仅用于财务字段；
 - **完整产业表必须同时出现在【运行结果正文】与【Slack thread】两处；Slack 推送成功不构成运行结果可省略整表的理由**；
