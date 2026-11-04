@@ -3,7 +3,7 @@
     {
       "date": "2026-11-04",
       "mode": "postclose",
-      "generated_at": "2026-11-04T14:09:46+00:00",
+      "generated_at": "2026-11-04T22:09:10+00:00",
       "tripwires": {
         "1": {
           "value": "🟡",
@@ -32,7 +32,7 @@
         "5": {
           "value": "🟢",
           "last_evidence_date": "2026-11-04",
-          "carried_forward": false,
+          "carried_forward": true,
           "not_supplied": false
         }
       },
