@@ -6,7 +6,7 @@
     },
     "2": {
       "state": "🟢",
-      "notes": "SPX 11-06 收 7376.86 未创 252 日新高（距 10-06 −5.65%）→前提不成立；barchart/stockcharts 无读数"
+      "notes": "SPX 11-06 收 7376.86 未创 252 日新高（距 10-06 −5.65%）→前提不成立；barchart/stockcharts 无读数（429/空壳）"
     },
     "3": {
       "state": "⚪️",
@@ -22,7 +22,7 @@
     },
     "6": {
       "state": "🟢",
-      "notes": "SPX 未创新高→前提不成立；stockcharts $NYAD SPA 空壳无读数"
+      "notes": "SPX 未创新高→前提不成立；stockcharts $NYAD 429/空壳无读数"
     },
     "7": {
       "state": "⚪️",
@@ -38,11 +38,11 @@
     },
     "10": {
       "state": "⚪️",
-      "notes": "cboe.com 页面无资料日期不可归日；上次 0.66 @2026-10-30，滞后 1 周"
+      "notes": "cboe.com 每日页无资料日期不可归日；上次 0.66 @2026-10-30，滞后 1 周"
     },
     "11": {
       "state": "🟢",
-      "notes": "Margin Debt $1,480,054M @2026-09（FINRA，macromicro 403）；7月↑8月↑9月↑；10月未公布"
+      "notes": "Margin Debt $1,480,054M @2026-09（FINRA，macromicro 403）YoY +31.4%；7月↑8月↑9月↑；10月未公布"
     },
     "12": {
       "state": "⚪️",
@@ -54,27 +54,27 @@
     },
     "14": {
       "state": "🟢",
-      "notes": "BTC/ETH 0.0100%/8h、SOL 0.0090%/8h（Hyperliquid，Binance 451）"
+      "notes": "BTC/SOL 0.0100%/8h、ETH 0.0092%/8h（Hyperliquid，Binance 451）"
     },
     "15": {
       "state": "⚪️",
-      "notes": "coinglass API key missing；web_search/web_fetch 无带日期读数；上次 $48.7M（多 $27.8M/空 $20.9M）@2026-11-01，滞后 6 天（<1 周）"
+      "notes": "coinglass API key missing；web_search/web_fetch 无带日期读数；上次 $48.7M（多 $27.8M/空 $20.9M）@2026-11-01，滞后 1 周"
     },
     "16": {
       "state": "🟢",
-      "notes": "CoinGecko 59.28% @11-07（首轮 429→CoinPaprika，重试 CoinGecko 成功）；24h +2.79% 上升；7d +0.09%（基准 10-31 同源）"
+      "notes": "CoinGecko 59.32% @11-08；24h +2.35% 上升；7d +0.04%（基准 11-01 同源）"
     },
     "17": {
       "state": "🔴",
-      "notes": "稳定币 $247.59B @11-07，7d −$4.40B 净流出；14d −$6.87B；1d −$0.85B"
+      "notes": "稳定币 $247.66B @11-08，7d −$4.00B 净流出；14d −$6.70B；1d +$0.07B"
     },
     "18": {
       "state": "🟢",
-      "notes": "隐含跳空 SP500 +0.19%（对 ^GSPC 11-06）/ XYZ100 −0.04%（对 FRED 11-06，滞后1日）；资金费率年化 +5.47%"
+      "notes": "隐含跳空 SP500 −0.03%（对 ^GSPC 11-06）/ XYZ100 −0.20%（对 FRED 11-06，滞后2日）；资金费率年化 +5.47%"
     },
     "19": {
       "state": "🟢",
-      "notes": "SPX +0.31% = 0.25σ @11-06；BTC +0.34% = 0.16σ @11-07"
+      "notes": "SPX +0.31% = 0.25σ @11-06；BTC +0.13% = 0.06σ @11-08"
     },
     "20": {
       "state": "🟢",
@@ -118,12 +118,12 @@
     },
     "30": {
       "state": "🔴",
-      "notes": "Margin Debt/GDP 4.48% @2026-09/Q3（路径② 1,480.054B/33,010.0B；路径① GuruFocus 403）"
+      "notes": "Margin Debt/GDP 4.48% @2026-09/Q3（路径② 1,480.054B/33,010.0B；路径① GuruFocus 无当期值）"
     }
   },
   "hard_thresholds": {
     "1": {
-      "notes": "FRED VIXCLS 28.18 @11-05 >25 为第 1 日（11-04 16.61）；yfinance ^VIX 25.64 @11-06 异源未计，需连续 3 日",
+      "notes": "FRED VIXCLS 28.18 @11-05 >25 为第 1 日（11-04 16.61）；11-06 FRED 未出；yfinance ^VIX 25.64 @11-06 异源未计，需连续 3 日",
       "symbol": "⚠️",
       "name": "VIX 突破并站稳（>25 且连续 3 个交易日）"
     },
@@ -168,18 +168,10 @@
       "dma200_slope_positive": true
     }
   },
-  "date": "2026-11-07",
-  "updated_at": "2026-11-07 08:06:35+0000",
+  "date": "2026-11-08",
+  "updated_at": "2026-11-08 08:06:30+0000",
   "written_by": "snapshot.py",
   "history": [
-    {
-      "date": "2026-10-25",
-      "trigger_count": 0,
-      "unknown_count": 2,
-      "strategic_baseline_pct": 100,
-      "tactical_state": "🟢",
-      "above_200dma": true
-    },
     {
       "date": "2026-10-26",
       "trigger_count": 0,
@@ -278,6 +270,14 @@
     },
     {
       "date": "2026-11-07",
+      "trigger_count": 0,
+      "unknown_count": 2,
+      "strategic_baseline_pct": 100,
+      "tactical_state": "🟢",
+      "above_200dma": true
+    },
+    {
+      "date": "2026-11-08",
       "trigger_count": 0,
       "unknown_count": 2,
       "strategic_baseline_pct": 100,
