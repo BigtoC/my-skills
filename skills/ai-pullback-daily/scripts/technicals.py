@@ -37,6 +37,10 @@
     python3 scripts/technicals.py --tickers NVDA,TSM   # 只跑子集
     python3 scripts/technicals.py --macro-only         # 只出宏观利率/驱动源输入
     python3 scripts/technicals.py --no-earnings        # 跳过财报日（省 N 次请求）
+    python3 scripts/technicals.py --no-live-overlay    # 不附盘中/盘前叠加层（也不取盘前 1m）
+
+美股盘前（工作日 04:00–09:30 ET）运行时，另取 1m prepost=True 的今日盘前最后一笔成交，
+作为 ⏳ 盘前叠加层（未确认）：T1/T2/T3 与分桶仍只用最近完整交易日收盘，绝不改写。
 
 依赖: python3 + yfinance + pandas + numpy + requests（港股走 hk_quote.py）。
 """
@@ -145,15 +149,42 @@ INDEX_NAMES_CN = {SPX_TICKER: "标普500", NDX_TICKER: "纳斯达克100"}
 # 10Y 合理区间（用于 ^TNX 单位侦测：yfinance 有时给 % 有时给 %x10）
 TNX_MIN_PCT, TNX_MAX_PCT = 0.5, 8.0
 
-# open 只用于**标签诚实度**（盘前 vs 盘中），不参与 asof 判定：
-# 两者都是「当日 K 线未完成」，回退与 RUN_MODE 完全一致。之所以要分，是因为
-# yfinance 在开盘前就会送出一根日期为今天的日 bar（实测 06:11 ET 已有 09-15 的
-# bar），此时若印「盘中」，报告就在市场还没开的时候声称自己在看盘中价。
+# open 只用于**标签诚实度**（盘前 vs 盘中）与美股盘前时段判定，不参与 asof 判定：
+# 两者都是「当日 K 线未完成」，asof 回退完全一致。但 RUN_MODE **不**一致——
+# SKILL.md 的 RUN_MODE 一行只把 state == "intraday" 映射成 intraday，pre_market /
+# pre_open 都是 postclose（权威运行：写信用历史、run_state、commit）。之所以要分标签，
+# 是因为 yfinance 在开盘前就会送出一根日期为今天的日 bar（实测 06:11 ET 已有 09-15 的
+# bar；2026-11-11 05:40 ET 实测这根 bar 只出现在 DX-Y.NYB / ^VIX 这类近 24h 标的上，
+# 个股当日 bar 全是 NaN），此时若印「盘中」，报告就在市场还没开的时候声称自己在看盘中价。
 MARKETS = {
     "US": {"tz": "America/New_York", "open": dt.time(9, 30), "close": dt.time(16, 0), "label": "美股"},
     "HK": {"tz": "Asia/Hong_Kong", "open": dt.time(9, 30), "close": dt.time(16, 0), "label": "港股"},
     "KR": {"tz": "Asia/Seoul", "open": dt.time(9, 0), "close": dt.time(15, 30), "label": "韩股"},
 }
+
+# 美股盘前时段起点（ET）。[US_PREMARKET_START, MARKETS["US"]["open"]) 即盘前窗口。
+# 实测（2026-11-11 05:38 ET）yf.download(period="1d", interval="1m", prepost=True)
+# 从 04:00 ET 起给 1m bar，最后一行是最近一笔盘前成交。窗口外（00:00–04:00）同一调用
+# 回的是**前一交易日**的 bar，必须按「今日 ET 日期 + 窗口」双重过滤才能用。
+US_PREMARKET_START = dt.time(4, 0)
+
+# 盘前叠加层的来源说明——行级 live_source、顶层 live.source、premarket.source 共用这一份，
+# 改一处等于改全部（JSON 与正文逐字同源）。
+PREMARKET_SOURCE = "yfinance 1m prepost=True · 今日盘前最后一笔成交（04:00–09:30 ET）"
+PREMARKET_CALIBER = "盘前成交价（未复权）；对照的 hi52/hi20/均线为日线拆股已还原·股息未复权口径"
+# 盘前价的定位：只做参考，但分析照常进行。正文（标题/表头/宏观行/报告头）与 JSON
+# （premarket.reference_note、live.reference_note）共用这一句。
+PREMARKET_REFERENCE_NOTE = ("盘前价仅供参考：分析照常进行（现价、52w/20D回撤、距T1/T2、均线位置、盘前触及均按盘前价算），"
+                            "但 T1/T2/T3 触发与分桶只认最近完整交易日收盘")
+# 盘前大盘背景：只取这三只 ETF。^GSPC/^NDX/^TNX 实测**没有**盘前 bar（1m 回的是前一交易日），
+# 不拿 SPY/ES/NQ 之类别的工具顶替——不同工具、比值也不是 1:1。
+PREMARKET_BACKDROP = ("QQQ", "SMH", "SOXX")
+PREMARKET_UNAVAILABLE = (SPX_TICKER, NDX_TICKER, TNX_TICKER)
+# 选中但不在盘前请求清单里的美股行（premarket_eligible 为 False）的 N/A 理由：
+# 它们根本没被请求，写「该档今日盘前尚无成交」就是把「没去要」说成「要了没有」。
+PREMARKET_INELIGIBLE_REASON = "指数/期货无盘前成交"
+PREMARKET_FOREIGN_REASON = ("非美国本土挂牌（代码含「.」）：不取盘前价——其 1m bar 是外盘正式盘成交，"
+                            "落在 04:00–09:30 ET 也不是美股盘前")
 
 # 折现率信号阈值（references/data-acquisition.md「折现率信号」）
 RATE_UP_1D_BP, RATE_UP_5D_BP = 10.0, 25.0
@@ -330,6 +361,189 @@ def _session_unsupported(where: str) -> None:
                 "（见脚本内传输层矩阵）")
         _ENGINE_NOTES.append(note)
         err(note)
+
+
+# 引擎档位的人读名，供 premarket.tier / sources.premarket_tier 使用（None = 两档都没取到）
+ENGINE_TIER_NAMES = {1: "第1档 requests.Session(浏览器UA)", 2: "第2档 yfinance 默认引擎(curl_cffi)"}
+
+
+def yf_download_tiered(yf, sess, why: str = "", errors=None, **kw):
+    """yf.download 的引擎回退链（顺序写死，见 CLAUDE.md「Fallback chains — the rule」）。
+
+    返回 (raw, tier)：tier ∈ {1, 2, None}，None = 两档都没取到（raw 为 None 或空表）。
+
+      第1档 requests.Session + 浏览器 UA   第2档 yfinance 默认 curl_cffi 引擎
+    两档都必须保留，因为两种故障方向相反、互为对方的解药（实测见 make_session() 上方）：
+      代理环境   curl_cffi 握不完 TLS 隧道  -> 只有第1档能过
+      IP 被限流  requests.Session 吃 429    -> 只有第2档能过（它复用缓存 cookie、
+                 TLS 指纹不同，限流窗口内仍取得到数）
+    ⚠ 绝不要把这里简化成「只用第1档」：2026-09-11 本脚本一度被改成硬切第1档，那在代理
+    环境下是对的，但在限流环境下比改之前更差——原本 curl_cffi 能扛的那一轮会变成整片空。
+
+    why：调用点标签，前缀进 _engine_fallback 的 note。日线调用传空串，文案与抽出前
+    逐字一致；盘前 1m 调用传「盘前 1m」——否则两次回退的 note 文案相同，会被
+    _engine_fallback 的去重吞成一条，「1m 那次也回退了」这件事就看不见了。
+
+    与 session= 无关的 TypeError 照旧上抛（真 bug 不得被记成一次「版本不兼容」降级）；
+    调用方若不允许失败（盘前 1m），自己兜。
+
+    errors：可选 list。第2档也抛错（「两档引擎均取数失败」）时，把 stderr 那行的成因
+    （已 scrub）追加进去，供调用方写进 JSON——stderr 只能是冗余通道（JSON 等价规则）。
+    日线调用不传，行为与抽出前一致。
+    """
+    tag = f"{why}：" if why else ""
+
+    def _dl(use_session):
+        call = dict(kw)
+        if use_session:
+            call["session"] = sess
+        return yf.download(**call)
+
+    raw, tier = None, None
+    try:
+        raw = _dl(True)
+    except TypeError as exc:           # 可能是「该版本不收 session=」，也可能无关
+        if "session" not in str(exc):
+            # 与 session= 无关的 TypeError：不得吞掉、更不得重跑整轮下载，
+            # 否则真正的 bug 会被记成一次「版本不兼容」降级。
+            raise
+        _session_unsupported("download")
+    except Exception as exc:  # noqa: BLE001 - 第1档任何失败都只降级到第2档，不掀掉整轮
+        _engine_fallback(f"{tag}第1档 requests.Session 取数抛错（{type(exc).__name__}）")
+    if raw is not None and len(raw) > 0:
+        tier = 1
+
+    # 空表不等于「没有数据」：限流时第1档回空而第2档仍有数，直接当取数失败会误报。
+    if raw is None or len(raw) == 0:
+        try:
+            raw2 = _dl(False)
+        except Exception as exc:  # noqa: BLE001
+            cause = f"{type(exc).__name__}: {scrub(exc)}"
+            err(f"✗ {tag}两档引擎均取数失败：{cause}")
+            if errors is not None:
+                errors.append(cause)
+            raw2 = None
+        if raw2 is not None and len(raw2) > 0:
+            _engine_fallback(f"{tag}第1档 requests.Session 回空表、第2档默认引擎取到数据"
+                             "（多半是本机 IP 被 Yahoo 限流，429 只挡得住第1档）")
+            raw, tier = raw2, 2
+    return raw, tier
+
+
+# 最近一次 fetch_us_premarket 的传输层元数据（与 _ENGINE_NOTES 同一种进程级记录方式），
+# 供 premarket.tier / sources.premarket_tier 使用；error = 1m 取数本身失败的成因（已 scrub），
+# None = 取数调用没有失败（取到空表不算失败——那可能就是休市日）。
+_PREMARKET_FETCH = {"tier": None, "error": None}
+
+
+def premarket_eligible(ticker: str) -> bool:
+    """能否向 Yahoo 要盘前 1m：只有美股个股/ETF。
+
+    ^ 开头的指数/收益率实测**没有**盘前 bar；含 = 的是期货/外汇。
+    港股/韩股排除不只是「它们没有美股盘前」：混批时它们的 1m bar 被换算成 ET 后
+    日期恰好是今天（实测 0700.HK 03:08 ET、000660.KS 01:00 ET），只按日期过滤会把
+    港韩的**正式盘**价当成美股盘前价。hk_quote 旗标由调用方另行排除。
+    含「.」的一律排除：market_of() 把不带 .HK/.KS/.KQ 的都算美股，于是 ASML.AS、AZN.L
+    这类外盘挂牌也会混进来——实测（2026-11-11 06:11 ET）它们回的是阿姆斯特丹/伦敦
+    **正式盘** 05:56 ET 的成交，正落在 04:00–09:30 ET 窗口里。Yahoo 的美股分级股
+    写作「-」（BRK-B），不受影响；DX-Y.NYB 也因此被排除（它本就没有盘前个股意义）。
+    """
+    t = str(ticker).strip().upper()
+    return (bool(t) and market_of(t) == "US" and not t.startswith("^") and "=" not in t
+            and "." not in t)
+
+
+def fetch_us_premarket(yf, sess, tickers, now_et):
+    """取美股**今日盘前**最后一笔成交 → ({TICKER: {...}}, notes)。
+
+    每档：premarket_px（float）、premarket_ts（该笔 1m bar 的 ET 时间戳，不是运行时刻）、
+    premarket_age_min（距 now_et 的分钟数）、premarket_bars（窗口内 bar 数）。
+
+    过滤三道，缺一不可：
+      ① 请求清单只要 premarket_eligible() 的代码；
+      ② bar 的 ET 日期 == now_et 的日期（窗口外同一调用回的是前一交易日的 bar）；
+      ③ US_PREMARKET_START <= ET 时刻 < 开盘 09:30（盘后/正式盘的 bar 一律不算盘前）。
+    最后一行可能是还在进行中的那一分钟（实测时间戳 05:40:31，不在整分）——它仍是
+    最近一笔成交价，照用，时间戳如实给出。
+
+    ⚠ 1m 索引是 tz-aware（America/New_York），日线是 tz-naive：**绝不**与日线帧混用或
+    union（见 fallback_frames 帧契约那段：union 回 object 索引，sort 抛 TypeError，被顶层
+    兜底吞成 exit 1）。本函数的结果只以纯 Python 值离开，不进 frames。
+
+    任何失败只降级（⚠ note），绝不抛、绝不改退出码：盘前层是附加观察层，
+    取不到 = 本次无盘前叠加层，不是取数失败。
+    """
+    us_tz = ZoneInfo(MARKETS["US"]["tz"])
+    now_et = now_et.astimezone(us_tz)
+    req = list(dict.fromkeys(str(t).strip().upper() for t in tickers if premarket_eligible(t)))
+    _PREMARKET_FETCH["tier"] = None
+    _PREMARKET_FETCH["error"] = None
+    if not req:
+        return {}, []
+    notes, dl_errors = [], []
+    try:
+        raw, tier = yf_download_tiered(
+            yf, sess, "盘前 1m", errors=dl_errors,
+            tickers=req, period="1d", interval="1m", prepost=True, progress=False,
+            auto_adjust=False, group_by="ticker", threads=True)
+    except Exception as exc:  # noqa: BLE001 - 1m 失败只降级，绝不掀掉整轮（含无关 TypeError）
+        _PREMARKET_FETCH["error"] = f"{type(exc).__name__}: {scrub(exc)[:160]}"
+        return {}, [f"⚠ 盘前 1m 取数抛错（{_PREMARKET_FETCH['error']}），"
+                    f"{len(req)} 档盘前价记 N/A；本次无盘前叠加层"]
+    _PREMARKET_FETCH["tier"] = tier
+    if raw is None or len(raw) == 0:
+        if dl_errors:
+            # 两档引擎都抛错：成因原样进 JSON（stderr 那行只是冗余通道），且这不是「休市日」
+            _PREMARKET_FETCH["error"] = dl_errors[-1][:300]
+            notes.append(f"⚠ 盘前 1m 两档引擎均取数失败（{_PREMARKET_FETCH['error']}），"
+                         f"{len(req)} 档盘前价记 N/A；本次无盘前叠加层")
+        return {}, notes
+
+    today = now_et.date()
+    open_t = MARKETS["US"]["open"]
+    out, naive = {}, []
+    for t in req:
+        # 单只请求时 yfinance 可能不给 MultiIndex：frame_for 在那种情况下回整张表，
+        # 只有 req 恰为一只时才成立——所以只在 len(req)==1 时接受非 MultiIndex。
+        if not isinstance(raw.columns, pd.MultiIndex) and len(req) != 1:
+            continue
+        f = frame_for(raw, t)
+        if f is None:
+            continue
+        idx = f.index
+        if getattr(idx, "tz", None) is None:
+            # 无时区就无从判定「今天几点」：不猜（不当 ET 也不当 UTC），记 N/A。
+            naive.append(t)
+            continue
+        et = idx.tz_convert(us_tz)
+        keep = [i for i, ts in enumerate(et)
+                if ts.date() == today and US_PREMARKET_START <= ts.time() < open_t]
+        if not keep:
+            continue
+        px, ts_last = None, None
+        for i in reversed(keep):
+            try:
+                v = float(f["Close"].iloc[i])
+            except (TypeError, ValueError):
+                continue
+            if is_num(v) and v > 0:
+                px, ts_last = v, et[i]
+                break
+        if px is None:
+            continue
+        ts_py = ts_last.to_pydatetime()
+        age = (now_et - ts_py).total_seconds() / 60.0
+        out[t] = {
+            "premarket_px": rnd(px, 4),
+            "premarket_ts": ts_py.isoformat(timespec="seconds"),
+            # 进行中的那一分钟时间戳可能比 now_et 晚几秒：记 0，不记负数
+            "premarket_age_min": rnd(max(0.0, age), 1),
+            "premarket_bars": len(keep),
+        }
+    if naive:
+        notes.append(f"⚠ 盘前 1m 数据索引无时区 {len(naive)} 档，无法判定是否落在盘前时段，"
+                     f"记 N/A（不猜时区）：" + ", ".join(naive))
+    return out, notes
 
 
 # ---------------------------------------------------------------- 姊妹技能定位
@@ -623,38 +837,64 @@ def resolve_asof(ref_frame, union_index, market: str):
     return last, notes
 
 
-def market_session(market: str, union_index, asof_ts):
+def market_session(market: str, union_index, asof_ts, now=None):
     """该市场此刻的**盘口状态**，供报告头「交易状态：<盘后/盘中/休市>」逐字使用。
 
     这是纯附加的观察层：它**不参与** resolve_asof 的任何判定，也不改动 asof。
     `output-format.md:13` 早就要求报告头写交易状态，但在此之前没有任何脚本产出
     这个字段——写报告的人只能自己看时钟或去 asof_notes 里认中文散文。
 
-    state 的四个取值互斥：
-      intraday   最新 bar 就是今天、且此刻还没到该市场收盘 → 当日 K 线未完成
+    state 的五个取值互斥：
+      intraday   最新 bar 就是今天、且此刻已开盘未收盘 → 当日 K 线未完成
+      pre_market 最新 bar 就是今天、但此刻早于开盘（yfinance 提前送出的当日 bar）
       post_close 今天有 bar 且已过收盘时间
       pre_open   今天还没有 bar、且此刻早于收盘（开盘前，或数据源尚未落地当日 bar）
-      closed     今天没有 bar 且已过收盘时间（周末／假日／该市场今日不交易）
+      closed     今天没有 bar 且已过收盘时间（假日／该市场今日不交易），或**周末**
+
+    周末一律 closed，不看 bar：改之前周六上午会是 pre_open（今天没有 bar、又早于
+    16:00），而 SKILL.md 早就声称周末是 closed。工作日假日仍可能是 pre_open——
+    本函数没有交易所日历，那一类由「盘前时段但未取到任何今日盘前成交」的 ⚠ 兜住。
+
+    附加字段（只增不改）：
+      premarket_window  仅美股：工作日且 US_PREMARKET_START <= 此刻 < 开盘。窗口内
+                        label 一律「盘前」（不论 state 是 pre_market 还是 pre_open——
+                        两者在盘前只差 DXY/VIX 有没有提前送当日 bar，与美股盘口无关）。
+      premarket_active  None；由 run() 在窗口内取完 1m 后填 True/False
+                        （是否取到任何今日盘前成交）。非美股或窗口外恒为 None。
+
+    now 只供测试注入时钟；正式运行恒为 None（= 取此刻）。
     """
     meta = MARKETS[market]
-    now = dt.datetime.now(ZoneInfo(meta["tz"]))
+    now = (now.astimezone(ZoneInfo(meta["tz"])) if now is not None
+           else dt.datetime.now(ZoneInfo(meta["tz"])))
     last = union_index[-1] if union_index is not None and len(union_index) else None
     has_today = bool(last is not None and last.date() == now.date())
     # 与 resolve_asof 共用同一个收盘时间来源：半日市当天 14:00 ET 是**盘后**，
     # 不是盘中。两处各写各的会让 RUN_MODE 与 asof 在这三天互相矛盾。
     close_t, is_early = close_time_for(market, now.date())
     before_close = now.time() < close_t
-    before_open = now.time() < meta.get("open", dt.time(0, 0))
-    if has_today:
+    open_t = meta.get("open", dt.time(0, 0))
+    before_open = now.time() < open_t
+    weekend = now.weekday() >= 5
+    if weekend:
+        state = "closed"
+    elif has_today:
         # 盘前也有当日 bar（yfinance 提前送出），但那不是盘中价。
         state = ("pre_market" if before_open else "intraday") if before_close else "post_close"
     else:
         state = "pre_open" if before_close else "closed"
+    premarket_window = bool(market == "US" and not weekend
+                            and US_PREMARKET_START <= now.time() < open_t)
+    label = {"intraday": "盘中", "pre_market": "盘前", "post_close": "盘后",
+             "pre_open": "开盘前", "closed": "休市"}[state]
+    if premarket_window:
+        label = "盘前"
     asof_date = asof_ts.date().isoformat() if asof_ts is not None else None
     return {
         "state": state,
-        "label": {"intraday": "盘中", "pre_market": "盘前", "post_close": "盘后",
-                  "pre_open": "开盘前", "closed": "休市"}[state],
+        "label": label,
+        "premarket_window": premarket_window,
+        "premarket_active": None,
         "now": now.isoformat(timespec="seconds"),
         "tz": meta["tz"],
         "close_time": close_t.strftime("%H:%M"),
@@ -702,6 +942,7 @@ def attach_live_overlay(row, frame, asof_ts, session):
     34.4 触发、11:25 读 35.0 不触发）就互相矛盾。
     """
     row["bar_complete"] = True
+    row["live_kind"] = "intraday"
     if frame is None or asof_ts is None:
         return row
     later = frame.loc[frame.index > asof_ts]
@@ -719,7 +960,6 @@ def attach_live_overlay(row, frame, asof_ts, session):
         row["live_unavailable_reason"] = "当日未完成 bar 的 Close 非数值"
         return row
 
-    close = row.get("close")
     row["bar_complete"] = False
     row["live_price"] = rnd(live, 4)
     row["live_bar_date"] = later.index[-1].date().isoformat()
@@ -728,7 +968,54 @@ def attach_live_overlay(row, frame, asof_ts, session):
     # 这是唯一能这么说的源：换任何外部实时源都要过回退链规则第 3、4 条。
     row["live_source"] = "yfinance 当日未完成日线 bar（与历史同一 series，口径一致）"
     row["live_price_caliber"] = "拆股已还原·股息未复权（同 close/hi52/hi20）"
+    _live_metrics(row, live, LIVE_TEXT["intraday"])
+    return row
 
+
+# 两种活价轨的措辞。数字口径完全相同（同一组 *_live 字段、同一套冻结阈值），只有
+# 「盘中」「盘前」两个字与各自不可判定的成因不同——所以措辞集中在这里，行级字段、
+# 顶层 live 块与人读分支都从这一份取，改一处即全改。
+LIVE_TEXT = {
+    "intraday": {
+        "t3_reason": "RSI(14) 定义在收盘价上，盘中无收盘 → 不判定（null，非 false）",
+        "vol_reason": ("盘中累计量 ÷ 20日整日均量 结构性 <1（实测中位 0.504、最大 1.065），"
+                       "「放量 ≥1.5x」在盘中不可达；按已过时间折算全日属「用不完整数据推算」，禁止"),
+        "threshold_reason": "T1/T2/T3 阈值标定在完整交易日收盘上，活价不得与之比较后记为已触发",
+        "reclaimed_title": "↩ 盘中已收回 · 未确认",
+        "reclaimed_caveat": ("最近完整交易日收盘已触发、此刻盘中活价回到触发价上方——"
+                             "**收盘触发与分桶不因此撤销**，须今日收盘确认"),
+        "prohibitions": [
+            "盘中活价不得写入任何以「收盘」为名的字段（close/prev_close/spot_close）",
+            "不得据此判定 T1/T2/T3 新触发、不得改变分桶",
+            "不得改变「✅ 未触发」清单——该清单口径为完整交易日收盘",
+            "hi52/hi20/T1触发价/T2触发价/各均线/量比 一律为最近完整交易日之值，盘中不重算",
+        ],
+    },
+    "premarket": {
+        "t3_reason": "RSI(14) 定义在收盘价上，盘前无收盘 → 不判定（null，非 false）",
+        "vol_reason": ("盘前成交量 Yahoo 1m 报 0／不可得，且盘前非整日 → 量比不可得（null）；"
+                       "按已过时间折算全日属「用不完整数据推算」，禁止"),
+        "threshold_reason": "T1/T2/T3 标定在完整交易日收盘上，盘前成交稀薄且非收盘",
+        "reclaimed_title": "↩ 盘前已收回 · 未确认",
+        "reclaimed_caveat": ("最近完整交易日收盘已触发、此刻盘前价回到触发价上方——"
+                             "**收盘触发与分桶不因此撤销**，须今日收盘确认"),
+        "prohibitions": [
+            "盘前价不得写入任何以「收盘」为名的字段（close/prev_close/spot_close）",
+            "不得据此判定 T1/T2/T3 新触发、不得改变分桶",
+            "不得改变「✅ 未触发」清单——该清单口径为完整交易日收盘",
+            "hi52/hi20/T1触发价/T2触发价/各均线/量比 一律为最近完整交易日之值，盘前不重算",
+        ],
+    },
+}
+
+
+def _live_metrics(row, live, text):
+    """活价轨的公共数学：活价 vs **冻结**的窗口型阈值。盘中与盘前共用这一份。
+
+    分子换成活价，分母一律不动（hi52/hi20/T1价/T2价/均线/前收都是最近完整交易日之值）。
+    两份实现各算各的，就是本技能族记录在案的最坏故障（两处规则静默分叉）。
+    """
+    close = row.get("close")
     # 活价 vs **冻结**的窗口型阈值 —— 分子换成活价，分母一律不动
     for name, ref in (("dd52_pct_live", row.get("hi52")), ("dd20_pct_live", row.get("hi20"))):
         row[name] = rnd(pct_from(live, ref), 3) if is_num(ref) else None
@@ -746,32 +1033,88 @@ def attach_live_overlay(row, frame, asof_ts, session):
     t1p, t2p = row.get("t1_price"), row.get("t2_price")
     row["t1_touch_live"] = bool(live <= t1p) if is_num(t1p) else None
     row["t2_touch_live"] = bool(live <= t2p) if is_num(t2p) else None
-    # T3 在盘中**没有被测量**：RSI(14) 定义在收盘上，盘中没有收盘。
+    # T3 在盘中/盘前**没有被测量**：RSI(14) 定义在收盘上，此刻没有收盘。
     # null 不是 false（JSON 等价规则第 2 条）。数值另以观察值给出。
     row["t3_touch_live"] = None
-    row["t3_touch_live_reason"] = "RSI(14) 定义在收盘价上，盘中无收盘 → 不判定（null，非 false）"
+    row["t3_touch_live_reason"] = text["t3_reason"]
     touches = [row["t1_touch_live"], row["t2_touch_live"]]
     row["touched_live"] = True if any(v is True for v in touches) else (
         False if all(v is False for v in touches) else None)
+    # t*_touch_live 只问「此刻在不在触发价下方」，不问「是不是收盘**之后**才越过的」：
+    # 收盘已触发、此刻仍在下方的档它也记 True（实测 2026-11-11 盘前 NVDA 收盘已触发 T1+T2，
+    # 被列进「🔶 盘前触及」，等于把已确认的触发说成新的、未确认的）；而收盘已触发、此刻
+    # 回到触发价上方的档（同日 TSM：收盘 396.48 ≤ T1@414.35，盘前 417.80）它根本不标。
+    # 所以另给两组：新触及 = 此刻在下方 且 收盘**未**触发；已收回 = 收盘已触发 且 此刻在上方。
+    # 收盘侧读 finalize_triggers 的 t1/t2（口径＝最近完整交易日收盘），任一侧 null → null。
+    # t*_touch_live/touched_live 原样保留（兼容），🔶 清单只从新触及字段取。
+    for k, p in (("t1", t1p), ("t2", t2p)):
+        at_close, touch = row.get(k), row[f"{k}_touch_live"]
+        row[f"{k}_new_touch_live"] = (None if touch is None or at_close is None
+                                      else bool(touch and at_close is not True))
+        row[f"{k}_reclaimed_live"] = (None if at_close is None or not is_num(p)
+                                      else bool(at_close is True and live > p))
+    for agg, keys in (("new_touched_live", ("t1_new_touch_live", "t2_new_touch_live")),
+                      ("reclaimed_live", ("t1_reclaimed_live", "t2_reclaimed_live"))):
+        vals = [row[x] for x in keys]
+        row[agg] = True if any(v is True for v in vals) else (
+            False if all(v is False for v in vals) else None)
 
-    # 量比在盘中不可得：半个交易日的累计量 ÷ 整日均量，结构性 <1。
+    # 量比在盘中不可得：半个交易日的累计量 ÷ 整日均量，结构性 <1；盘前 Yahoo 1m 量报 0。
     # **不得**按已过时间折算成全日预估——那是「用不完整数据推算」，回退链规则第 5 条禁止。
     row["vol_ratio_live"] = None
-    row["vol_ratio_live_reason"] = (
-        "盘中累计量 ÷ 20日整日均量 结构性 <1（实测中位 0.504、最大 1.065），"
-        "「放量 ≥1.5x」在盘中不可达；按已过时间折算全日属「用不完整数据推算」，禁止")
+    row["vol_ratio_live_reason"] = text["vol_reason"]
 
-    row["threshold_comparable"] = {
-        "value": False,
-        "reason": "T1/T2/T3 阈值标定在完整交易日收盘上，活价不得与之比较后记为已触发",
-    }
+    row["threshold_comparable"] = {"value": False, "reason": text["threshold_reason"]}
     row["counts_toward"] = {"numerator": False, "denominator": False}
-    row["prohibitions"] = [
-        "盘中活价不得写入任何以「收盘」为名的字段（close/prev_close/spot_close）",
-        "不得据此判定 T1/T2/T3 新触发、不得改变分桶",
-        "不得改变「✅ 未触发」清单——该清单口径为完整交易日收盘",
-        "hi52/hi20/T1触发价/T2触发价/各均线/量比 一律为最近完整交易日之值，盘中不重算",
-    ]
+    row["prohibitions"] = list(text["prohibitions"])
+    return row
+
+
+def attach_premarket_overlay(row, pm, session):
+    """美股**盘前叠加层**——活价轨的盘前版本，口径与盘中叠加层逐字段同名。
+
+    为什么不能复用 attach_live_overlay 的价源：它读的是日线帧里 asof 之后那根 bar，
+    而盘前个股的当日日线 bar 实测全是 NaN（frame_for 丢掉），盘前根本没有那一根。
+    盘前价只能来自 1m prepost=True（fetch_us_premarket）。
+
+    与盘中层相同：T1/T2/T3、分桶、triggered/untriggered 一律不动；只有「到冻结阈值
+    的距离」换成盘前价，盘前触及进 t1_touch_live/t2_touch_live（未确认）。
+    不同处：live_ts 是**那笔成交的 1m bar 时间戳**（不是运行时刻）——盘前成交稀薄，
+    最后一笔可能是 04:0x 的，读者必须看得到它有多旧（live_age_min）。
+
+    跨档不混用（回退链规则第 3、4 条）：该档日线来自回退档时，盘前价来自 Yahoo、
+    阈值来自 stockanalysis/Naver，两档相减就是把两个来源拼成一个读数 → N/A。
+    """
+    row["bar_complete"] = True
+    row["live_kind"] = "premarket"
+    if not premarket_eligible(row.get("ticker")):
+        # 根本没进请求清单（指数/期货/外盘挂牌）：写「尚无成交」就是把「没去要」说成「要了没有」
+        t = str(row.get("ticker") or "").strip().upper()
+        row["live_price"] = None
+        row["live_unavailable_reason"] = (
+            PREMARKET_FOREIGN_REASON if "." in t and t not in INDEX_TICKERS
+            else PREMARKET_INELIGIBLE_REASON)
+        return row
+    src = row.get("bars_source") or "yfinance"
+    if src != "yfinance":
+        row["live_price"] = None
+        row["live_unavailable_reason"] = (
+            f"该档日线来自回退档 {src}，盘前价来自 Yahoo——跨档不混用（回退链规则第 3、4 条）")
+        return row
+    if not pm or not is_num(pm.get("premarket_px")):
+        row["live_price"] = None
+        row["live_unavailable_reason"] = "该档今日盘前尚无成交"
+        return row
+    live = float(pm["premarket_px"])
+    row["bar_complete"] = False
+    row["live_price"] = rnd(live, 4)
+    row["live_bar_date"] = str(pm.get("premarket_ts") or "")[:10] or None
+    row["live_ts"] = pm.get("premarket_ts")
+    row["live_age_min"] = pm.get("premarket_age_min")
+    row["live_bars"] = pm.get("premarket_bars")
+    row["live_source"] = PREMARKET_SOURCE
+    row["live_price_caliber"] = PREMARKET_CALIBER
+    _live_metrics(row, live, LIVE_TEXT["premarket"])
     return row
 
 
@@ -1302,10 +1645,123 @@ def build_macro(frames, asof_us):
     return macro
 
 
+def build_premarket_block(us_sess, pm_map, requested, frames, asof_us, bars_tier,
+                          skipped_reason=None):
+    """顶层 premarket 块（full 与 --macro-only 都出）。
+
+    ⚠ 刻意**不**放进 macro：perp_quotes.py 的 load_spot 会展开 macro 一层、并把任何含
+    CLOSE_KEYS（close/price/last/spot/…）的子 dict 当现货收盘吸收。本块挂在顶层自己的键下，
+    且整块及其子 dict 的键名一个都不落在 CLOSE_KEYS 里——盘前价绝不能被当成现货基准。
+    也**不**喂进 macro.* 的驱动源/折现率信号或 indices.*：那些阈值全标定在整日涨跌上。
+    """
+    us_sess = us_sess or {}
+    window = bool(us_sess.get("premarket_window"))
+    backdrop = {}
+    for t in PREMARKET_BACKDROP:
+        pm = (pm_map or {}).get(t) or {}
+        px = pm.get("premarket_px")
+        rec = {"premarket_px": px, "premarket_ts": pm.get("premarket_ts"),
+               "premarket_age_min": pm.get("premarket_age_min"), "premarket_chg_pct": None}
+        if not is_num(px):
+            rec["premarket_unavailable_reason"] = (
+                "该档今日盘前尚无成交或取数失败" if window and skipped_reason is None
+                else (skipped_reason or "非美股盘前时段"))
+        elif bars_tier.get(t):
+            # 分母是回退档的收盘，分子是 Yahoo 盘前价：跨档不混用（回退链规则第 3、4 条）
+            rec["premarket_chg_unavailable_reason"] = (
+                f"该档日线来自回退档 {bars_tier[t]}，盘前价来自 Yahoo——跨档不混用")
+        else:
+            ref, _ = series_at(frames.get(t), asof_us)
+            rec["premarket_chg_pct"] = rnd(pct_from(px, ref), 3)
+            if rec["premarket_chg_pct"] is None:
+                rec["premarket_chg_unavailable_reason"] = "该档最近完整交易日收盘缺失"
+        backdrop[t] = rec
+    smh_c = backdrop["SMH"]["premarket_chg_pct"]
+    qqq_c = backdrop["QQQ"]["premarket_chg_pct"]
+    rel = rnd(smh_c - qqq_c, 3) if is_num(smh_c) and is_num(qqq_c) else None
+    requested = list(requested or [])
+    found = [t for t in requested if t in (pm_map or {})]
+    return {
+        "window": window,
+        "active": us_sess.get("premarket_active"),
+        "now": us_sess.get("now"),
+        "skipped_reason": skipped_reason,
+        "source": PREMARKET_SOURCE,
+        "tier": ENGINE_TIER_NAMES.get(_PREMARKET_FETCH.get("tier")) if requested else None,
+        # 1m 取数调用本身失败的成因（已 scrub）；null = 没有失败（取到空表不算失败）
+        "fetch_error": _PREMARKET_FETCH.get("error") if requested else None,
+        "start": US_PREMARKET_START.strftime("%H:%M"),
+        "end": MARKETS["US"]["open"].strftime("%H:%M"),
+        "tz": MARKETS["US"]["tz"],
+        "n_requested": len(requested),
+        "n_found": len(found),
+        "missing": [t for t in requested if t not in (pm_map or {})],
+        "reference_only": True,
+        "reference_note": PREMARKET_REFERENCE_NOTE,
+        "chg_basis": "盘前涨跌% = 盘前价 ÷ 该档最近完整交易日收盘 − 1（分母同 macro.backdrop 的收盘）",
+        "backdrop": backdrop,
+        "sector_rel_premarket_pt": rel,
+        "sector_rel_premarket_definition": "SMH 盘前涨跌% − QQQ 盘前涨跌%",
+        "sector_rel_premarket_note": "仅观察，不进驱动源",
+        "unavailable": {t: "指数/收益率无盘前成交 → N/A" for t in PREMARKET_UNAVAILABLE},
+        "threshold_comparable": {
+            "value": False,
+            "reason": ("驱动源 SMH−QQQ ±1.5pt、折现率信号、静默规则「大盘当日涨幅>1.5%」"
+                       "均标定在整日涨跌上，盘前读数不得喂入"),
+        },
+        "counts_toward": {"numerator": False, "denominator": False},
+        "prohibitions": [
+            "盘前读数不得写入 macro.*（驱动源/折现率信号/大盘背景）或 indices.*",
+            "SMH−QQQ 盘前差值不得与 ±1.5pt 驱动源阈值比较，仅观察",
+            "静默规则「大盘当日涨幅>1.5%」只认完整交易日涨跌，不得用盘前涨跌判定",
+            "盘前价不得写入任何以「收盘」为名的字段，不得改变 T1/T2/T3 触发与分桶",
+            "指数无盘前成交时不得以 SPY/QQQ/期货 顶替（^GSPC/^NDX/^TNX 盘前一律记 N/A）",
+        ],
+    }
+
+
 # ---------------------------------------------------------------- 输出
 
 
-def print_macro(macro):
+def print_premarket_macro(pm):
+    """💵 宏观块下的 ⏳ 盘前一行：QQQ/SMH/SOXX 盘前价 + SMH−QQQ（仅观察，不进驱动源）。
+
+    只在美股盘前窗口内打印；每个数字都出自顶层 premarket 块（JSON 等价规则）。
+    """
+    if not pm or not pm.get("window"):
+        return
+    hhmm = (pm.get("now") or "")[11:16]
+    print(f"⏳ 美股盘前（{hhmm} ET · 盘前时段 {pm['start']}–{pm['end']} ET · "
+          f"来源：{pm['source']}）——仅供参考，{pm['sector_rel_premarket_note']}")
+    if pm.get("skipped_reason"):
+        print(f"   本次未取盘前价：{pm['skipped_reason']}")
+        print()
+        return
+    if not pm.get("active"):
+        if pm.get("fetch_error"):
+            print(f"   盘前 1m 取数失败：{pm['fetch_error']}（记 N/A，不估算；这是取数失败，不是休市日）")
+        else:
+            print("   未取到任何今日盘前成交（记 N/A，不估算）")
+        print()
+        return
+    parts = []
+    for t, b in pm["backdrop"].items():
+        if not is_num(b.get("premarket_px")):
+            parts.append(f"{t} N/A")
+            continue
+        ts = (b.get("premarket_ts") or "")[11:16]
+        parts.append(f"{t} {fnum(b['premarket_px'], 2)}（{fsign(b.get('premarket_chg_pct'), 2, '%')}，"
+                     f"{ts} ET）")
+    print("   " + "｜".join(parts))
+    print(f"   SMH−QQQ 盘前 = {fsign(pm.get('sector_rel_premarket_pt'), 2, 'pt')}"
+          f"（{pm['sector_rel_premarket_definition']}；{pm['sector_rel_premarket_note']}）")
+    print(f"   {pm['chg_basis']}")
+    print("   " + "、".join(pm["unavailable"]) + "：" + next(iter(pm["unavailable"].values())))
+    print(f"   不可比：{pm['threshold_comparable']['reason']}")
+    print()
+
+
+def print_macro(macro, premarket=None):
     print("=" * 96)
     print(f"💵 宏观利率与大盘背景（数据日期：{macro.get('asof') or 'N/A'}）")
     print("=" * 96)
@@ -1328,67 +1784,126 @@ def print_macro(macro):
           f"（{macro['sector_rel_strength_label']}；{macro['sector_rel_strength_bands']}）")
     print(macro["disclaimer"])
     print()
+    # 盘前一行刻意放在整日口径的驱动源**之后**、单独成段：两者绝不并成一张表
+    # （回退链规则第 3 条的同一手法），也不出现在「收盘」列里。
+    print_premarket_macro(premarket)
 
 
 def print_live_section(result):
-    """⏳ 盘中活价 —— 双轨的活价那一轨，**未确认**。
+    """⏳ 盘中活价 / 盘前活价 —— 双轨的活价那一轨，**未确认**。
 
     与「📋 触发表」「✅ 未触发」是两套互不相干的清单：那两个的口径是最近完整交易日
-    收盘，这一个的口径是盘中活价。表头逐字写明两者，就是为了让读者不可能把活价
-    误读成收盘（perp 节的 `| 完整交易日收盘 | 24/7永续价 | 隐含变动% |` 是同一手法）。
+    收盘，这一个的口径是盘中活价（或美股盘前最后一笔成交）。表头逐字写明两者，就是
+    为了让读者不可能把活价误读成收盘（perp 节的 `| 完整交易日收盘 | 24/7永续价 | 隐含变动% |`
+    是同一手法）。措辞按 live.kind 切换，每个词都出自 live 块的字段（JSON 等价规则）。
     """
     live = result.get("live") or {}
     if not live.get("enabled"):
         return
-    if not live.get("markets_intraday"):
+    kind = live.get("kind")
+    if kind is None:
         return
-    rows_all = [r for r in result["tickers"] if r.get("live_price") is not None]
-    print("⏳ 盘中活价 · 未确认（**不改变 T1/T2/T3 触发与分桶**）")
+    word = live["label"]                 # 盘中 / 盘前
+    col = live["price_column"]           # 盘中活价 / 盘前价
+    rows_all = [r for r in result["tickers"]
+                if r.get("live_price") is not None and r.get("live_kind") == kind]
+    print(f"{live['title']}（**不改变 T1/T2/T3 触发与分桶**）")
+    if live.get("reference_note"):
+        print(f"   {live['reference_note']}")
     print(f"   活价源：{live['source']}")
-    print("   口径：现价为盘中活价；52周高/20日高/T1触发价/T2触发价/均线/量比 一律为"
-          "最近完整交易日之值，盘中不重算（避免半根 K 线把阈值本身挪走）。")
+    print(f"   口径：{live['caliber_note']}")
     if not rows_all:
-        na = [r["ticker"] for r in result["tickers"] if r.get("live_unavailable_reason")]
-        print("   本次未取到任何盘中活价" + (f"（{len(na)} 档记 N/A）" if na else ""))
+        na = [r["ticker"] for r in result["tickers"]
+              if r.get("live_unavailable_reason") and r.get("live_kind") == kind]
+        print(f"   本次未取到任何{col}" + (f"（{len(na)} 档记 N/A）" if na else ""))
         print()
         return
-    touched = [r for r in rows_all if r.get("touched_live") is True]
+    # 🔶 只列**新**触及（收盘未触发、此刻越过）：收盘已触发且仍在下方的档已在触发表里，
+    # 再列一次就是把已确认的触发说成未确认的新触发（见 _live_metrics）。
+    touched = [r for r in rows_all if r.get("new_touched_live") is True]
+    show_ts = kind == "premarket"
     print()
+    if kind == "premarket":
+        # 全表：SKILL.md 完整版「⏳ 盘前活价 · 未确认」节以本表为底稿——覆盖全部有盘前价的
+        # 美股标的（含未触发者）；每个数都是行级 *_live 字段（JSON 等价规则）。
+        print(f"   {live['table_title']} · {len(rows_all)} 档")
+        frows = [[r["ticker"], fnum(r.get("close"), 2), fnum(r.get("live_price"), 2),
+                  fsign(r.get("live_chg_from_close_pct"), 2, "%"),
+                  fsign(r.get("dd52_pct_live"), 1, "%"), fsign(r.get("dd20_pct_live"), 1, "%"),
+                  fsign(r.get("gap_to_t1_pct_live"), 2, "%"), fsign(r.get("gap_to_t2_pct_live"), 2, "%"),
+                  fsign(r.get("vs_ma50_pct_live"), 1, "%"), fsign(r.get("vs_ma200_pct_live"), 1, "%"),
+                  f"{(r.get('live_ts') or '')[11:16] or 'N/A'}·{fnum(r.get('live_age_min'), 0, '分')}"]
+                 for r in rows_all]
+        print_table(["代码", "完整交易日收盘", col, live["chg_column"],
+                     f"52w回撤%({word})", f"20D回撤%({word})", f"距T1%({word})", f"距T2%({word})",
+                     f"vs50DMA%({word})", f"vs200DMA%({word})", "成交时刻(ET)·距今"], frows)
+        print()
     if touched:
-        print(f"   🔶 盘中触及 · 未确认（{len(touched)} 档）——收盘前可能收回，"
-              f"**不进买入桶、不计入触发数**")
-        trows = [[r["ticker"],
+        print(f"   {live['touched_title']}（{len(touched)} 档）——{live['touched_caveat']}")
+        trows = []
+        for r in touched:
+            tr = [r["ticker"],
                   fnum(r.get("close"), 2), fnum(r.get("live_price"), 2),
                   fsign(r.get("live_chg_from_close_pct"), 2, "%"),
-                  ("T1" if r.get("t1_touch_live") else "") +
-                  ("+T2" if r.get("t1_touch_live") and r.get("t2_touch_live")
-                   else ("T2" if r.get("t2_touch_live") else "")),
+                  ("T1" if r.get("t1_new_touch_live") else "") +
+                  ("+T2" if r.get("t1_new_touch_live") and r.get("t2_new_touch_live")
+                   else ("T2" if r.get("t2_new_touch_live") else "")),
                   fnum(r.get("t1_price"), 2), fnum(r.get("t2_price"), 2),
                   fsign(r.get("dd52_pct_live"), 1, "%")]
-                 for r in touched]
-        print_table(["代码", "完整交易日收盘", "盘中活价", "今日至今%",
-                     "盘中触及", "T1触发价", "T2触发价", "盘中52w回撤%"], trows)
-        print("   逐档读法：若**今日以此价收盘**将触及所列触发位（盘中未确认，非已触发）。")
+            if show_ts:
+                tr += [(r.get("live_ts") or "")[11:16] or "N/A", fnum(r.get("live_age_min"), 0, "分")]
+            trows.append(tr)
+        heads = ["代码", "完整交易日收盘", col, live["chg_column"],
+                 f"{word}触及", "T1触发价", "T2触发价", f"{word}52w回撤%"]
+        if show_ts:
+            heads += ["成交时刻(ET)", "距今"]
+        print_table(heads, trows)
+        print(f"   逐档读法：{live['reading']}")
+        print()
+    reclaimed = [r for r in rows_all if r.get("reclaimed_live") is True]
+    if reclaimed:
+        # 收盘已触发、此刻回到触发价上方：单列一行，不进 🔶，也不撤销收盘触发
+        parts = []
+        for r in reclaimed:
+            lv = [f"{k.upper()}@{fnum(r.get(k + '_price'), 2)}" for k in ("t1", "t2")
+                  if r.get(f"{k}_reclaimed_live")]
+            parts.append(f"{r['ticker']} {col} {fnum(r.get('live_price'), 2)} 回到 {'/'.join(lv)} 上方"
+                         f"（收盘 {fnum(r.get('close'), 2)} 已触发）")
+        print(f"   {live['reclaimed_title']}（{len(reclaimed)} 档）——{live['reclaimed_caveat']}")
+        print("     " + "；".join(parts))
         print()
     near = sorted((r for r in rows_all if r.get("touched_live") is not True
                    and is_num(r.get("gap_to_t2_pct_live"))),
                   key=lambda r: abs(r["gap_to_t2_pct_live"]))[:8]
     if near:
-        print("   📉 距触发最近（盘中活价口径，前 8 档）")
-        nrows = [[r["ticker"], fnum(r.get("close"), 2), fnum(r.get("live_price"), 2),
+        print(f"   📉 距触发最近（{col}口径，前 8 档）")
+        nrows = []
+        for r in near:
+            nr = [r["ticker"], fnum(r.get("close"), 2), fnum(r.get("live_price"), 2),
                   fsign(r.get("live_chg_from_close_pct"), 2, "%"),
                   fnum(r.get("t1_price"), 2), fsign(r.get("gap_to_t1_pct_live"), 2, "%"),
                   fnum(r.get("t2_price"), 2), fsign(r.get("gap_to_t2_pct_live"), 2, "%")]
-                 for r in near]
-        print_table(["代码", "完整交易日收盘", "盘中活价", "今日至今%",
-                     "T1触发价", "距T1", "T2触发价", "距T2"], nrows)
+            if show_ts:
+                nr += [(r.get("live_ts") or "")[11:16] or "N/A", fnum(r.get("live_age_min"), 0, "分")]
+            nrows.append(nr)
+        heads = ["代码", "完整交易日收盘", col, live["chg_column"],
+                 "T1触发价", "距T1", "T2触发价", "距T2"]
+        if show_ts:
+            heads += ["成交时刻(ET)", "距今"]
+        print_table(heads, nrows)
         print()
-    print("   盘中不判定的两项：**T3/RSI** —— RSI(14) 定义在收盘价上，盘中无收盘，"
-          "记 null（非 false）；**量比/放量≥1.5x** —— 盘中累计量 ÷ 20日整日均量"
-          "结构性 <1，盘中不可达，记 null。两者都不按已过时间折算全日。")
-    na = [r["ticker"] for r in result["tickers"] if r.get("live_unavailable_reason")]
+    print(f"   {word}不判定的两项：**T3/RSI** —— {live['t3_touch_live_reason']}；"
+          f"**量比/放量≥1.5x** —— {live['vol_ratio_live_reason']}。")
+    na = [r for r in result["tickers"]
+          if r.get("live_unavailable_reason") and r.get("live_kind") == kind]
     if na:
-        print(f"   ⚪ 盘中活价取不到 {len(na)} 档（记 N/A，不拿别处价格凑）：" + ", ".join(na))
+        # 按成因分组：盘前的「尚无成交」与「回退档跨档不混用」是两件事，不能并成一句
+        by_reason = {}
+        for r in na:
+            by_reason.setdefault(r["live_unavailable_reason"], []).append(r["ticker"])
+        print(f"   ⚪ {col}取不到 {len(na)} 档（记 N/A，不拿别处价格凑）：")
+        for reason, tks in by_reason.items():
+            print(f"     · {reason}：" + ", ".join(tks))
     print()
 
 
@@ -1424,7 +1939,15 @@ def print_report(result):
             if not s:
                 continue
             tag = f"{MARKETS[m]['label']} {s['label']}"
-            if s.get("state") in ("intraday", "pre_market"):
+            if s.get("premarket_window"):
+                pm = result.get("premarket") or {}
+                act = s.get("premarket_active")
+                tag += (f"（{s['now'][11:16]} ET，盘前时段 {pm.get('start', '04:00')}–"
+                        f"{pm.get('end', '09:30')} ET；盘前成交"
+                        + ("已取到" if act else ("未取到" if act is False else "未取"))
+                        + f" {pm.get('n_found', 0)}/{pm.get('n_requested', 0)} 档"
+                        + ("；盘前价仅供参考" if act else "") + "）")
+            elif s.get("state") in ("intraday", "pre_market"):
                 tag += f"（{s['now'][11:16]} {s['tz'].split('/')[-1]}，收盘 {s['close_time']}）"
             sparts.append(tag)
         print("交易状态：" + "；".join(sparts))
@@ -1617,7 +2140,19 @@ def apply_degraded(result):
     # 不把它写成 degraded_reasons，只读该字段的下游会把一份昨日快照当成今日读数。
     sess = result.get("session") or {}
     for mkt, s in sess.items():
-        if s.get("state") in ("intraday", "pre_market"):
+        if s.get("premarket_window"):
+            # 美股盘前时段：不论 state 是 pre_market 还是 pre_open，措辞都按「盘前」。
+            # 窗口内今天还没开盘，所以技术面全是前一完整交易日之值——这是事实陈述，
+            # 盘前价只出现在叠加层里（未确认）。
+            reasons.append(
+                f"⚠ {MARKETS[mkt]['label']}此刻为盘前（{s.get('now')}，盘前时段 "
+                f"{US_PREMARKET_START:%H:%M}–{MARKETS[mkt]['open']:%H:%M} ET）："
+                f"本行所有技术面字段（收盘/52周高/20日高/T1·T2触发价/RSI/均线/量比）"
+                f"均为最近完整交易日 {s.get('asof')} 之值，非今日"
+                # 只有真附了盘前层才这么说：premarket_active 为 false/null（没取到、取数失败、
+                # --no-live-overlay）时根本没有 ⏳ 层，这半句会与「本次无盘前叠加层」自相矛盾
+                + ("；盘前价只见 ⏳ 盘前叠加层（未确认）" if s.get("premarket_active") is True else ""))
+        elif s.get("state") in ("intraday", "pre_market"):
             reasons.append(
                 f"⚠ {MARKETS[mkt]['label']}此刻为{s.get('label') or '盘中'}"
                 f"（{s.get('now')}，收盘 {s.get('close_time')}"
@@ -1625,15 +2160,30 @@ def apply_degraded(result):
                 f"本行所有技术面字段（收盘/52周高/20日高/T1·T2触发价/RSI/均线/量比）"
                 f"均为最近完整交易日 {s.get('asof')} 之值，非今日")
     live = result.get("live") or {}
+    rows_t = result.get("tickers") or []
     if live.get("enabled") and live.get("rows"):
-        reasons.append(
-            f"⚠ 已附盘中活价叠加层 {live['rows']} 档：活价仅用于「现价/距T1·T2/盘中触及」，"
-            f"**未确认、不改分桶、不进 triggered/untriggered**；量比与 T3 在盘中记 null")
-    no_live = [r["ticker"] for r in (result.get("tickers") or [])
-               if r.get("live_unavailable_reason")]
-    if no_live:
-        reasons.append(f"盘中活价取不到 {len(no_live)} 档（记 N/A，不拿别处价格凑）："
-                       + ", ".join(no_live))
+        n_by_kind = {}
+        for r in rows_t:
+            if r.get("live_price") is not None and r.get("live_kind"):
+                n_by_kind[r["live_kind"]] = n_by_kind.get(r["live_kind"], 0) + 1
+        if n_by_kind.get("intraday"):
+            reasons.append(
+                f"⚠ 已附盘中活价叠加层 {n_by_kind['intraday']} 档：活价仅用于「现价/距T1·T2/盘中触及」，"
+                f"**未确认、不改分桶、不进 triggered/untriggered**；量比与 T3 在盘中记 null")
+        if n_by_kind.get("premarket"):
+            reasons.append(
+                f"⚠ 已附盘前叠加层 {n_by_kind['premarket']} 档：盘前价仅供参考，用于「现价/回撤/距T1·T2/盘前触及」的分析，"
+                f"**未确认、不改分桶、不进 triggered/untriggered**；量比与 T3 在盘前记 null")
+    # 盘前「尚无成交」的档已由 run() 的「⚠ 盘前成交取不到 N 档」那条（premarket.missing）报过，
+    # 这里不再重报同一批代码；只剩其它成因（回退档跨档不混用、指数/期货、外盘挂牌）的档。
+    pm_reported = set((result.get("premarket") or {}).get("missing") or [])
+    for kind, word in (("intraday", "盘中活价"), ("premarket", "盘前价")):
+        no_live = [r["ticker"] for r in rows_t
+                   if r.get("live_unavailable_reason") and r.get("live_kind", "intraday") == kind
+                   and not (kind == "premarket" and r["ticker"].upper() in pm_reported)]
+        if no_live:
+            reasons.append(f"{word}取不到 {len(no_live)} 档（记 N/A，不拿别处价格凑）："
+                           + ", ".join(no_live))
 
     e = result.get("earnings") or {}
     reasons.extend(e.get("warnings") or [])
@@ -1671,46 +2221,14 @@ def run(args):
     # 指数类必下（宏观/大盘背景 + 美股完整交易日基准 SMH）；与选中标的去重
     dl = list(dict.fromkeys(sel_tickers + INDEX_TICKERS))
 
-    # 引擎回退链（顺序写死，见 CLAUDE.md「Fallback chains — the rule」）：
-    #   第1档 requests.Session + 浏览器 UA   第2档 yfinance 默认 curl_cffi 引擎
-    # 两档都必须保留，因为两种故障方向相反、互为对方的解药（实测见 make_session() 上方）：
-    #   代理环境   curl_cffi 握不完 TLS 隧道  -> 只有第1档能过
-    #   IP 被限流  requests.Session 吃 429    -> 只有第2档能过（它复用缓存 cookie、
-    #              TLS 指纹不同，限流窗口内仍取得到数）
-    # ⚠ 绝不要把这里简化成「只用第1档」：2026-09-11 本脚本一度被改成硬切第1档，那在代理
-    # 环境下是对的，但在限流环境下比改之前更差——原本 curl_cffi 能扛的那一轮会变成整片空。
+    # 引擎回退链（第1档 requests.Session+浏览器UA → 第2档 curl_cffi）收敛在
+    # yf_download_tiered()，日线与盘前 1m 共用同一条链——两份链各写各的会在下次改档位时分叉。
+    # 日线这一次 why 传空串：回退 note 文案与抽出前逐字一致。
     sess = make_session()
-
-    def _dl(use_session):
-        kw = dict(tickers=dl, period="2y", interval="1d", progress=False,
-                  auto_adjust=False, group_by="ticker", threads=True)
-        if use_session:
-            kw["session"] = sess
-        return yf.download(**kw)
-
-    raw = None
-    try:
-        raw = _dl(True)
-    except TypeError as exc:           # 可能是「该版本不收 session=」，也可能无关
-        if "session" not in str(exc):
-            # 与 session= 无关的 TypeError：不得吞掉、更不得重跑整轮下载，
-            # 否则真正的 bug 会被记成一次「版本不兼容」降级。
-            raise
-        _session_unsupported("download")
-    except Exception as exc:  # noqa: BLE001 - 第1档任何失败都只降级到第2档，不掀掉整轮
-        _engine_fallback(f"第1档 requests.Session 取数抛错（{type(exc).__name__}）")
-
-    # 空表不等于「没有数据」：限流时第1档回空而第2档仍有数，直接当取数失败会误报。
-    if raw is None or len(raw) == 0:
-        try:
-            raw2 = _dl(False)
-        except Exception as exc:  # noqa: BLE001
-            err(f"✗ 两档引擎均取数失败：{type(exc).__name__}: {scrub(exc)}")
-            raw2 = None
-        if raw2 is not None and len(raw2) > 0:
-            _engine_fallback("第1档 requests.Session 回空表、第2档默认引擎取到数据"
-                             "（多半是本机 IP 被 Yahoo 限流，429 只挡得住第1档）")
-            raw = raw2
+    raw, _ = yf_download_tiered(
+        yf, sess, "",
+        tickers=dl, period="2y", interval="1d", progress=False,
+        auto_adjust=False, group_by="ticker", threads=True)
     # yfinance 整片皆空**不再直接 exit 3**：那是 2026-09-11 之前的行为，会在回退档
     # 还没跑之前就退出——而 Routines 容器正是「yfinance 整片皆空」那一种，等于回退档
     # 永远不会被用上。现在先记下来，把判定推迟到回退档也试过之后。
@@ -1787,7 +2305,57 @@ def run(args):
     if missing:
         asof_notes.append("yfinance 未返回数据的标的（记 N/A，不估算）：" + ", ".join(missing))
 
+    # ---- 美股盘前层（1m prepost=True）——只在盘前窗口内取，full 与 --macro-only 共用
+    # 放在这里（而不是叠加层循环里）是因为 --macro-only 在下面就 return 了，而盘前的
+    # QQQ/SMH/SOXX 背景两条路径都要。--no-live-overlay 同时关掉盘中与盘前两层、且不发 1m 请求。
+    want_live = not args.no_live_overlay
+    us_sess = sessions.get("US") or {}
+    pm_map, pm_requested, pm_skipped = {}, [], None
+    if us_sess.get("premarket_window"):
+        if want_live:
+            # 个股：选中的美股行（排除 hk_quote 旗标与指数/期货代码）＋ 盘前大盘背景三只
+            pm_requested = list(dict.fromkeys(
+                [m["ticker"].upper() for m in selected
+                 if not m.get("hk_quote") and premarket_eligible(m["ticker"])]
+                + list(PREMARKET_BACKDROP)))
+            now_et = dt.datetime.now(ZoneInfo(MARKETS["US"]["tz"]))
+            pm_map, pm_notes = fetch_us_premarket(yf, sess, pm_requested, now_et)
+            asof_notes.extend(pm_notes)
+            us_sess["premarket_active"] = bool(pm_map)
+            hhmm = (us_sess.get("now") or "")[11:16]
+            if not pm_map:
+                # 取数本身失败时 pm_notes 里已有带成因的 ⚠：不再另说「可能是休市日」——
+                # 那会把一次取数失败读成一个可能的休市日。
+                if not _PREMARKET_FETCH.get("error"):
+                    asof_notes.append(
+                        f"⚠ 美股盘前时段（{hhmm} ET）但未取到任何今日盘前成交——"
+                        f"可能是休市日或数据源未就绪；本次无盘前叠加层")
+            else:
+                pm_missing = [t for t in pm_requested if t not in pm_map]
+                if pm_missing:
+                    asof_notes.append(
+                        f"⚠ 盘前成交取不到 {len(pm_missing)} 档：" + ", ".join(pm_missing)
+                        + "（该档今日盘前尚无成交或取数失败）")
+        else:
+            # 没去看 ≠ 看过了没有：premarket_active 保持 null，理由进 premarket.skipped_reason
+            pm_skipped = "--no-live-overlay：本次关闭盘中/盘前叠加层，未取盘前 1m"
+            asof_notes.append("ℹ 美股处于盘前时段，但 --no-live-overlay 关闭了盘前叠加层（未取盘前价）")
+    else:
+        pm_skipped = "非美股盘前时段（工作日 04:00–09:30 ET 之外），不取盘前价"
+    # 1m 那次若触发引擎回退，note 在上面的快照之后才产生——补一次合并，否则 degraded
+    # 报 false 而 sources.transport 报「已降级」，两个字段自相矛盾。
+    asof_notes.extend(n for n in _ENGINE_NOTES if n not in asof_notes)
+
     macro = build_macro(frames, asof["US_ts"])
+    premarket = build_premarket_block(us_sess, pm_map, pm_requested, frames, asof["US_ts"],
+                                      bars_tier, skipped_reason=pm_skipped)
+    pm_sources = {
+        "premarket_prices": PREMARKET_SOURCE + "（仅美股个股/ETF；指数/收益率无盘前成交 → N/A）",
+        "premarket_transport": ("与日线同一引擎回退链：第1档 requests.Session(浏览器UA) → "
+                                "第2档 yfinance 默认引擎(curl_cffi)；1m 那次回退时，degraded_reasons 里的"
+                                "引擎回退条目文中带「盘前 1m：」标签（形如「⚠ yfinance 引擎回退至第2档…：盘前 1m：…」）"),
+        "premarket_tier": premarket["tier"],
+    }
     if args.macro_only:
         result = {
             "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -1801,6 +2369,8 @@ def run(args):
             "macro": macro,
             # 顶层 indices：perp_quotes.py --spot 只展开顶层容器键，^GSPC/^NDX 必须放这一层
             "indices": macro.get("indices", {}),
+            # 盘前背景（QQQ/SMH/SOXX）：仅观察，不进 macro 驱动源（见 build_premarket_block）
+            "premarket": premarket,
             "sources": {
                 "prices": "yfinance 本地计算（auto_adjust=False）",
                 "transport": ("yfinance + requests.Session(浏览器UA)" if _SESSION_OK
@@ -1814,6 +2384,7 @@ def run(args):
                 },
                 "prices_tier_note": "--macro-only 不产出个股行，故无 prices_tier_by_ticker；"
                                     "宏观/背景标的的档位见 degraded_reasons",
+                **pm_sources,
             },
         }
         return apply_degraded(result), True
@@ -1824,7 +2395,6 @@ def run(args):
     # 命中集合只按「元数据 + 有没有日线」筛（与 compute_row 里的 etf/^ 判定同口径），
     # 「数据日是哪天」仍只在 compute_row 里算一次——绝不为了并发再写第二份日期规则。
     want_earn = not args.no_earnings
-    want_live = not args.no_live_overlay
     earn_targets = []
     if want_earn:
         earn_targets = list(dict.fromkeys(
@@ -1894,18 +2464,44 @@ def run(args):
     # ---- 盘中活价叠加层（双轨的活价那一轨）
     # **必须**在 finalize_triggers 之后：它要读已冻结的 hi52/hi20/T1价/T2价/均线，
     # 只把「到这些阈值的距离」换成活价。顺序反了就会拿到空阈值。
+    # 美股的价源二选一（绝不叠两层）：
+    #   盘前窗口内且取到了盘前成交 → 1m 盘前层（不论 state 是 pre_market 还是 pre_open）
+    #   state == intraday           → 日线未完成 bar 的盘中层
+    #   其余（含窗口外的 pre_market）→ 不附加：个股当日日线 bar 盘前全是 NaN，没有合法价源
+    # 港股/韩股照旧：state ∈ {intraday, pre_market} 时附日线盘中层。
+    # 只有选中了可附层的美股行才算「本轮有盘前叠加层」：只取到 QQQ/SMH/SOXX 背景、而个股
+    # 全是港/韩时，live.kind 若仍报 premarket，正文会印「本次未取到任何盘前价」——与报告头
+    # 「盘前成交已取到 3/3 档」自相矛盾。背景读数只进顶层 premarket 块。
+    has_us_rows = any(r["market"] == "US" and not r.get("insufficient_history") for r in rows)
+    us_pm_on = bool(want_live and us_sess.get("premarket_window") and us_sess.get("premarket_active")
+                    and has_us_rows)
     live_rows = []
     if want_live:
         for r in rows:
             if r.get("insufficient_history"):
                 continue
             mkt = r["market"]
-            sess = sessions.get(mkt) or {}
-            if sess.get("state") not in ("intraday", "pre_market"):
-                continue
-            attach_live_overlay(r, frames.get(r["ticker"]), asof.get(mkt + "_ts"), sess)
+            ms = sessions.get(mkt) or {}   # 不叫 sess：那是上面的 Yahoo requests.Session
+            if mkt == "US":
+                if us_pm_on:
+                    attach_premarket_overlay(r, pm_map.get(r["ticker"].upper()), ms)
+                elif ms.get("state") == "intraday":
+                    attach_live_overlay(r, frames.get(r["ticker"]), asof.get(mkt + "_ts"), ms)
+                else:
+                    continue
+            else:
+                if ms.get("state") not in ("intraday", "pre_market"):
+                    continue
+                attach_live_overlay(r, frames.get(r["ticker"]), asof.get(mkt + "_ts"), ms)
             if r.get("live_price") is not None:
                 live_rows.append(r)
+    markets_premarket = ["US"] if us_pm_on else []
+    markets_intraday = sorted(m for m, s in sessions.items() if s.get("state") == "intraday")
+    live_kind = ("premarket" if markets_premarket else
+                 "intraday" if (markets_intraday or any(r.get("live_kind") == "intraday" for r in rows))
+                 else None)
+    lt = LIVE_TEXT.get(live_kind or "intraday")
+    word = "盘前" if live_kind == "premarket" else "盘中"
 
     evaluated = [r for r in rows if not r.get("insufficient_history")]
     untriggered = [r["ticker"] for r in evaluated
@@ -1941,28 +2537,68 @@ def run(args):
         # 合并两者、或拿本清单改分桶，就是 output-format.md:89 禁的那件事。
         "live": {
             "enabled": bool(want_live),
+            # intraday = 日线未完成 bar 的盘中层；premarket = 美股 1m 盘前层；null = 本轮无叠加层
+            "kind": live_kind,
             "rows": len(live_rows),
-            "markets_intraday": sorted(m for m, s in sessions.items()
-                                       if s.get("state") in ("intraday", "pre_market")),
-            "touched_live": sorted(r["ticker"] for r in live_rows if r.get("touched_live") is True),
-            "t1_touch_live": sorted(r["ticker"] for r in live_rows if r.get("t1_touch_live") is True),
-            "t2_touch_live": sorted(r["ticker"] for r in live_rows if r.get("t2_touch_live") is True),
+            # 只列 state == intraday 的市场（pre_market 不再算进来：美股盘前走 markets_premarket）
+            "markets_intraday": markets_intraday,
+            "markets_premarket": markets_premarket,
+            # 🔶 清单：只列**新**触及（收盘未触发、此刻越过）。顶层这三个名字沿用旧键名，
+            # 但取自行级 *_new_touch_live——行级 t*_touch_live 只问「此刻在不在下方」，
+            # 收盘已触发的档也会记 True，拿它出 🔶 就是把已确认的触发说成新的（见 _live_metrics）。
+            "touched_live": sorted(r["ticker"] for r in live_rows if r.get("new_touched_live") is True),
+            "t1_touch_live": sorted(r["ticker"] for r in live_rows if r.get("t1_new_touch_live") is True),
+            "t2_touch_live": sorted(r["ticker"] for r in live_rows if r.get("t2_new_touch_live") is True),
+            "new_touched_live": sorted(r["ticker"] for r in live_rows if r.get("new_touched_live") is True),
+            "t1_new_touch_live": sorted(r["ticker"] for r in live_rows if r.get("t1_new_touch_live") is True),
+            "t2_new_touch_live": sorted(r["ticker"] for r in live_rows if r.get("t2_new_touch_live") is True),
+            "touched_definition": (f"新触及 = {word}价 ≤ 触发价 且 最近完整交易日收盘**未**触发该位；"
+                                   f"收盘已触发、此刻仍在下方的档不重列（已在触发表里）"),
+            # 收盘已触发、此刻回到触发价上方：单列，不进 🔶，也不撤销收盘触发与分桶
+            "reclaimed_live": sorted(r["ticker"] for r in live_rows if r.get("reclaimed_live") is True),
+            "t1_reclaimed_live": sorted(r["ticker"] for r in live_rows if r.get("t1_reclaimed_live") is True),
+            "t2_reclaimed_live": sorted(r["ticker"] for r in live_rows if r.get("t2_reclaimed_live") is True),
+            "reclaimed_title": lt["reclaimed_title"],
+            "reclaimed_caveat": lt["reclaimed_caveat"],
+            "reclaimed_definition": (f"已收回 = 最近完整交易日收盘已触发该位 且 {word}价 > 触发价"),
             "t3_touch_live": None,
-            "t3_touch_live_reason": "RSI(14) 定义在收盘价上，盘中无收盘 → 不判定（null，非 false）",
-            "source": "yfinance 当日未完成日线 bar（与历史同一 series，口径一致）",
+            "t3_touch_live_reason": lt["t3_reason"],
+            "vol_ratio_live_reason": lt["vol_reason"],
+            "source": (PREMARKET_SOURCE if live_kind == "premarket"
+                       else "yfinance 当日未完成日线 bar（与历史同一 series，口径一致）"),
+            "price_caliber": (PREMARKET_CALIBER if live_kind == "premarket"
+                              else "拆股已还原·股息未复权（同 close/hi52/hi20）"),
+            # 人读分支的标题/列名/读法逐字取自这里（JSON 等价规则：正文有的字段里都有）
+            "label": word,
+            "title": f"⏳ {word}活价 · 未确认" + ("（仅供参考）" if live_kind == "premarket" else ""),
+            "reference_note": PREMARKET_REFERENCE_NOTE if live_kind == "premarket" else None,
+            "price_column": "盘前价" if live_kind == "premarket" else "盘中活价",
+            "chg_column": "较前收%" if live_kind == "premarket" else "今日至今%",
+            "touched_title": f"🔶 {word}触及 · 未确认",
+            # 盘前那轮的全表标题（SKILL.md 完整版 ⏳ 节的底稿）；盘中不出全表 → null
+            "table_title": ("📋 全部有盘前价的美股标的（含未触发者；52w/20D回撤、距T1/T2、均线均为盘前价 vs 冻结阈值）"
+                            if live_kind == "premarket" else None),
+            "touched_caveat": ("开盘后可能收回，**不进买入桶、不计入触发数**" if live_kind == "premarket"
+                               else "收盘前可能收回，**不进买入桶、不计入触发数**"),
+            "reading": ("盘前价仅为未确认读数：须今日开盘后以收盘确认才构成触发"
+                        "（若**今日以此价收盘**将触及所列触发位；盘前未确认，非已触发）"
+                        if live_kind == "premarket" else
+                        "若**今日以此价收盘**将触及所列触发位（盘中未确认，非已触发）。"),
+            "caliber_note": (f"现价为{'今日盘前最后一笔成交（看成交时刻与距今分钟数）' if live_kind == 'premarket' else '盘中活价'}；"
+                             f"52周高/20日高/T1触发价/T2触发价/均线/量比 一律为最近完整交易日之值，"
+                             f"{word}不重算（避免半根 K 线把阈值本身挪走）。"),
             "threshold_comparable": {
                 "value": False,
-                "reason": "T1/T2/T3 阈值标定在完整交易日收盘上，活价触及为未确认",
+                "reason": (lt["threshold_reason"] if live_kind == "premarket"
+                           else "T1/T2/T3 阈值标定在完整交易日收盘上，活价触及为未确认"),
             },
             "counts_toward": {"numerator": False, "denominator": False},
-            "prohibitions": [
-                "盘中活价不得写入任何以「收盘」为名的字段（close/prev_close/spot_close）",
-                "不得据此判定 T1/T2/T3 新触发、不得改变分桶",
-                "不得改变「✅ 未触发」清单——该清单口径为完整交易日收盘",
-                "hi52/hi20/T1触发价/T2触发价/各均线/量比 一律为最近完整交易日之值，盘中不重算",
+            "prohibitions": list(lt["prohibitions"]) + [
                 "本清单与 triggered/untriggered 不得合并计数，也不得互相顶替",
             ],
         },
+        # 美股盘前背景（QQQ/SMH/SOXX）与盘前层的取数元数据；不在窗口内时 window=false
+        "premarket": premarket,
         "counts": {
             "universe": len(universe),
             "selected": len(selected),
@@ -1997,6 +2633,7 @@ def run(args):
             "transport": ("yfinance + requests.Session(浏览器UA)" if _SESSION_OK
                           else "yfinance：部分或全部调用未能使用 requests.Session(浏览器UA)，已退回自管引擎（哪一处见 degraded_reasons）")
                          + "（**仅描述 Yahoo 传输层，不涵盖回退档；回退档见 prices/bars_source**）",
+            **pm_sources,
         },
         # 人读分支打出来的每一条口径/禁令都必须同时是字段（--json 不得少于正文）
         "disclaimers": [
@@ -2039,7 +2676,8 @@ def main():
     ap.add_argument("--macro-only", action="store_true", help="只出宏观利率/大盘背景（驱动源判定输入）")
     ap.add_argument("--no-earnings", action="store_true", help="跳过下次财报日查询（省 N 次请求）")
     ap.add_argument("--no-live-overlay", action="store_true",
-                    help="盘中不附加实时价叠加层（收盘后本来就不附加，此旗标只影响盘中运行）")
+                    help="不附加盘中活价叠加层与美股盘前叠加层（并跳过盘前 1m 取数）；"
+                         "收盘后本来就不附加，此旗标只影响盘中与美股盘前（04:00–09:30 ET）运行")
     args = ap.parse_args()
 
     if args.macro_only and args.tickers:
@@ -2071,7 +2709,7 @@ def main():
                 print(f"已写入 {out.name}（{len(text):,} 字节）")
         return
 
-    print_macro(result["macro"])
+    print_macro(result["macro"], result.get("premarket"))
     if not macro_only:
         print_report(result)
 

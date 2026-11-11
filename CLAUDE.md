@@ -231,6 +231,11 @@ in its `while` join loop.
 - `technicals.py` bars: yfinance → `bars_fallback.py` (US / KR; HK stays on
   yfinance + `hk_quote.py`; indices → N/A). Fallback rows carry
   `vol_ratio_comparable: false` and suppress 「放量 ≥1.5x」.
+- US pre-market (weekday 04:00 ET–open, `session.US.premarket_window`) is
+  `RUN_MODE=postclose` plus a ⏳ pre-market overlay (1m `prepost` bars, gated on
+  `premarket_active`, never on `state`): headline price only, labelled 仅供参考
+  while the analysis still runs in full — never a close, a trigger or a bucket.
+  No third RUN_MODE; `run_state.py` `MODES` stays two.
 - `references/*.md` (except `search-contract.md`) are verbatim migrations.
 
 **`daily-risk-monitor`**

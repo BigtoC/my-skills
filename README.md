@@ -112,8 +112,9 @@ they keep runtime state that changes on every run:
   `scripts/run_state.py` at the end of every run, *before* the Slack push, so a
   failed push never loses the day's verdict. It answers the one question the
   report format asks but nothing else could: what "since last time" means for the
-  「较上次新增🟡」 forced-push rule. Because the routine may run twice a calendar
-  day (once intraday, once after the close), the gate's baseline is the most
+  「较上次新增🟡」 forced-push rule. Because the routine may run more than once a
+  calendar day (intraday, and post-close — a US pre-market run also counts as
+  post-close), the gate's baseline is the most
   recent **post-close** run dated strictly *earlier than today* — an intraday run
   records itself but never becomes the baseline, so the authoritative evening
   report cannot lose its alert banner to its own morning run. Seeing this file

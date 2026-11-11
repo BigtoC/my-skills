@@ -10,6 +10,11 @@ T1/T2/T3 永远只用「最近一个完整交易日收盘价」计算。
 隐含变动若会让某股跨过阈值，只能写成**预告**：
     「若明日以此价开盘将触及 T2@$XXX（预告，非已触发）」
 不得记为已触发，不得变更「✅ 未触发」清单。
+美股盘前运行（tech.json 的 session.US.premarket_active 为真）时，美股档的预告改写为
+    「若今日以此价开盘将触及 T2@$XXX（预告，非已触发）」
+今日盘前成交价（technicals.py 的 live_kind == "premarket" 叠加层）只**分列**展示：
+它与永续是两个不同标的，绝不并入隐含变动列、绝不套 |≥2%|/|≥5%| 阈值、
+绝不写进任何以「收盘」为名的字段（spot_close / implied_pct 的分母仍是最近完整交易日收盘）。
 ==============================================================
 
 取数：POST https://api.hyperliquid.xyz/info  body {"type":"metaAndAssetCtxs","dex":"xyz"}
@@ -52,6 +57,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 SCRIPT_NAME = Path(__file__).name
 
@@ -118,6 +124,34 @@ OBSERVATION_NOTE = "纯观察节点：绝不产生 T1/T2/T3 触发、绝不改�
 # 是本脚本最大的一档降级，必须显式喊出来而不是让读者从空区块自己猜。
 NO_SPOT_REASON = ("未提供 --spot：无现货基准，本节退化为只输出 perp 价与 OI 分档，"
                   "隐含变动 / 科技相对强弱 / 跨阈值预告全部 N/A")
+
+# —— 盘口模式 ——
+# 只从 tech.json 读（session.US.state / session.US.premarket_active），**绝不自己看时钟**：
+# 盘前模式要的是 technicals.py 真的取到了今日盘前成交这一证据，而不是「现在几点」。
+# 只看时钟会在节假日早上、周末印出「若今日以此价开盘」。
+# 反过来的代价：盘前窗口内 premarket_active 不为真（1m 取数失败 / --no-live-overlay）时
+# 落回 overnight，美股档写「明日」——若今日是交易日这就错了。不改判定（无节假日表），只喊出来。
+MODE_NOTE_PM_WINDOW = "美股盘前时段但无盘前叠加层；US 档「明日」措辞可能应为「今日」（若今日为交易日）"
+
+# 盘前成交价（technicals.py 的盘前叠加层）——与永续分列，口径说明写成常量，正文与 JSON 共用。
+PREMARKET_THRESHOLD_REASON = (
+    "盘前成交价是另一个标的（现货盘前撮合，成交稀薄、Yahoo 1m 量报 0），且非收盘："
+    "|≥2%|/|≥5%| 标定在「收盘→下次开盘」的永续隐含变动上，不随标的迁移（回退链规则第 4 条），"
+    "盘前涨跌与永续−盘前基差一律不套阈值")
+PREMARKET_NOT_RUN_REASON = "本次非美股盘前运行（mode ≠ premarket），无盘前叠加层"
+PREMARKET_NON_US_REASON = "非美股：盘前叠加层仅限美股"
+PREMARKET_INDEX_REASON = "指数无盘前成交"
+PREMARKET_INDEX_NO_SUBSTITUTE = "不以 SPY/QQQ/期货替代"
+PREMARKET_INDEX_RULE = f"{PREMARKET_INDEX_REASON} → N/A（{PREMARKET_INDEX_NO_SUBSTITUTE}）"
+PREMARKET_NO_REC_REASON = "--spot 里没有该标的的记录"
+PREMARKET_NO_PRINT_REASON = "tech.json 未给出该档今日盘前成交（live_kind ≠ premarket 或 live_price 为空）"
+PREMARKET_INSUFFICIENT_HISTORY_REASON = "历史不足，technicals 未附盘前叠加层"
+# technicals 对日线取数失败的档同时置 source_unavailable 与 insufficient_history，并明说
+# 「是取数失败，不是上市太新」——这里先判 source_unavailable，不把两者重新混成「历史不足」。
+PREMARKET_SOURCE_UNAVAILABLE_REASON = "technicals 日线取数失败（不是历史不足），未附盘前叠加层"
+PREMARKET_NO_BASE_REASON = "无最近完整交易日收盘可作分母，盘前涨跌 N/A"
+PREMARKET_REFERENCE_NOTE = "盘前成交价仅供参考：照常列出并分析，但不判定触发、不改分桶"
+PREMARKET_PCT_BASIS_NOTE = "分母同上：最近完整交易日收盘；盘前价不是收盘价，不判定触发、不改分桶。"
 
 # 非同名标的 → xyz 市场名。其余标的默认同名（NVDA → xyz:NVDA）。
 MARKET_ALIASES = {
@@ -448,27 +482,150 @@ def finalize_row(row, *, triggers: bool = True):
     return row
 
 
-def forecast_note(row, intraday=False):
+def is_us_row(ticker, currency, rec=None):
+    """美股档判定。优先用 tech.json 记录里的 market 字段，缺了再按代码后缀 / 计价币种推断。"""
+    mk = rec.get("market") if isinstance(rec, dict) else None
+    if isinstance(mk, str) and mk.strip():
+        return mk.strip().upper() == "US"
+    return "." not in ticker and (currency or "USD") == "USD"
+
+
+def forecast_note(row, intraday=False, premarket=False):
     """跨阈值只能写成预告，绝不记为已触发。
 
     时态要跟着盘口走：美股仍在交易时说「若**明日开盘**」是错的——下一个定价事件
-    是**今天的收盘**，不是明天的开盘。
+    是**今天的收盘**，不是明天的开盘。美股盘前同理：下一个定价事件是**今天的开盘**。
+    盘前时态只给美股档：04:00–09:30 ET 韩股/港股当日早已收盘，它们的下一次开盘仍是「明日」。
     """
     perp, spot = row.get("perp_usd_equiv"), row.get("spot_close")
     if perp is None or spot is None:
         return None
+    # T1/T2 与 spot_close 都是本币；perp 是 USD。非美元档必须用 evaluate 里 1:1 核对那同一个
+    # 同池汇率折成本币再比（ratio = mark / (close / fx) ⇔ mark × fx 对 close），否则 KRW 档的
+    # T1/T2 永远「低于」一个几百美元的 perp，预告凭空成立。缺汇率就不预告（原因由 evaluate 写）。
+    cur = row.get("currency") or "USD"
+    if cur != "USD":
+        fx = to_float(row.get("fx_rate"))
+        if fx is None or fx <= 0:
+            return None
+        perp = perp * fx
+    us = is_us_row(row.get("ticker", ""), row.get("currency"))
+    # 美股盘中（约 09:30–16:00 ET）时韩股/港股当日早已收盘：它们的下一次定价仍是「明日开盘」。
+    if intraday and us:
+        when = "今日以此价收盘"
+    elif premarket and us:
+        when = "今日以此价开盘"
+    else:
+        when = "明日以此价开盘"
     notes = []
     for label, val in (("T1", row.get("t1_price")), ("T2", row.get("t2_price"))):
         v = to_float(val)
         if v is None or v <= 0:
             continue
         if perp <= v < spot:
-            when = "今日以此价收盘" if intraday else "明日以此价开盘"
-            notes.append(f"若{when}将触及 {label}@${fmt_px(v)}（预告，非已触发）")
+            px = f"${fmt_px(v)}" if cur == "USD" else f"{fmt_px(v)} {cur}"
+            notes.append(f"若{when}将触及 {label}@{px}（预告，非已触发）")
     return "；".join(notes) if notes else None
 
 
-def evaluate(ticker, currency, markets, spot_flat, fx_rates, fx_notes, intraday=False):
+def attach_premarket(row, rec, mode, *, index=False):
+    """把 tech.json 里的今日盘前成交**分列**挂到这一行上（纯附加字段）。
+
+    分母与隐含变动完全相同（最近完整交易日收盘 spot_close）；盘前价绝不写进
+    spot_close / implied_pct 或任何以「收盘」为名的字段，也不改 status。
+    盘前涨跌与永续−盘前基差不套任何阈值——见 PREMARKET_THRESHOLD_REASON。
+    取不到时写 null + premarket_unavailable_reason，而不是让键消失。
+    """
+    for k in ("premarket_px", "premarket_ts", "premarket_pct", "premarket_pct_basis",
+              "premarket_base_close", "perp_premarket_basis_pct",
+              "perp_premarket_basis_reason", "premarket_threshold_comparable",
+              "premarket_threshold_reason", "premarket_unavailable_reason",
+              "premarket_pct_reason"):
+        row[k] = None
+
+    if index:
+        reason = PREMARKET_INDEX_REASON
+    elif mode != "premarket":
+        reason = PREMARKET_NOT_RUN_REASON
+    elif not is_us_row(row["ticker"], row.get("currency"), rec):
+        reason = PREMARKET_NON_US_REASON
+    elif not isinstance(rec, dict):
+        reason = PREMARKET_NO_REC_REASON
+    else:
+        px = to_float(rec.get("live_price")) if rec.get("live_kind") == "premarket" else None
+        if px is None or px <= 0:
+            # 原因照搬 tech.json 那一行自己的说法（跨档拒绝 / 尚无成交 / 指数期货），
+            # 不在这里统一改写成「无今日盘前成交」——历史不足的档 technicals 根本不附叠加层。
+            why = rec.get("live_unavailable_reason")
+            if isinstance(why, str) and why.strip():
+                reason = why
+            elif rec.get("source_unavailable"):
+                reason = PREMARKET_SOURCE_UNAVAILABLE_REASON
+            elif rec.get("insufficient_history"):
+                reason = PREMARKET_INSUFFICIENT_HISTORY_REASON
+            else:
+                reason = PREMARKET_NO_PRINT_REASON
+        else:
+            reason = None
+    if reason is not None:
+        row["premarket_unavailable_reason"] = reason
+        return row
+
+    row["premarket_px"] = px
+    row["premarket_ts"] = rec.get("live_ts")
+    base = to_float(row.get("spot_close"))
+    if base is None:
+        base = to_float(_pick(rec, CLOSE_KEYS))
+    has_base = bool(base and base > 0)
+    row["premarket_pct"] = (px / base - 1.0) * 100.0 if has_base else None
+    # 正文「分母同上：最近完整交易日收盘」的字段——只在真算出了涨跌时才指向它
+    row["premarket_pct_basis"] = "spot_close" if has_base else None
+    row["premarket_pct_reason"] = None if has_base else PREMARKET_NO_BASE_REASON
+    # 过薄 / 下架行的 spot_close 是 null，分母取自 tech.json 同一收盘：把数写出来，basis 才不指向空字段
+    row["premarket_base_close"] = base if base and base > 0 else None
+    # 基差只对「1:1 核对通过」的永续行算：过薄 / 下架 / 取错市场的报价不拿来对照。
+    mark = row.get("mark")
+    if row.get("status") == "ok" and mark is not None:
+        row["perp_premarket_basis_pct"] = (mark / px - 1.0) * 100.0
+    else:
+        row["perp_premarket_basis_reason"] = (
+            "xyz 池未上架该标的" if row.get("market") is None
+            else f"永续行未通过（status={row.get('status')}），不对照基差")
+    row["premarket_threshold_comparable"] = False
+    row["premarket_threshold_reason"] = PREMARKET_THRESHOLD_REASON
+    return row
+
+
+def fmt_et_hhmm(ts):
+    """ISO 时间戳 → 'HH:MM ET'；解析不了就原样回显（不猜）。
+
+    带时区的先折成美东再印（+00:00 / Z 不能直接贴 ET 标签）；不带时区的按原样印、标签不变。
+    """
+    if not ts:
+        return "时间未知"
+    try:
+        dt_ = datetime.fromisoformat(str(ts))
+        if dt_.tzinfo is not None:
+            dt_ = dt_.astimezone(ZoneInfo("America/New_York"))
+        return dt_.strftime("%H:%M") + " ET"
+    except Exception:       # ValueError，或本机缺 tz 数据（ZoneInfoNotFoundError）
+        return str(ts)
+
+
+def premarket_text(r):
+    """一行盘前分列文字；只读 JSON 里已有的字段（正文 == JSON）。"""
+    pct = r.get("premarket_pct")
+    s = (f"盘前成交 ${fmt_px(r['premarket_px'])}"
+         f"（{(f'{pct:+.2f}%' if pct is not None else '涨跌 N/A：' + (r.get('premarket_pct_reason') or '无分母'))}，"
+         f"{fmt_et_hhmm(r.get('premarket_ts'))}）")
+    basis = r.get("perp_premarket_basis_pct")
+    s += (f"｜永续−盘前基差 {basis:+.2f}%" if basis is not None
+          else f"｜永续−盘前基差 N/A（{r.get('perp_premarket_basis_reason') or '无'}）")
+    return s
+
+
+def evaluate(ticker, currency, markets, spot_flat, fx_rates, fx_notes, intraday=False,
+             premarket=False):
     """把一个标的算成一行结果。返回 dict（status 决定它落到哪个区块）。"""
     name = MARKET_ALIASES.get(ticker, ticker if "." not in ticker else None)
     row = {"ticker": ticker, "currency": currency, "market": None, "status": "unlisted"}
@@ -541,7 +698,9 @@ def evaluate(ticker, currency, markets, spot_flat, fx_rates, fx_notes, intraday=
                                "而 |≥2%|/|≥5%| 标定在隔夜窗上，阈值不可跨窗比较")
     else:
         row["major"] = abs(row["implied_pct"]) >= MAJOR_MOVE
-    row["forecast"] = forecast_note(row, intraday=intraday)
+    row["forecast"] = forecast_note(row, intraday=intraday, premarket=premarket)
+    if currency and currency != "USD" and not to_float(row.get("fx_rate")):
+        row["forecast_reason"] = "非美元计价且缺同池汇率：无法把永续价折成本币与 T1/T2 比较，预告 N/A"
     row["status"] = "ok"
     return row
 
@@ -567,32 +726,93 @@ FOOTER = [
     "· 带 ⚠️EARN 且当日盘后已发布财报的标的，其隐含变动即为财报反应，须点名注明「财报已出，盘后 ±X.X%」。",
 ]
 
+# 美股盘前运行的页脚：预告时态改为「今日开盘」（仅美股档），并加上盘前成交价的分列硬约束。
+# overnight / intraday 两种模式沿用上面的 FOOTER，一字不改。
+FOOTER_PREMARKET = [
+    "",
+    "— 硬约束（本节为纯观察节点）—",
+    "· 本节绝不产生 T1/T2/T3 触发、绝不改变分桶结论；T1/T2/T3 永远只用最近一个完整交易日收盘价计算。",
+    "· 跨阈值只能写成预告：美股档「若今日以此价开盘将触及 T2@$XXX（预告，非已触发）」"
+    "（韩股/港股档仍为「若明日以此价开盘」），不得计入「✅ 未触发」清单的变更。",
+    "· 全程标注为「隐含」，绝不写成现货收盘价——这是另一个标的（永续合约）的真实成交价。",
+    f"· 只输出 |隐含变动| ≥ {MIN_ABS_MOVE:.0f}%；≥ {MAJOR_MOVE:.0f}% 为重大异动，须 WebSearch 查起因并在风险提示单列"
+    "（盘前窗口仍是「最近完整交易日收盘→此刻」，阈值照常有效）。",
+    "· 带 ⚠️EARN 且当日盘后已发布财报的标的，其隐含变动即为财报反应，须点名注明「财报已出，盘后 ±X.X%」。",
+    "· 今日盘前成交价与永续是两个不同标的：分列展示，绝不并入隐含变动列、绝不合成一个「隐含」数字；"
+    "盘前涨跌与永续−盘前基差不套 |≥2%|/|≥5%| 阈值。",
+    "· 盘前价不得写入任何以「收盘」为名的字段、不得据此判定新触发或改变分桶；须今日开盘后以收盘确认。",
+]
 
-def prohibitions_block():
+
+def footer_lines(mode):
+    return FOOTER_PREMARKET if mode == "premarket" else FOOTER
+
+
+def section_title(mode):
+    """节标题随模式走；失败路径与正常路径共用，免得两边各说各话。"""
+    if mode == "intraday":
+        return "⏳ 盘中 vs 前收 隐含变动"
+    if mode == "premarket":
+        return "🌙 盘前隐含变动（24/7 永续 vs 最近完整交易日收盘）"
+    return "盘后 / 休市期间隐含变动"
+
+
+def derive_mode(session):
+    """只读 tech.json 的 session.US，绝不看时钟。返回 (intraday, premarket, mode)。"""
+    s = session if isinstance(session, dict) else {}
+    intraday = bool(s.get("state") == "intraday")
+    # `is True`：字符串 "false" 之类的脏值不能被 bool() 读成真。
+    premarket = s.get("premarket_active") is True and not intraday
+    mode = "intraday" if intraday else ("premarket" if premarket else "overnight")
+    return intraday, premarket, mode
+
+
+def derive_mode_note(session, mode):
+    """盘前窗口内却落到 overnight（premarket_active 为 False / None）→ 返回提示句，否则 None。"""
+    s = session if isinstance(session, dict) else {}
+    if mode == "overnight" and s.get("premarket_window") is True:
+        return MODE_NOTE_PM_WINDOW
+    return None
+
+
+def prohibitions_block(mode="overnight"):
     """正文里全部禁止性文字的结构化副本。
 
     --quiet 下正文根本不打，JSON 就是这次运行唯一的载体；硬约束不能只活在
     人类可读分支里，否则并发调度跑出来的那份结果读不到「这不是触发」。
     措辞一律引用上面的常量，不另起炉灶。
     """
-    return {
+    block = {
         "observation_only": OBSERVATION_NOTE,
-        "footer": [ln for ln in FOOTER if ln.startswith("·")],
+        "footer": [ln for ln in footer_lines(mode) if ln.startswith("·")],
         "major_move": MAJOR_ACTION,
         "forecast_not_triggered": FORECAST_NOT_TRIGGER,
         "ratio_fail_handling": RATIO_FAIL_HINT,
     }
+    if mode == "premarket":
+        # 【盘前成交】区块里的两句禁止性文字（指数不拿 SPY/QQQ/期货顶替；分母口径）。
+        block["premarket"] = {"index": PREMARKET_INDEX_RULE, "pct_basis": PREMARKET_PCT_BASIS_NOTE,
+                              "reference_note": PREMARKET_REFERENCE_NOTE}
+    return block
 
 
 def render(result):
     out = []
     A = out.append
     _iu = bool(result.get("intraday"))
-    A("== 第二步之二：" + ("⏳ 盘中 vs 前收 隐含变动" if _iu else "盘后 / 休市期间隐含变动")
-      + "（24/7 永续 · Hyperliquid xyz 池）==")
+    mode = result.get("mode") or ("intraday" if _iu else "overnight")
+    _pm = mode == "premarket"
+    A("== 第二步之二：" + section_title(mode)
+      + ("· Hyperliquid xyz 池 ==" if _pm else "（24/7 永续 · Hyperliquid xyz 池）=="))
     if _iu:
         A("⚠ 盘中口径：分母为最近完整交易日收盘、分子含今日已走完的盘中时段——"
           "**与隔夜窗不是同一个窗口**。|≥2%| / |≥5%| 阈值标定在隔夜窗上，本次记 N/A 不套用。")
+    if _pm:
+        A("⏳ 美股盘前口径：隐含变动仍是「最近完整交易日收盘→此刻」的隔夜窗，|≥2%| / |≥5%| 阈值照常套用；"
+          "美股档预告时态为「今日开盘」。今日盘前成交价另列于【盘前成交】区块——与永续是两个标的，"
+          "分列不合并、不套阈值。")
+    if result.get("mode_note"):
+        A(f"⚠ {result['mode_note']}")
     A(f"取数时间：{result['fetched_at']}（UTC） · 池：{DEX} · 市场数：{result['market_count']}"
       f"（在架 {result['market_listed']}） · 标的清单：{result['universe_path']}")
     if result.get("spot_path"):
@@ -654,6 +874,8 @@ def render(result):
         if r.get("fx_rate"):
             A(f"    汇率：1 USD = {fmt_px(r['fx_rate'])} {r['fx_currency']}（同池 {PREFIX}{FX_MARKETS[r['fx_currency']]}）"
               + (f" · {r['fx_note']}" if r.get("fx_note") else ""))
+        if _pm and r.get("premarket_px") is not None:
+            A(f"    {premarket_text(r)}")
         if r["major"]:
             A(f"    {MAJOR_ACTION}")
         if r.get("forecast"):
@@ -669,6 +891,24 @@ def render(result):
         for r in fc:
             A(f"· {r['ticker']:<10} {r['forecast']}{thin_suffix(r)}")
         A(f"  ↑ {FORECAST_NOT_TRIGGER}")
+
+    # —— 盘前成交（仅美股盘前运行）——
+    # 与永续分列：两个不同标的，绝不并入上面的隐含变动列，也不套 2%/5% 阈值。
+    if _pm:
+        with_pm = [r for r in result["stocks"] if r.get("premarket_px") is not None]
+        A("")
+        A(f"【盘前成交 · 与永续分列（仅供参考·未确认、不套阈值）】（{len(with_pm)} 只取到今日盘前成交）")
+        A(f"  {PREMARKET_PCT_BASIS_NOTE}")
+        for r in with_pm:
+            A(f"· {r['ticker']:<10} {premarket_text(r)}")
+        # 按每行自己的 premarket_unavailable_reason 分组（同 technicals 的 by_reason），不统一说「无今日盘前成交」。
+        for reason, tks in _premarket_missing_by_reason(result["stocks"]).items():
+            A(f"· 有永续报价、无盘前价（{reason}；基差 N/A）：" + "、".join(tks))
+        idx_na = [r["ticker"] for r in result.get("indices", [])
+                  if r.get("premarket_unavailable_reason") == PREMARKET_INDEX_REASON]
+        if idx_na:
+            A(f"· {'、'.join(idx_na)}：{PREMARKET_INDEX_RULE}")
+        A(f"  ↑ {PREMARKET_THRESHOLD_REASON}")
 
     # —— 全部在架标的（含未达 2% 的，供交叉核对）——
     listed = [r for r in result["stocks"] if r["status"] in ("ok", "no_spot")]
@@ -706,8 +946,31 @@ def render(result):
         else:
             A(f"· {label}：" + "、".join(r["ticker"] for r in group))
 
-    out.extend(FOOTER)
+    out.extend(footer_lines(mode))
     return "\n".join(out)
+
+
+def _perp_without_premarket(r):
+    """盘前模式下：美股档、有可用永续报价，却没有盘前价（原因看 premarket_unavailable_reason）。
+
+    --spot 里根本没有记录的档已按 no_spot 报过，这里不再重复。
+    """
+    return (r.get("premarket_px") is None
+            and r.get("mark") is not None
+            and r.get("status") in ("ok", "ratio_fail", "no_spot")
+            and r.get("premarket_unavailable_reason") not in (
+                PREMARKET_NON_US_REASON, PREMARKET_NOT_RUN_REASON, PREMARKET_INDEX_REASON,
+                PREMARKET_NO_REC_REASON))
+
+
+def _premarket_missing_by_reason(stocks):
+    """{premarket_unavailable_reason: [ticker, ...]}——正文与 degraded_reasons 共用这一份分组。"""
+    by_reason = {}
+    for r in stocks or []:
+        if _perp_without_premarket(r):
+            by_reason.setdefault(r.get("premarket_unavailable_reason") or PREMARKET_NO_PRINT_REASON,
+                                 []).append(r["ticker"])
+    return by_reason
 
 
 # --------------------------------------------------------------------------
@@ -754,6 +1017,13 @@ def compute_degraded(result):
             reasons.append(f"{STATUS_REASON_CN['no_spot']}（--spot 里没有这些标的的收盘价）："
                            + "、".join(group))
 
+    if result.get("mode") == "premarket":
+        for reason, group in _premarket_missing_by_reason(stocks).items():
+            reasons.append(f"美股盘前：以下有永续报价的美股档无盘前价（{reason}），"
+                           "盘前涨跌 / 永续−盘前基差 N/A：" + "、".join(group))
+    if result.get("mode_note"):
+        reasons.append(result["mode_note"])
+
     return bool(reasons), reasons
 
 
@@ -798,14 +1068,28 @@ def main():
     spot_given = bool(args.spot)
     spot_arg_name = Path(args.spot).name if args.spot else None
 
+    # --spot 与盘口模式必须在取数**之前**读：取数失败那条路径也要写 mode / intraday / session。
+    # （早先放在取数之后，失败路径引用未赋值的 intraday → UnboundLocalError、exit 1、不落 JSON。）
+    spot_flat, spot_path, session = {}, None, None
+    if args.spot:
+        spot_flat, session = load_spot(Path(args.spot))
+        if spot_flat:
+            spot_path = spot_arg_name
+    intraday, premarket, mode = derive_mode(session)
+    mode_note = derive_mode_note(session, mode)
+
     payload, reason = fetch_meta_and_ctxs(args.timeout, retries=2)   # 最多重试 2 次
     if payload is None:
         # 硬约束 6：整节写这句，不影响其余所有部分
         lines = [
-            "== 第二步之二：盘后 / 休市期间隐含变动（24/7 永续）==",
+            # 标题随模式走（section_title）；overnight 的整句与改动前逐字相同。
+            "== 第二步之二：" + section_title(mode)
+            + ("" if mode == "premarket" else "（24/7 永续）") + "==",
             f"本次未取到 24/7 永续数据（{reason}；已重试 2 次）。",
             "按规则：本节留空，不影响其余所有部分；不得因此改变任何 T1/T2/T3 判定或分桶。",
         ]
+        if mode_note:
+            lines.append(f"⚠ {mode_note}")
         # --quiet 只关 stdout 的正文，绝不关警告：这三句改走 stderr。
         # 否则并发调度下这次运行会一声不吭地 exit 0，读者以为「查过，没事」。
         for line in lines:
@@ -815,15 +1099,19 @@ def main():
             reasons = [f"未取到 24/7 永续数据（{reason}；已重试 2 次）：本节留空"]
             if not spot_given:
                 reasons.append(NO_SPOT_REASON)
+            if mode_note:
+                reasons.append(mode_note)
             write_json({
                 "section": "第二步之二·24/7 永续隐含变动",
                 "observation_only": True,
+                "mode": mode,
+                "mode_note": mode_note,
                 "intraday": intraday,
                 "session": session,
                 "note": OBSERVATION_NOTE,
                 "degraded": True,
                 "degraded_reasons": reasons,
-                "prohibitions": prohibitions_block(),
+                "prohibitions": prohibitions_block(mode),
                 "source": {"url": API_URL, "type": "metaAndAssetCtxs", "dex": DEX},
                 "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "fetch_error": reason,
@@ -831,7 +1119,7 @@ def main():
                 "market_listed": 0,
                 "universe_path": universe_path,
                 "universe_count": len(universe),
-                "spot_path": None,
+                "spot_path": spot_path,          # --spot 在取数前已读，读到了就如实回显
                 "spot_given": spot_given,
                 "spot_arg_name": spot_arg_name,
                 "spot_date_hint": None,
@@ -845,13 +1133,6 @@ def main():
         sys.exit(0)
 
     markets = build_markets(payload)
-
-    spot_flat, spot_path, session = {}, None, None
-    if args.spot:
-        spot_flat, session = load_spot(Path(args.spot))
-        if spot_flat:
-            spot_path = spot_arg_name
-    intraday = bool((session or {}).get("state") == "intraday")
 
     # 汇率（同池）
     fx_rates, fx_notes, fx_lines = {}, {}, []
@@ -883,7 +1164,10 @@ def main():
             fx_lines.append(f"汇率：{cur} 计价标的在 {DEX} 池无对应汇率市场 → 本次跳过。")
 
     # 个股
-    stocks = [finalize_row(evaluate(t, c, markets, spot_flat, fx_rates, fx_notes, intraday))
+    stocks = [attach_premarket(
+                  finalize_row(evaluate(t, c, markets, spot_flat, fx_rates, fx_notes, intraday,
+                                        premarket)),
+                  spot_lookup(spot_flat, t), mode)
               for t, c in universe]
 
     # 大盘层
@@ -909,7 +1193,7 @@ def main():
                 row["status"] = "ok"
             else:
                 row["status"] = "ratio_fail"
-        indices.append(finalize_row(row, triggers=False))
+        indices.append(attach_premarket(finalize_row(row, triggers=False), rec, mode, index=True))
 
     by_market = {r["market"]: r for r in indices}
     sp = by_market.get(f"{PREFIX}SP500", {}).get("implied_pct")
@@ -920,13 +1204,17 @@ def main():
     result = {
         "section": "第二步之二·24/7 永续隐含变动",
         "observation_only": True,
+        # overnight / premarket / intraday —— 只由 tech.json 的 session.US 推出（derive_mode），不看时钟。
+        "mode": mode,
+        # 非 null = 盘前窗口内却落到 overnight，美股档「明日」措辞可能有误（见 MODE_NOTE_PM_WINDOW）。
+        "mode_note": mode_note,
         "intraday": intraday,
         "session": session,
         "note": OBSERVATION_NOTE,
         # 降级汇总在下面回填（要先有完整 result 才算得出来），放在这里是为了排在头部显眼处。
         "degraded": None,
         "degraded_reasons": [],
-        "prohibitions": prohibitions_block(),
+        "prohibitions": prohibitions_block(mode),
         "source": {"url": API_URL, "type": "metaAndAssetCtxs", "dex": DEX},
         "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "market_count": len(markets),
