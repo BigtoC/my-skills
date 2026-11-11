@@ -24,9 +24,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 81.87,
-        "as_of": "2026-10-30",
-        "source": "finanzen.net https://www.finanzen.net/anleihen/boersenplaetze/a4ewub-coreweave-anleihe ; WKN A4EWUB, ISIN USU2069EAE06 (page title 9,625% bis 15.07.2032); venue gettex last 81,87 % at 30.10.2026 22:45:44 CET (= 17:45 ET, after US close), Vortag 81,87, Spanne 81,87-81,87, Umsatz nominal '-'; same venue as prior runs (print unchanged vs Vortag). Other venues 30.10.2026: Baader 81,61 % 18:29:30 (Vortag 82,60, Spanne 81,55-82,60); Duesseldorf 81,31 % 09:00:51 (Vortag 81,54); Frankfurt 81,44 % 08:02:28 (Vortag 81,17); Muenchen 81,42 % 17:02:56 (Vortag 81,72, Spanne 81,36-81,60); Quotrix 79,79 % 18:29:34 (Vortag 81,58, no Spanne). Not labelled clean/dirty, treated as clean consistent with prior runs.",
+        "price": 78.82,
+        "as_of": "2026-11-10",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/boersenplaetze/a4ewub-coreweave-anleihe ; WKN A4EWUB, ISIN USU2069EAE06 (page title 9,625% bis 15.07.2032); fetched 2026-11-10 post US close. Venue gettex (same as prior runs): Letzter 78,82 % at 22:42:54 CET 10.11.2026 (= 16:42 ET), Vortag 78,55 %, Spanne 78,55-78,82. Other venues Letzter / Vortag / time (all 10.11.2026): Baader 79,83 / 79,62 / 22:23:40 (Spanne 79,22-79,84); Duesseldorf 78,76 / 77,09 / 09:03:31; Frankfurt 78,28 / 77,09 / 08:02:34; Muenchen 78,38 / 78,50 / 16:56:51 (Spanne 78,37-78,56); Quotrix 78,74 / 78,59 / 21:31:13 (no Spanne). Page +/- % column does not reconcile with Letzter minus Vortag for every venue (e.g. Baader); figures recorded as displayed. Umsatz nominal '-' all venues. Not labelled clean/dirty, treated as clean.",
         "quote_kind": "close_clean"
       }
     },
@@ -45,9 +45,9 @@
       "note": "公司层无担保高收益债，本组规模最大 → 作为 L1 基准债",
       "is_l1_benchmark": true,
       "quote": {
-        "price": 81.5,
-        "as_of": "2026-10-30",
-        "source": "finanzen.net https://www.finanzen.net/anleihen/boersenplaetze/a4eucn-coreweave-anleihe ; WKN A4EUCN, ISIN USU2069EAC40 (page title 9,750% bis 01.10.2031); venue Quotrix last 81,50 % at 30.10.2026 19:46:17 CET (= 14:46 ET, BEFORE the US close), Vortag 82,82, no Spanne shown; same venue as prior runs. Other venues 30.10.2026: Frankfurt 81,50 % 17:20:06 CET (= 12:20 ET; Vortag 82,83, Spanne 81,31-81,99); Duesseldorf 81,90 % 09:00:51 (Vortag 82,49). Umsatz nominal '-'. No venue print after the US close on this page. Not labelled clean/dirty, treated as clean consistent with prior runs.",
+        "price": 78.71,
+        "as_of": "2026-11-10",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/boersenplaetze/a4eucn-coreweave-anleihe ; WKN A4EUCN, ISIN USU2069EAC40 (page title 9,750% bis 01.10.2031); fetched 2026-11-10 post US close. Venue Quotrix (same as prior runs): Letzter 78,71 % at 17:19:57 CET 10.11.2026 (= 11:19 ET), Vortag 78,23 %, no Spanne shown. Other venues Letzter / Vortag / time (all 10.11.2026): Frankfurt 78,71 / 78,23 / 17:20:06 (Spanne 78,15-78,74); Duesseldorf 78,13 / 76,27 / 09:03:31. Umsatz nominal '-' all venues. Not labelled clean/dirty, treated as clean.",
         "quote_kind": "close_clean"
       }
     },
@@ -65,9 +65,9 @@
       "rating_cohort": "single_b",
       "note": "公司层无担保高收益债",
       "quote": {
-        "price": 82.83,
-        "as_of": "2026-10-30",
-        "source": "finanzen.net https://www.finanzen.net/anleihen/boersenplaetze/a4eeq4-coreweave-anleihe ; WKN A4EEQ4, ISIN USU2069EAB66 (page title 9,000% bis 01.02.2031); venue Frankfurt only, last 82,83 % at 30.10.2026 08:02:28 CET (= 03:02 ET, before the US open), Vortag 83,07, Spanne 82,83-82,83; no other venues listed; Umsatz nominal '-'. Not labelled clean/dirty, treated as clean consistent with prior runs.",
+        "price": 78.82,
+        "as_of": "2026-11-10",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/boersenplaetze/a4eeq4-coreweave-anleihe ; WKN A4EEQ4, ISIN USU2069EAB66 (page title 9,000% bis 01.02.2031); fetched 2026-11-10 post US close. Venue Frankfurt only (same as prior runs): Letzter 78,82 % at 08:02:34 CET 10.11.2026 (= 02:02 ET, early single print), Vortag 76,88 %, Spanne 78,82-78,82. Umsatz nominal '-'. Not labelled clean/dirty, treated as clean.",
         "quote_kind": "close_clean"
       }
     },
@@ -86,9 +86,9 @@
       "rating_cohort": "single_b",
       "note": "欧元计价，不与美债曲线比；只对 EUR HY 指数(BAMLHE00EHYIOAS)做相对比较",
       "quote": {
-        "price": 78.63,
-        "as_of": "2026-10-30",
-        "source": "finanzen.net https://www.finanzen.net/anleihen/a4ewud-coreweave-anleihe ; WKN A4EWUD, ISIN XS3333139288, EUR; headline Aktueller Kurs 78,63 % Kurszeit 30.10.2026 22:40:39 CET (= 17:40 ET, after US close), venue gettex (BMN), same venue as prior runs; Vortag 79,79; Eroeffnung 79,79; Tagestief/Tageshoch 78,63/79,79. Bid/ask table 21:45:48: clean 77,17 / 78,75, dirty 79,64 / 81,22; Stueckzinsen 2,472. Other venues (no per-venue timestamps): Baader 78,02 (Vortag 79,54), Duesseldorf 77,92 (79,51), Frankfurt 78,51 (79,57), gettex 78,63 (79,79), Muenchen 77,53 (77,78), Quotrix 79,60 (80,55), Stuttgart 77,39 (77,60). EUR: absolute spread N/A.",
+        "price": 75.74,
+        "as_of": "2026-11-10",
+        "source": "finanzen.net https://www.finanzen.net/anleihen/boersenplaetze/a4ewud-coreweave-anleihe ; WKN A4EWUD, ISIN XS3333139288 (page title 8,500% bis 15.07.2032), EUR; fetched 2026-11-10 post US close. Venue gettex (same as prior runs): Letzter 75,74 % at 22:45:19 CET 10.11.2026, Vortag 74,72 %, Spanne 74,84-75,74. Other venues Letzter / Vortag / time (all 10.11.2026): Baader 76,20/75,74/22:29:21; Duesseldorf 74,81/73,39/09:03:36; Frankfurt 75,66/73,40/15:37:31; Muenchen 74,83/73,40/08:41:39; Quotrix 75,70/74,34/07:27:07; Stuttgart 74,30/72,71/21:45:03. Umsatz nominal '-' all venues. Headline bid/ask and Stueckzinsen not read (Boersenplaetze page only). Not labelled clean/dirty, treated as clean. EUR: absolute spread N/A.",
         "quote_kind": "close_clean"
       }
     },
@@ -107,9 +107,9 @@
       "note": "项目层 SPV，背后是 AWS 10-15 年租约 → L2 真正的主题指标。这条走阔才是论点崩坏",
       "is_l2_benchmark": true,
       "quote": {
-        "price": 97.92,
-        "as_of": "2026-10-30",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-CIFR/bonds/ (HTTP 200); Black Pearl Compute LLC BLPG6304798 6.125% 2031-02-15 RegS, outstanding 1.93 B USD, Moody's Ba2 (S&P/Fitch '—'), face 1,000 USD, price 97.92%, YTW '—'; header order confirmed (Symbol | YTW % | Price % | Coupon % | Maturity date | ...); page shows 'Market closed' / 'No trades' and NO quote-date field; observed 2026-10-31 (Saturday, US closed), as_of 2026-10-30 is the inferred last US session, not a page-shown quote date; price changed vs prior run's 98.06 observation; no clean/dirty label, treated as clean; venue unknown. Same page also lists Cipher Digital 0.0% 2032-11-01 (US17252AAA4, 850 M USD) 85.68% and Cipher Digital 0.0% 2031-10-01 (US17253JAB2, 1.3 B USD) 88.01% (not in asset file).",
+        "price": 96.891,
+        "as_of": "2026-11-06",
+        "source": "TradingView https://www.tradingview.com/symbols/FINRA-BLPG6304798/ (HTTP 200); Black Pearl Compute LLC 6.125% Feb 15, 2031, symbol FINRA:BLPG6304798, FAQ text 'trade at 96.891%' of face; yield not shown; 'No trades' shown twice near top; NO quote-date/time field on page. Fetched 2026-11-07 (Saturday). as_of 2026-11-06 is INFERRED (last complete US session before fetch), not page-shown: value differs from 96.851 recorded at the 2026-11-04 ~09:10 ET fetch, so the print changed at some point after that fetch (could be 2026-11-04, -05 or -06 session); its exact trade date cannot be determined from the page. No clean/dirty label, treated as clean.",
         "quote_kind": "close_clean"
       }
     },
@@ -127,9 +127,9 @@
       "rating_cohort": null,
       "note": "转债：利差被期权价值污染，不可直读为纯信用利差 → 仅参考，不参与任何判定",
       "quote": {
-        "price": 54.35,
-        "as_of": "2026-10-30",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ (HTTP 200); US46270CAL3 IREN Limited 1.0% 2033-12-01 144A, outstanding 3 B USD, face 1,000 USD, Price % 54.35%, YTW '—', ratings '—'; header order confirmed (Symbol | YTW % | Price % | Coupon % | Maturity date | ...); no quote-date field ('Market closed' / 'No trades'); observed 2026-10-31 (Saturday), as_of 2026-10-30 is the inferred last US session; no clean/dirty label, treated as clean; venue unknown. Page maturity 2033-12-01 (asset file 2033-12-15, month precision). Convert: reference only.",
+        "price": 47.97,
+        "as_of": "2026-11-10",
+        "source": "REFERENCE ONLY (convert). TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ (HTTP 200); row US46270CAL3 'IREN Limited 1.0% 01-DEC-2033 144A', outstanding 3 B USD, Price % 47.97%, YTW '—'; no quote-date field; 'No trades' under ticker. Fetched 2026-11-10 post US close. as_of 2026-11-10 INFERRED (last complete US session), not page-shown; could be the 2026-11-09 session. Prior recorded value 40.06 (as_of 2026-11-06). No clean/dirty label.",
         "quote_kind": "close_clean"
       }
     },
@@ -147,9 +147,9 @@
       "rating_cohort": null,
       "note": "零息转债，同上仅参考",
       "quote": {
-        "price": 53.5,
-        "as_of": "2026-10-30",
-        "source": "TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ (HTTP 200); IREN6548018 IREN Limited 0.0% 2031-07-01, outstanding 1 B USD, face 1,000 USD, Price % 53.50%, YTW '—'; header order confirmed; no quote-date field; observed 2026-10-31 (Saturday), as_of 2026-10-30 is the inferred last US session; zero coupon so clean = full; venue unknown. Page maturity 2031-07-01 (asset file 2031-07-15, month precision). Convert: reference only.",
+        "price": 45.49,
+        "as_of": "2026-11-10",
+        "source": "REFERENCE ONLY (convert). TradingView https://www.tradingview.com/symbols/NASDAQ-IREN/bonds/ (HTTP 200); row IREN6548018 'IREN Limited 0.0% 01-JUL-2031', outstanding 1 B USD, Price % 45.49%, YTW '—'; no quote-date field. Fetched 2026-11-10 post US close. as_of 2026-11-10 INFERRED (last complete US session), not page-shown; could be the 2026-11-09 session. Prior recorded value 60.06 (as_of 2026-11-06). Zero coupon, so clean = full. Page also lists a third row IREN6268256 3.25% 15-JUN-2030 (212.31 M USD, 157.50%) not in bonds.json.",
         "quote_kind": "close_clean"
       }
     }
@@ -346,6 +346,49 @@
         "status": "repricing",
         "purpose": "Finance specialised AI chips (GPUs) and a data centre in Norway",
         "source": "Final terms: Octus 'Americas Leveraged Finance Weekly' 2026-10-16 https://octus.com/?p=46362 : 'priced on the wide end of talk at SOFR+650 bps and 95 OID' for both tranches, after Oct 14 deadline, 'priced a day late' -> date 2026-10-15 is inferred from that wording (one-day uncertainty). Initial spread 500: KuCoin flash https://www.kucoin.com/news/flash/jpmorgan-and-goldman-sachs-push-5b-volta-ai-loan-at-11-21-11-75-yield : 'first marketed the financing in August and September 2026 with a spread of approximately SOFR plus 500 basis points' (approximate, secondary; first-attempt OID not disclosed -> initial_oid null). Relaunch talk ~2026-10-07/09: S+625-650, OID 97-98 (The Star/Bloomberg 2026-10-07 https://www.thestar.com.my/business/business-news/2026/10/07/jpmorgan-dangles-11-yield-on-voltas-ai-loan-sale ; Crypto Briefing 2026-10-15 reports OID 95-98). If initial is taken as the relaunch talk instead of the first attempt, initial_spread_bp would be 625 (low end) with initial_oid 97-98 range; filled value uses the first-marketed spread, analogous to the CoreWeave DDTL 5.5 entry using initial syndication talk. Status 'repricing' = terms widened from initial marketing; no closing/funding confirmed. Issuer is not on the dispatched issuer list and has no issuer release found; secondary sources only."
+      },
+      {
+        "date": "2026-10-28",
+        "issuer": "IREN Limited",
+        "instrument": "Equipment finance agreement (refinancing of already-deployed GPU servers and networking equipment), Wingspire Equipment Finance arranger, six-lender group incl. Eldridge Capital Management and Silver Point Capital",
+        "size_usd_mm": 363,
+        "base_rate": null,
+        "initial_spread_bp": null,
+        "final_spread_bp": null,
+        "initial_oid": null,
+        "final_oid": null,
+        "status": "priced",
+        "purpose": "Refinance deployed AI compute equipment, returning capital previously invested in that hardware; secured mainly by the equipment, supported by multi-year customer contracts",
+        "source": "Issuer release Business Wire 2026-10-28 https://www.businesswire.com/news/home/20261028683272/en/ (HTTP 403, not read); terms from https://blockspace.media/insight/iren-closes-wingspire-gpu-refinancing/ and CCIR tracker https://ccir.io/credit. Pricing, rate type and maturity not disclosed -> null, not estimated. Source wording 'closes/secures'; 'priced' is nearest enum value."
+      },
+      {
+        "date": "2026-10-27",
+        "issuer": "HIVE Digital Technologies Ltd. (borrower BUZZ Alpha Cloud Inc., indirect subsidiary)",
+        "instrument": "Loan and Security Agreement, GPU-secured, 3-year amortizing, institutional lender unnamed; limited-recourse guarantee and equity pledge by BUZZ High Performance Computing Inc.",
+        "size_usd_mm": 129,
+        "base_rate": "FIXED",
+        "initial_spread_bp": null,
+        "final_spread_bp": null,
+        "initial_oid": null,
+        "final_oid": null,
+        "final_yield_pct": 9.0,
+        "status": "priced",
+        "purpose": "Fund purchase of a sovereign AI GPU cluster (NVIDIA GB200 NVL72) and related infrastructure for a previously announced customer contract",
+        "source": "Issuer 8-K https://www.sec.gov/Archives/edgar/data/1720424/000106299326005585/form8k.htm (Date of Report 2026-10-27; signed 2026-10-28): 'entered into an approximately $129 million Loan and Security Agreement', 'fixed rate of 9.0% per annum', 'three (3) year term'. date = announcement date per 8-K, agreement date not stated. Fees/OID not disclosed -> null. 'priced' is nearest enum value. Issuer not on the dispatched named list."
+      },
+      {
+        "date": "2026-10-21",
+        "issuer": "NexGen Cloud",
+        "instrument": "Senior secured term loan, 216 NVIDIA HGX B300 servers in Finland (USD.AI GPU Loan Exchange)",
+        "size_usd_mm": 106,
+        "base_rate": null,
+        "initial_spread_bp": null,
+        "final_spread_bp": null,
+        "initial_oid": null,
+        "final_oid": null,
+        "status": "priced",
+        "purpose": "GPU server financing (216 NVIDIA HGX B300 servers, Finland)",
+        "source": "CCIR tracker https://ccir.io/credit (HTTP 200, ledger status 'Confirmed', row dated 2026-10-21). Rate / spread / OID / maturity not stated -> null, not estimated. 'priced' is nearest enum value, not source wording. No issuer release fetched. Secondary tracker source only."
       }
     ]
   },

@@ -1,37 +1,37 @@
 {
   "runs": [
     {
-      "date": "2026-11-02",
+      "date": "2026-11-10",
       "mode": "postclose",
-      "generated_at": "2026-11-02T14:12:05+00:00",
+      "generated_at": "2026-11-10T22:09:59+00:00",
       "tripwires": {
         "1": {
           "value": "🟡",
-          "last_evidence_date": "2026-11-02",
+          "last_evidence_date": "2026-11-10",
           "carried_forward": false,
           "not_supplied": false
         },
         "2": {
           "value": "🟢",
-          "last_evidence_date": "2026-11-02",
+          "last_evidence_date": "2026-11-10",
           "carried_forward": false,
           "not_supplied": false
         },
         "3": {
           "value": "🟢",
-          "last_evidence_date": "2026-11-02",
+          "last_evidence_date": "2026-11-10",
           "carried_forward": false,
           "not_supplied": false
         },
         "4": {
           "value": "🔴",
-          "last_evidence_date": "2026-11-02",
+          "last_evidence_date": "2026-11-10",
           "carried_forward": false,
           "not_supplied": false
         },
         "5": {
           "value": "🟢",
-          "last_evidence_date": "2026-11-02",
+          "last_evidence_date": "2026-11-10",
           "carried_forward": false,
           "not_supplied": false
         }
@@ -39,268 +39,31 @@
       "credit": {
         "L1": {
           "value": "🔴",
-          "last_evidence_date": "2026-11-02",
+          "last_evidence_date": "2026-11-10",
           "carried_forward": false,
           "not_supplied": false
         },
         "L2": {
           "value": "🟢",
-          "last_evidence_date": "2026-11-02",
+          "last_evidence_date": "2026-11-10",
           "carried_forward": false,
           "not_supplied": false
         },
         "L3": {
           "value": "🟡",
-          "last_evidence_date": "2026-11-02",
+          "last_evidence_date": "2026-11-10",
           "carried_forward": false,
           "not_supplied": false
         },
         "L4": {
-          "value": "🟢",
-          "last_evidence_date": "2026-11-02",
+          "value": "🟡",
+          "last_evidence_date": "2026-11-10",
           "carried_forward": false,
           "not_supplied": false
         },
         "T4": {
           "value": "🔴",
-          "last_evidence_date": "2026-11-02",
-          "carried_forward": false,
-          "not_supplied": false
-        }
-      },
-      "pushed": false,
-      "gate": {
-        "force_full_push": true,
-        "reasons": [
-          "引爆点 🔴：4"
-        ],
-        "gate_undetermined": false,
-        "recommended_full_push": true,
-        "baseline_date": "2026-11-01"
-      }
-    },
-    {
-      "date": "2026-11-01",
-      "mode": "postclose",
-      "generated_at": "2026-11-01T22:12:48+00:00",
-      "tripwires": {
-        "1": {
-          "value": "🟡",
-          "last_evidence_date": "2026-11-01",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "2": {
-          "value": "🟢",
-          "last_evidence_date": "2026-11-01",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "3": {
-          "value": "🟢",
-          "last_evidence_date": "2026-11-01",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "4": {
-          "value": "🔴",
-          "last_evidence_date": "2026-11-01",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "5": {
-          "value": "🟢",
-          "last_evidence_date": "2026-11-01",
-          "carried_forward": false,
-          "not_supplied": false
-        }
-      },
-      "credit": {
-        "L1": {
-          "value": "🔴",
-          "last_evidence_date": "2026-11-01",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L2": {
-          "value": "🟢",
-          "last_evidence_date": "2026-11-01",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L3": {
-          "value": "🟡",
-          "last_evidence_date": "2026-11-01",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L4": {
-          "value": "🟢",
-          "last_evidence_date": "2026-11-01",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "T4": {
-          "value": "🔴",
-          "last_evidence_date": "2026-11-01",
-          "carried_forward": false,
-          "not_supplied": false
-        }
-      },
-      "pushed": false,
-      "gate": {
-        "force_full_push": true,
-        "reasons": [
-          "引爆点 🔴：4"
-        ],
-        "gate_undetermined": false,
-        "recommended_full_push": true,
-        "baseline_date": "2026-10-31"
-      }
-    },
-    {
-      "date": "2026-10-31",
-      "mode": "postclose",
-      "generated_at": "2026-10-31T14:09:13+00:00",
-      "tripwires": {
-        "1": {
-          "value": "🟡",
-          "last_evidence_date": "2026-10-31",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "2": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-31",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "3": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-31",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "4": {
-          "value": "🔴",
-          "last_evidence_date": "2026-10-31",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "5": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-31",
-          "carried_forward": false,
-          "not_supplied": false
-        }
-      },
-      "credit": {
-        "L1": {
-          "value": "🔴",
-          "last_evidence_date": "2026-10-31",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L2": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-31",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L3": {
-          "value": "🟡",
-          "last_evidence_date": "2026-10-31",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L4": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-31",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "T4": {
-          "value": "🔴",
-          "last_evidence_date": "2026-10-31",
-          "carried_forward": false,
-          "not_supplied": false
-        }
-      },
-      "pushed": false,
-      "gate": {
-        "force_full_push": true,
-        "reasons": [
-          "引爆点 🔴：4"
-        ],
-        "gate_undetermined": false,
-        "recommended_full_push": true,
-        "baseline_date": "2026-10-29"
-      }
-    },
-    {
-      "date": "2026-10-29",
-      "mode": "postclose",
-      "generated_at": "2026-10-29T22:09:48+00:00",
-      "tripwires": {
-        "1": {
-          "value": "🟡",
-          "last_evidence_date": "2026-10-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "2": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "3": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "4": {
-          "value": "🔴",
-          "last_evidence_date": "2026-10-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "5": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-29",
-          "carried_forward": false,
-          "not_supplied": false
-        }
-      },
-      "credit": {
-        "L1": {
-          "value": "🔴",
-          "last_evidence_date": "2026-10-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L2": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L3": {
-          "value": "🟡",
-          "last_evidence_date": "2026-10-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "L4": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-29",
-          "carried_forward": false,
-          "not_supplied": false
-        },
-        "T4": {
-          "value": "🔴",
-          "last_evidence_date": "2026-10-29",
+          "last_evidence_date": "2026-11-10",
           "carried_forward": false,
           "not_supplied": false
         }
@@ -310,45 +73,45 @@
         "force_full_push": true,
         "reasons": [
           "引爆点 🔴：4",
-          "较上次盘后新增🟡：1"
+          "信用层 L4 由 🟢 转 🟡"
         ],
         "gate_undetermined": false,
         "recommended_full_push": true,
-        "baseline_date": "2026-10-28"
+        "baseline_date": "2026-11-08"
       }
     },
     {
-      "date": "2026-10-28",
+      "date": "2026-11-08",
       "mode": "postclose",
-      "generated_at": "2026-10-28T22:10:50+00:00",
+      "generated_at": "2026-11-08T14:09:12+00:00",
       "tripwires": {
         "1": {
-          "value": "🟢",
-          "last_evidence_date": "2026-10-28",
+          "value": "🟡",
+          "last_evidence_date": "2026-11-08",
           "carried_forward": false,
           "not_supplied": false
         },
         "2": {
           "value": "🟢",
-          "last_evidence_date": "2026-10-28",
+          "last_evidence_date": "2026-11-08",
           "carried_forward": false,
           "not_supplied": false
         },
         "3": {
           "value": "🟢",
-          "last_evidence_date": "2026-10-28",
+          "last_evidence_date": "2026-11-08",
           "carried_forward": false,
           "not_supplied": false
         },
         "4": {
           "value": "🔴",
-          "last_evidence_date": "2026-10-28",
+          "last_evidence_date": "2026-11-08",
           "carried_forward": false,
           "not_supplied": false
         },
         "5": {
           "value": "🟢",
-          "last_evidence_date": "2026-10-28",
+          "last_evidence_date": "2026-11-08",
           "carried_forward": false,
           "not_supplied": false
         }
@@ -356,31 +119,31 @@
       "credit": {
         "L1": {
           "value": "🔴",
-          "last_evidence_date": "2026-10-28",
+          "last_evidence_date": "2026-11-08",
           "carried_forward": false,
           "not_supplied": false
         },
         "L2": {
           "value": "🟢",
-          "last_evidence_date": "2026-10-28",
+          "last_evidence_date": "2026-11-08",
           "carried_forward": false,
           "not_supplied": false
         },
         "L3": {
           "value": "🟡",
-          "last_evidence_date": "2026-10-28",
+          "last_evidence_date": "2026-11-08",
           "carried_forward": false,
           "not_supplied": false
         },
         "L4": {
           "value": "🟢",
-          "last_evidence_date": "2026-10-28",
+          "last_evidence_date": "2026-11-08",
           "carried_forward": false,
           "not_supplied": false
         },
         "T4": {
           "value": "🔴",
-          "last_evidence_date": "2026-10-28",
+          "last_evidence_date": "2026-11-08",
           "carried_forward": false,
           "not_supplied": false
         }
@@ -393,7 +156,244 @@
         ],
         "gate_undetermined": false,
         "recommended_full_push": true,
-        "baseline_date": "2026-10-27"
+        "baseline_date": "2026-11-07"
+      }
+    },
+    {
+      "date": "2026-11-07",
+      "mode": "postclose",
+      "generated_at": "2026-11-07T14:10:20+00:00",
+      "tripwires": {
+        "1": {
+          "value": "🟡",
+          "last_evidence_date": "2026-11-07",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "2": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-07",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "3": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-07",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "4": {
+          "value": "🔴",
+          "last_evidence_date": "2026-11-07",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "5": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-07",
+          "carried_forward": false,
+          "not_supplied": false
+        }
+      },
+      "credit": {
+        "L1": {
+          "value": "🔴",
+          "last_evidence_date": "2026-11-07",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L2": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-07",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L3": {
+          "value": "🟡",
+          "last_evidence_date": "2026-11-07",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L4": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-07",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "T4": {
+          "value": "🔴",
+          "last_evidence_date": "2026-11-07",
+          "carried_forward": false,
+          "not_supplied": false
+        }
+      },
+      "pushed": false,
+      "gate": {
+        "force_full_push": true,
+        "reasons": [
+          "引爆点 🔴：4"
+        ],
+        "gate_undetermined": false,
+        "recommended_full_push": true,
+        "baseline_date": "2026-11-04"
+      }
+    },
+    {
+      "date": "2026-11-04",
+      "mode": "postclose",
+      "generated_at": "2026-11-04T22:09:10+00:00",
+      "tripwires": {
+        "1": {
+          "value": "🟡",
+          "last_evidence_date": "2026-11-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "2": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "3": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "4": {
+          "value": "🔴",
+          "last_evidence_date": "2026-11-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "5": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-04",
+          "carried_forward": true,
+          "not_supplied": false
+        }
+      },
+      "credit": {
+        "L1": {
+          "value": "🔴",
+          "last_evidence_date": "2026-11-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L2": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L3": {
+          "value": "🟡",
+          "last_evidence_date": "2026-11-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L4": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-04",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "T4": {
+          "value": "🔴",
+          "last_evidence_date": "2026-11-04",
+          "carried_forward": false,
+          "not_supplied": false
+        }
+      },
+      "pushed": false,
+      "gate": {
+        "force_full_push": true,
+        "reasons": [
+          "引爆点 🔴：4"
+        ],
+        "gate_undetermined": false,
+        "recommended_full_push": true,
+        "baseline_date": "2026-11-03"
+      }
+    },
+    {
+      "date": "2026-11-03",
+      "mode": "postclose",
+      "generated_at": "2026-11-03T14:10:28+00:00",
+      "tripwires": {
+        "1": {
+          "value": "🟡",
+          "last_evidence_date": "2026-11-03",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "2": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-03",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "3": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-03",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "4": {
+          "value": "🔴",
+          "last_evidence_date": "2026-11-03",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "5": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-03",
+          "carried_forward": false,
+          "not_supplied": false
+        }
+      },
+      "credit": {
+        "L1": {
+          "value": "🔴",
+          "last_evidence_date": "2026-11-03",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L2": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-03",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L3": {
+          "value": "🟡",
+          "last_evidence_date": "2026-11-03",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "L4": {
+          "value": "🟢",
+          "last_evidence_date": "2026-11-03",
+          "carried_forward": false,
+          "not_supplied": false
+        },
+        "T4": {
+          "value": "🔴",
+          "last_evidence_date": "2026-11-03",
+          "carried_forward": false,
+          "not_supplied": false
+        }
+      },
+      "pushed": false,
+      "gate": {
+        "force_full_push": true,
+        "reasons": [
+          "引爆点 🔴：4"
+        ],
+        "gate_undetermined": false,
+        "recommended_full_push": true,
+        "baseline_date": "2026-11-02"
       }
     }
   ],
